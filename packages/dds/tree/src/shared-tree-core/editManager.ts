@@ -12,6 +12,11 @@ import {
 	type TelemetryLoggerExt,
 } from "@fluidframework/telemetry-utils/internal";
 import { BTree } from "@tylerbu/sorted-btree-es6";
+import type {
+	ExternalAuthorityAdvance,
+	ExternalAuthorityOutcome,
+	ExternalAuthorityState,
+} from "./externalAuthority.js";
 
 import {
 	type ChangeFamily,
@@ -124,6 +129,7 @@ export class EditManager<
 		private readonly mintRevisionTag: () => RevisionTag,
 		private readonly onSharedBranchCreated?: (branchId: BranchId) => void,
 		logger?: TelemetryLoggerExt,
+		private readonly externalAuthority = false,
 	) {
 		this.trunkBase = {
 			revision: rootRevision,
@@ -170,6 +176,11 @@ export class EditManager<
 	 * it so often.
 	 */
 	private registerBranch(branch: SharedTreeBranch<TEditor, TChangeset>): void {
+		// Authority checkpoints are not necessarily ancestors of today's semantic trunk.
+		// This experimental mode retains all history instead of using trunk-only GC.
+		if (this.externalAuthority) {
+			return;
+		}
 		this.trackBranch(branch);
 		// Whenever the branch is rebased, update our record of its base trunk commit
 		const offBeforeRebase = branch.events.on("beforeChange", (args) => {
@@ -226,9 +237,9 @@ export class EditManager<
 	public getLatestSequenceNumber(): SeqNumber | undefined {
 		let maxSequenceNumber: SeqNumber | undefined;
 		for (const branch of this.sharedBranches.values()) {
-			const branchMax = branch.getCommitSequenceId(
-				branch.trunk.getHead().revision,
-			).sequenceNumber;
+			const branchMax = this.externalAuthority
+				? (branch.sequenceIdToCommit.maxKey()?.sequenceNumber ?? minimumPossibleSequenceNumber)
+				: branch.getCommitSequenceId(branch.trunk.getHead().revision).sequenceNumber;
 			if (maxSequenceNumber === undefined || maxSequenceNumber < branchMax) {
 				maxSequenceNumber = branchMax;
 			}
@@ -268,6 +279,9 @@ export class EditManager<
 	 * if any commits on the trunk are unreferenced and unneeded for future computation; those found are evicted from the trunk.
 	 */
 	private trimHistory(): void {
+		if (this.externalAuthority) {
+			return;
+		}
 		/** The sequence id of the most recent commit on the trunk that will be trimmed */
 		let trunkTailSequenceId: SequenceId = {
 			sequenceNumber: this.minimumSequenceNumber,
@@ -356,6 +370,12 @@ export class EditManager<
 	}
 
 	public getSummaryData(): SummaryData<TChangeset> {
+		if (this.externalAuthority) {
+			assert(
+				(this.getLatestSequenceNumber() ?? minimumPossibleSequenceNumber) < 0,
+				"External authority runtime summaries are not implemented; only attach summaries are supported",
+			);
+		}
 		// Trimming the trunk before serializing ensures that the trunk data in the summary is as minimal as possible.
 		this.trimHistory();
 
@@ -393,6 +413,9 @@ export class EditManager<
 		const mainBranch =
 			this.sharedBranches.get("main") ?? fail(0xc58 /* Main branch must exist */);
 		mainBranch.loadSummaryData(data.main, trunkRevisionCache);
+		if (this.externalAuthority) {
+			mainBranch.initializeApprovedHead();
+		}
 		if (data.branches !== undefined) {
 			for (const [branchId, branchData] of data.branches) {
 				const branch = this.createSharedBranch(
@@ -523,6 +546,7 @@ export class EditManager<
 			this.mintRevisionTag,
 			this._events,
 			this.telemetryEventBatcher,
+			this.externalAuthority,
 		);
 
 		return sharedBranch;
@@ -611,6 +635,24 @@ export class EditManager<
 		assert(commit !== undefined, 0x599 /* Expected local branch to contain revision */);
 		return [commit, commits];
 	}
+
+	public getExternalAuthorityState(): ExternalAuthorityState<TChangeset> {
+		assert(this.externalAuthority, "External authority mode is not enabled");
+		return this.getSharedBranch("main").getExternalAuthorityState();
+	}
+
+	public advanceExternalAuthority(
+		advance: ExternalAuthorityAdvance<TChangeset>,
+		sequenceNumber: SeqNumber,
+		fingerprint: string,
+	): ExternalAuthorityOutcome {
+		assert(this.externalAuthority, "External authority mode is not enabled");
+		return this.getSharedBranch("main").advanceExternalAuthority(
+			advance,
+			sequenceNumber,
+			fingerprint,
+		);
+	}
 }
 
 /**
@@ -648,6 +690,13 @@ function getPathFromBase<TCommit extends { parent?: TCommit }>(
 }
 
 class SharedBranch<TEditor extends ChangeFamilyEditor, TChangeset> {
+	private approvedHead: GraphCommit<TChangeset>;
+	private approvedCheckpoint = "initial";
+	private readonly approvedCheckpoints = new Set(["initial"]);
+	private readonly authorityBatches = new Map<
+		string,
+		{ fingerprint: string; outcome: ExternalAuthorityOutcome }
+	>();
 	/**
 	 * This branch holds the changes made by this client which have not yet been confirmed as sequenced changes.
 	 */
@@ -695,7 +744,9 @@ class SharedBranch<TEditor extends ChangeFamilyEditor, TChangeset> {
 		private readonly mintRevisionTag: () => RevisionTag,
 		branchTrimmer: Listenable<BranchTrimmingEvents>,
 		telemetryEventBatcher: TelemetryEventBatcher<keyof RebaseStatsWithDuration> | undefined,
+		private readonly externalAuthority = false,
 	) {
+		this.approvedHead = this.trunk.getHead();
 		this.localBranch = new SharedTreeBranch(
 			this.trunk.getHead(),
 			changeFamily,
@@ -753,6 +804,9 @@ class SharedBranch<TEditor extends ChangeFamilyEditor, TChangeset> {
 			for (const { revision } of newCommits) {
 				this.sequenceLocalCommit(revision, nextSequenceId, sessionId, onSequenceLocalCommit);
 				nextSequenceId = getNextSequenceId(nextSequenceId);
+			}
+			if (this.externalAuthority && sequenceNumber < 0) {
+				this.initializeApprovedHead();
 			}
 			return;
 		}
@@ -815,8 +869,111 @@ class SharedBranch<TEditor extends ChangeFamilyEditor, TChangeset> {
 			sessionId,
 			() => new SharedTreeBranch(baseRevisionInTrunk, this.changeFamily, this.mintRevisionTag),
 		);
-		peerLocalBranch.rebaseOnto(this.trunk, baseRevisionInTrunk);
+		if (this.externalAuthority) {
+			// Resolve the original optimistic checkpoint, not its rebased replacement.
+			const context = new SharedTreeBranch(
+				baseRevisionInTrunk,
+				this.changeFamily,
+				this.mintRevisionTag,
+			);
+			peerLocalBranch.rebaseOnto(context);
+			context.dispose();
+		} else {
+			peerLocalBranch.rebaseOnto(this.trunk, baseRevisionInTrunk);
+		}
 		return peerLocalBranch;
+	}
+
+	public initializeApprovedHead(): void {
+		this.approvedHead = this.trunk.getHead();
+	}
+
+	public getExternalAuthorityState(): ExternalAuthorityState<TChangeset> {
+		return {
+			checkpoint: this.approvedCheckpoint,
+			approved: this.approvedHead,
+			sequenced: this.trunk.getHead(),
+			provisional: getPathFromBase(this.trunk.getHead(), this.approvedHead),
+		};
+	}
+
+	public advanceExternalAuthority(
+		advance: ExternalAuthorityAdvance<TChangeset>,
+		sequenceNumber: SeqNumber,
+		fingerprint: string,
+	): ExternalAuthorityOutcome {
+		const previous = this.authorityBatches.get(advance.batchId);
+		if (previous !== undefined) {
+			assert(
+				previous.fingerprint === fingerprint,
+				"Authority batch identity reused with different content",
+			);
+			this.recordAuthorityCheckpoint(sequenceNumber);
+			return previous.outcome === "applied" ? "duplicate" : previous.outcome;
+		}
+		if (advance.expected !== this.approvedCheckpoint) {
+			this.authorityBatches.set(advance.batchId, { fingerprint, outcome: "stale" });
+			this.recordAuthorityCheckpoint(sequenceNumber);
+			return "stale";
+		}
+		assert(advance.next !== advance.expected, "Authority checkpoint must advance");
+		assert(
+			!this.approvedCheckpoints.has(advance.next),
+			"Approved checkpoint identities cannot be reused",
+		);
+		assert(
+			advance.approvedPrefix.length === 0 || advance.commits.length === 0,
+			"Transformed settlement is not supported: approve a prefix or inject external edits",
+		);
+		const provisional = this.getExternalAuthorityState().provisional;
+		assert(
+			advance.approvedPrefix.length <= provisional.length,
+			"Approval exceeds provisional history",
+		);
+		for (const [index, revision] of advance.approvedPrefix.entries()) {
+			assert(
+				provisional[index]?.revision === revision,
+				"Approval must identify an unchanged provisional prefix",
+			);
+		}
+		let nextApproved = this.approvedHead;
+		if (advance.approvedPrefix.length > 0) {
+			nextApproved =
+				provisional[advance.approvedPrefix.length - 1] ?? fail("Missing approved prefix");
+		} else if (advance.commits.length > 0) {
+			const revisions = new Set<RevisionTag>();
+			findAncestor(this.trunk.getHead(), (commit) => {
+				revisions.add(commit.revision);
+				return false;
+			});
+			for (const commit of advance.commits) {
+				assert(
+					!revisions.has(commit.revision),
+					"Authority edits must have fresh revision identities",
+				);
+				revisions.add(commit.revision);
+				nextApproved = mintCommit(nextApproved, commit);
+			}
+		}
+		const target = new SharedTreeBranch(nextApproved, this.changeFamily, this.mintRevisionTag);
+		this.trunk.rebaseOnto(target);
+		this.approvedHead = nextApproved;
+		this.approvedCheckpoint = advance.next;
+		this.approvedCheckpoints.add(advance.next);
+		// Deliver one coherent A+P+L transition through the checkout's rebase event.
+		this.localBranch.rebaseOnto(this.trunk);
+		target.dispose();
+		this.authorityBatches.set(advance.batchId, { fingerprint, outcome: "applied" });
+		this.recordAuthorityCheckpoint(sequenceNumber);
+		return "applied";
+	}
+
+	private recordAuthorityCheckpoint(sequenceNumber: SeqNumber): void {
+		const indexInBatch = this.getBatchSize(sequenceNumber);
+		this.sequenceIdToCommit.set(
+			indexInBatch === 0 ? { sequenceNumber } : { sequenceNumber, indexInBatch },
+			this.trunk.getHead(),
+		);
 	}
 
 	public getPeerBranchOrTrunk(sessionId: SessionId): SharedTreeBranch<TEditor, TChangeset> {

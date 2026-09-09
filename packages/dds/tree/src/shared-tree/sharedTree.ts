@@ -105,7 +105,8 @@ import {
 	getCodecTreeForChangeFormat,
 	SharedTreeChangeFormatVersion,
 } from "./sharedTreeChangeCodecs.js";
-import { SharedTreeChangeFamily } from "./sharedTreeChangeFamily.js";
+import { SharedTreeChangeFamily, hasSchemaChange } from "./sharedTreeChangeFamily.js";
+import type { ExternalAuthorityConfiguration } from "../shared-tree-core/index.js";
 import type { SharedTreeChange } from "./sharedTreeChangeTypes.js";
 import type { SharedTreeEditBuilder } from "./sharedTreeEditBuilder.js";
 import { type TreeCheckout, createTreeCheckout } from "./treeCheckout.js";
@@ -204,7 +205,7 @@ export class SharedTreeKernel
 		idCompressor: IIdCompressor,
 		optionsParam: SharedTreeOptionsInternal,
 	) {
-		const options: Required<SharedTreeOptionsInternal> = {
+		const options: ResolvedSharedTreeOptions = {
 			...defaultSharedTreeOptions,
 			...optionsParam,
 		};
@@ -315,6 +316,7 @@ export class SharedTreeKernel
 		);
 
 		this.checkout = createTreeCheckout(idCompressor, this.mintRevisionTag, revisionTagCodec, {
+			externalAuthority: options.externalAuthority !== undefined,
 			branch: this.getLocalBranch(),
 			changeFamily,
 			schema,
@@ -347,6 +349,10 @@ export class SharedTreeKernel
 
 	public exportVerbose(): VerboseTree | undefined {
 		return this.checkout.exportVerbose();
+	}
+
+	protected override validateAuthorityChange(change: SharedTreeChange): void {
+		assert(!hasSchemaChange(change), "Authority drafts cannot change stored schema");
 	}
 
 	public exportSimpleSchema(): SimpleTreeSchema {
@@ -628,6 +634,11 @@ export interface SharedTreeOptions
 		Partial<CodecWriteOptions>,
 		Partial<SharedTreeFormatOptions> {
 	/**
+	 * Experimental externally approved history. All participants must opt in.
+	 * Runtime summaries and schema evolution are not supported in this prototype.
+	 */
+	readonly externalAuthority?: ExternalAuthorityConfiguration | undefined;
+	/**
 	 * Experimental feature flag to enable shared branches.
 	 * This feature is not yet complete and should not be used in production.
 	 * Defaults to false.
@@ -761,7 +772,12 @@ export function buildConfiguredForest(
 	);
 }
 
-export const defaultSharedTreeOptions: Required<SharedTreeOptionsInternal> = {
+type ResolvedSharedTreeOptions = Required<
+	Omit<SharedTreeOptionsInternal, "externalAuthority">
+> &
+	Pick<SharedTreeOptionsInternal, "externalAuthority">;
+
+export const defaultSharedTreeOptions: ResolvedSharedTreeOptions = {
 	jsonValidator: FormatValidatorNoOp,
 	minVersionForCollab: FluidClientVersion.v2_0,
 	forest: ForestTypeReference,

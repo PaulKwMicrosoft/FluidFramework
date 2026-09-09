@@ -4,6 +4,14 @@
  */
 
 export {
+	getSharedTreeAuthority,
+	type SharedTreeAuthorityCapture,
+	type SharedTreeAuthorityDraft,
+	type SharedTreeAuthorityPublication,
+	type SharedTreeAuthorityController,
+} from "./externalAuthorityController.js";
+
+export {
 	type ITreePrivate,
 	type SharedTreeOptionsInternal,
 	type SharedTreeOptions,

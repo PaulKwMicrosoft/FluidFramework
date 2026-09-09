@@ -3,6 +3,11 @@
  * Licensed under the MIT License.
  */
 
+export type {
+	ExternalAuthorityConfiguration,
+	ExternalAuthorityOutcome,
+} from "./externalAuthority.js";
+
 export {
 	onForkTransitive,
 	SharedTreeBranch,

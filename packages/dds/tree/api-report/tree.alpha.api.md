@@ -329,6 +329,16 @@ export namespace ExtensibleUnionNode {
     }
 }
 
+// @alpha @input
+export interface ExternalAuthorityConfiguration {
+    // (undocumented)
+    readonly authorityEpoch: string;
+    // (undocumented)
+    readonly authorityId: string;
+    // (undocumented)
+    readonly documentEpoch: string;
+}
+
 // @public @system
 type ExtractItemType<Item extends LazyItem> = Item extends () => infer Result ? Result : Item;
 
@@ -504,6 +514,9 @@ export function generateSchemaFromSimpleSchema(simple: SimpleTreeSchema): TreeSc
 
 // @alpha
 export function getJsonSchema(schema: ImplicitAllowedTypes, options: Required<TreeSchemaEncodingOptions>): JsonTreeSchema;
+
+// @alpha
+export function getSharedTreeAuthority(tree: ITree): SharedTreeAuthorityController;
 
 // @alpha
 export function getSimpleSchema(schema: ImplicitFieldSchema): SimpleTreeSchema<SchemaType.View>;
@@ -1240,6 +1253,54 @@ export class SchemaUpgrade {
 // @public @system
 type ScopedSchemaName<TScope extends string | undefined, TName extends number | string> = TScope extends undefined ? `${TName}` : `${TScope}.${TName}`;
 
+// @alpha
+export interface SharedTreeAuthorityCapture {
+    // (undocumented)
+    readonly checkpoint: string;
+    // (undocumented)
+    dispose(): void;
+    // (undocumented)
+    readonly editIds: readonly string[];
+    // (undocumented)
+    exportApproved(): VerboseTree | undefined;
+    // (undocumented)
+    exportSequenced(): VerboseTree | undefined;
+}
+
+// @alpha
+export interface SharedTreeAuthorityController {
+    // (undocumented)
+    capture(): SharedTreeAuthorityCapture;
+    // (undocumented)
+    createDraft(capture: SharedTreeAuthorityCapture): SharedTreeAuthorityDraft;
+    // (undocumented)
+    onStateChanged(listener: () => void): () => void;
+    // (undocumented)
+    publishAdvance(publication: SharedTreeAuthorityPublication): Promise<"applied" | "duplicate" | "stale">;
+}
+
+// @alpha
+export interface SharedTreeAuthorityDraft {
+    // (undocumented)
+    dispose(): void;
+    // (undocumented)
+    viewWith<TRoot extends ImplicitFieldSchema>(configuration: TreeViewConfiguration<TRoot>): TreeView<TRoot>;
+}
+
+// @alpha @input
+export interface SharedTreeAuthorityPublication {
+    // (undocumented)
+    readonly approvePrefix?: number;
+    // (undocumented)
+    readonly batchId: string;
+    // (undocumented)
+    readonly capture: SharedTreeAuthorityCapture;
+    // (undocumented)
+    readonly draft?: SharedTreeAuthorityDraft;
+    // (undocumented)
+    readonly nextCheckpoint: string;
+}
+
 // @alpha @input
 export interface SharedTreeFormatOptions {
     treeEncodeType: TreeCompressionStrategy;
@@ -1248,6 +1309,7 @@ export interface SharedTreeFormatOptions {
 // @alpha @input
 export interface SharedTreeOptions extends SharedTreeOptionsBeta, Partial<CodecWriteOptions>, Partial<SharedTreeFormatOptions> {
     readonly enableSharedBranches?: boolean;
+    readonly externalAuthority?: ExternalAuthorityConfiguration | undefined;
     shouldEncodeIncrementally?: IncrementalEncodingPolicy;
 }
 

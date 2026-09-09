@@ -23,7 +23,7 @@ import type {
 	IChannelView,
 	IFluidSerializer,
 } from "@fluidframework/shared-object-base/internal";
-import { createChildLogger } from "@fluidframework/telemetry-utils/internal";
+import { createChildLogger, UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import type { CodecWriteOptions, DependentFormatVersion, IJsonCodec } from "../codec/index.js";
 import {
@@ -44,6 +44,7 @@ import {
 	type WithBreakable,
 	throwIfBroken,
 	breakingClass,
+	readAndParseSnapshotBlob,
 } from "../util/index.js";
 
 import type { BranchId, SharedTreeBranch } from "./branch.js";
@@ -68,12 +69,25 @@ import {
 	type SummaryElementStringifier,
 } from "./summaryTypes.js";
 import { VersionedSummarizer } from "./versionedSummarizer.js";
+import {
+	readAuthorityEnvelope,
+	readEncodedAdvance,
+	type AuthorityEnvelope,
+	type ExternalAuthorityConfiguration,
+	type ExternalAuthorityAdvance,
+	type ExternalAuthorityOutcome,
+	type ExternalAuthorityState,
+	authorityBootstrapKey,
+	validateAuthorityBootstrap,
+	type AuthorityBootstrapMetadata,
+} from "./externalAuthority.js";
 
 export interface ClonableSchemaAndPolicy extends SchemaAndPolicy {
 	schema: TreeStoredSchemaRepository;
 }
 
 export interface SharedTreeCoreOptionsInternal extends CodecWriteOptions {
+	readonly externalAuthority?: ExternalAuthorityConfiguration;
 	/**
 	 * See {@link SharedTreeOptionsBeta.healUnresolvableIdentifiersOnDecode}.
 	 */
@@ -94,6 +108,13 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 	implements WithBreakable, Summarizable
 {
 	private readonly editManager: EditManager<TEditor, TChange, ChangeFamily<TEditor, TChange>>;
+	private readonly externalAuthorityConfiguration: ExternalAuthorityConfiguration | undefined;
+	private readonly authorityListeners = new Set<() => void>();
+	private readonly authorityReceipts = new Map<
+		string,
+		(result: ExternalAuthorityOutcome) => void
+	>();
+	private authorityInitialized = false;
 	private readonly summarizables: readonly [EditManagerSummarizer<TChange>, ...Summarizable[]];
 	/**
 	 * The sequence number that this instance is at.
@@ -160,6 +181,10 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 			schema,
 			policy: schemaPolicy,
 		};
+		this.externalAuthorityConfiguration =
+			options.externalAuthority === undefined
+				? undefined
+				: Object.freeze({ ...options.externalAuthority });
 
 		const rebaseLogger = createChildLogger({
 			logger,
@@ -179,6 +204,7 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 			this.mintRevisionTag,
 			(branchId) => this.registerSharedBranch(branchId),
 			rebaseLogger,
+			options.externalAuthority !== undefined,
 		);
 
 		this.registerSharedBranch("main");
@@ -236,6 +262,15 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 	}): void {
 		const { stringify, fullTree, telemetryContext, incrementalSummaryContext, builder } =
 			props;
+		if (this.externalAuthorityConfiguration !== undefined) {
+			builder.addBlob(
+				authorityBootstrapKey,
+				stringify({
+					externalAuthorityVersion: 1,
+					configuration: this.externalAuthorityConfiguration,
+				} satisfies AuthorityBootstrapMetadata),
+			);
+		}
 		const summarizableBuilder = new SummaryTreeBuilder();
 		// Merge the summaries of all summarizables together under a single ISummaryTree
 		for (const s of this.summarizables) {
@@ -265,6 +300,22 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 		services: IChannelStorageService,
 		parse: SummaryElementParser,
 	): Promise<void> {
+		const hasAuthorityMetadata = await services.contains(authorityBootstrapKey);
+		if (this.externalAuthorityConfiguration !== undefined) {
+			if (!hasAuthorityMetadata) {
+				throw new UsageError(
+					"External authority bootstrap metadata is missing; ordinary or older prototype summaries cannot be reinterpreted",
+				);
+			}
+			validateAuthorityBootstrap(
+				await readAndParseSnapshotBlob(authorityBootstrapKey, services, parse),
+				this.externalAuthorityConfiguration,
+			);
+		} else if (hasAuthorityMetadata) {
+			throw new UsageError(
+				"An external authority summary cannot be loaded by an ordinary SharedTree factory",
+			);
+		}
 		const [editManagerSummarizer, ...summarizables] = this.summarizables;
 		const loadEditManager = this.loadSummarizable(editManagerSummarizer, services, parse);
 		const loadSummarizables = summarizables.map(async (s) =>
@@ -316,6 +367,15 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 	private registerSharedBranch(branchId: BranchId): void {
 		const branch = this.editManager.getLocalBranch(branchId);
 		branch.events.on("beforeChange", (change) => {
+			if (
+				change.type === "append" &&
+				this.externalAuthorityConfiguration !== undefined &&
+				this.authorityInitialized
+			) {
+				for (const commit of change.newCommits) {
+					this.validateAuthorityChange(commit.change);
+				}
+			}
 			if (change.type === "append") {
 				if (this.detachedRevision === undefined) {
 					// Commit enrichment is only necessary for changes that will be submitted as ops, and changes issued while detached are not submitted.
@@ -406,7 +466,7 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 			idCompressor: this.idCompressor,
 			schema: schemaAndPolicy,
 		});
-		this.submitLocalMessage(encodedMessage, {
+		this.submitLocalMessage(this.wrapAuthorityMessage("ordinary", encodedMessage), {
 			// Clone the schema to ensure that during resubmit the schema has not been mutated by later changes
 			schema: schemaAndPolicy.schema.clone(),
 			policy: schemaAndPolicy.policy,
@@ -439,8 +499,50 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 
 		// Get a list of all the commits from the messages.
 		for (const messageContent of messagesContent) {
+			let contents = messageContent.contents;
+			if (this.externalAuthorityConfiguration !== undefined) {
+				const wrapper = readAuthorityEnvelope(contents, this.externalAuthorityConfiguration);
+				if (wrapper.kind === "advance") {
+					if (branchId !== undefined) {
+						processBunch(branchId);
+					}
+					const encoded = readEncodedAdvance(wrapper.content);
+					const decodedCommits = encoded.commits.map((content) => {
+						const draftMessage = this.messageCodec.decode(content, {
+							idCompressor: this.idCompressor,
+						});
+						assert(
+							draftMessage.type === "commit" && draftMessage.branchId === "main",
+							"Authority draft must contain main-branch commits",
+						);
+						this.validateAuthorityChange(draftMessage.commit.change);
+						return draftMessage.commit;
+					});
+					const approvedPrefix = encoded.approvedPrefix.map((id) => {
+						const revision = this.idCompressor.tryRecompress(
+							id as Parameters<IIdCompressor["tryRecompress"]>[0],
+						);
+						assert(revision !== undefined, "Unknown approval identity");
+						return revision;
+					});
+					const result = this.editManager.advanceExternalAuthority(
+						{ ...encoded, approvedPrefix, commits: decodedCommits },
+						brand(envelope.sequenceNumber),
+						this.serializer.stringify(wrapper, this.sharedObject.handle),
+					);
+					// An authority self-echo can change L's base too.
+					if (result === "applied") {
+						this.authorityInitialized = true;
+						this.tryGetResubmitMachine("main")?.onSequencedCommitApplied("root", false);
+					}
+					this.authorityReceipts.get(encoded.batchId)?.(result);
+					this.authorityReceipts.delete(encoded.batchId);
+					continue;
+				}
+				contents = wrapper.content;
+			}
 			// Empty context object is passed in, as our decode function is schema-agnostic.
-			const message = this.messageCodec.decode(messageContent.contents, {
+			const message = this.messageCodec.decode(contents, {
 				idCompressor: this.idCompressor,
 			});
 
@@ -455,6 +557,9 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 			const type = message.type;
 			switch (type) {
 				case "commit": {
+					if (this.externalAuthorityConfiguration !== undefined && this.authorityInitialized) {
+						this.validateAuthorityChange(message.commit.change);
+					}
 					if (branchId !== undefined && message.branchId !== branchId) {
 						processBunch(branchId);
 					}
@@ -485,6 +590,11 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 		}
 
 		this.editManager.advanceMinimumSequenceNumber(brand(envelope.minimumSequenceNumber));
+		if (this.externalAuthorityConfiguration !== undefined) {
+			for (const listener of this.authorityListeners) {
+				listener();
+			}
+		}
 	}
 
 	private processCommits(
@@ -513,6 +623,86 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 		return this.editManager.getLocalBranch("main");
 	}
 
+	public getExternalAuthorityState(): ExternalAuthorityState<TChange> {
+		return this.editManager.getExternalAuthorityState();
+	}
+
+	public get externalAuthorityEnabled(): boolean {
+		return this.externalAuthorityConfiguration !== undefined;
+	}
+
+	public getStableRevision(revision: RevisionTag): string {
+		assert(revision !== "root", "The root has no stable edit identity");
+		return this.idCompressor.decompress(revision);
+	}
+
+	public onExternalAuthorityChanged(listener: () => void): () => void {
+		assert(
+			this.externalAuthorityConfiguration !== undefined,
+			"External authority mode is not enabled",
+		);
+		this.authorityListeners.add(listener);
+		return () => this.authorityListeners.delete(listener);
+	}
+
+	protected validateAuthorityChange(_change: TChange): void {}
+
+	private wrapAuthorityMessage(kind: AuthorityEnvelope["kind"], content: unknown): unknown {
+		return this.externalAuthorityConfiguration === undefined
+			? content
+			: ({
+					externalAuthorityVersion: 1,
+					configuration: this.externalAuthorityConfiguration,
+					kind,
+					content,
+				} satisfies AuthorityEnvelope);
+	}
+
+	public async publishExternalAuthority(
+		advance: ExternalAuthorityAdvance<TChange>,
+	): Promise<ExternalAuthorityOutcome> {
+		assert(
+			this.externalAuthorityConfiguration !== undefined,
+			"External authority mode is not enabled",
+		);
+		assert(
+			this.detachedRevision === undefined,
+			"Attach the tree before publishing authority advances",
+		);
+		assert(
+			!this.authorityReceipts.has(advance.batchId),
+			"Authority batch is already in flight",
+		);
+		for (const commit of advance.commits) {
+			this.validateAuthorityChange(commit.change);
+		}
+		const encoded = {
+			batchId: advance.batchId,
+			expected: advance.expected,
+			next: advance.next,
+			approvedPrefix: advance.approvedPrefix.map((revision) => {
+				assert(revision !== "root", "Cannot approve the root revision");
+				return this.idCompressor.decompress(revision);
+			}),
+			commits: advance.commits.map((commit) =>
+				this.messageCodec.encode(
+					{
+						type: "commit",
+						branchId: "main",
+						sessionId: this.idCompressor.localSessionId,
+						commit,
+					},
+					{ idCompressor: this.idCompressor, schema: this.schemaAndPolicy },
+				),
+			),
+		};
+		const receipt = new Promise<ExternalAuthorityOutcome>((resolve) => {
+			this.authorityReceipts.set(advance.batchId, resolve);
+		});
+		this.submitLocalMessage(this.wrapAuthorityMessage("advance", encoded));
+		return receipt;
+	}
+
 	public getSharedBranchIds(): string[] {
 		return this.editManager
 			.getSharedBranchIds()
@@ -539,8 +729,17 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 	}
 
 	public reSubmitCore(content: JsonCompatibleReadOnly, localOpMetadata: unknown): void {
+		let ordinaryContent = content;
+		if (this.externalAuthorityConfiguration !== undefined) {
+			const wrapper = readAuthorityEnvelope(content, this.externalAuthorityConfiguration);
+			if (wrapper.kind === "advance") {
+				this.submitLocalMessage(this.serializer.decode(wrapper), localOpMetadata);
+				return;
+			}
+			ordinaryContent = wrapper.content as JsonCompatibleReadOnly;
+		}
 		// Empty context object is passed in, as our decode function is schema-agnostic.
-		const message = this.messageCodec.decode(this.serializer.decode(content), {
+		const message = this.messageCodec.decode(this.serializer.decode(ordinaryContent), {
 			idCompressor: this.idCompressor,
 		});
 
@@ -584,8 +783,16 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 	}
 
 	public rollback(content: JsonCompatibleReadOnly, localOpMetadata: unknown): void {
+		let ordinaryContent = content;
+		if (this.externalAuthorityConfiguration !== undefined) {
+			const wrapper = readAuthorityEnvelope(content, this.externalAuthorityConfiguration);
+			if (wrapper.kind === "advance") {
+				assert(false, "Rollback of an authority publication is not supported");
+			}
+			ordinaryContent = wrapper.content as JsonCompatibleReadOnly;
+		}
 		// Empty context object is passed in, as our decode function is schema-agnostic.
-		const message = this.messageCodec.decode(this.serializer.decode(content), {
+		const message = this.messageCodec.decode(this.serializer.decode(ordinaryContent), {
 			idCompressor: this.idCompressor,
 		});
 
@@ -615,8 +822,17 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
 	}
 
 	public applyStashedOp(content: JsonCompatibleReadOnly): void {
+		let ordinaryContent = content;
+		if (this.externalAuthorityConfiguration !== undefined) {
+			const wrapper = readAuthorityEnvelope(content, this.externalAuthorityConfiguration);
+			if (wrapper.kind === "advance") {
+				// The runtime retains this for retransmission. No optimistic authority path.
+				return;
+			}
+			ordinaryContent = wrapper.content as JsonCompatibleReadOnly;
+		}
 		// Empty context object is passed in, as our decode function is schema-agnostic.
-		const message = this.messageCodec.decode(this.serializer.decode(content), {
+		const message = this.messageCodec.decode(this.serializer.decode(ordinaryContent), {
 			idCompressor: this.idCompressor,
 		});
 

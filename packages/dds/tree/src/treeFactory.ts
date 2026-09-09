@@ -198,8 +198,14 @@ export function configuredSharedTreeInternal(
 	options: SharedTreeOptionsInternal,
 ): ISharedObjectKind<ITree> & SharedObjectKind<ITree> {
 	const sharedObjectOptions: SharedObjectOptions<ITree> = {
-		type: SharedTreeFactoryType,
-		attributes: SharedTreeAttributes,
+		type:
+			options.externalAuthority === undefined
+				? SharedTreeFactoryType
+				: `${SharedTreeFactoryType}/external-authority-v1`,
+		attributes:
+			options.externalAuthority === undefined
+				? SharedTreeAttributes
+				: { ...SharedTreeAttributes, type: `${SharedTreeFactoryType}/external-authority-v1` },
 		telemetryContextPrefix: "fluid_sharedTree_",
 		factory: treeKernelFactory(options),
 	};
@@ -218,6 +224,21 @@ export function resolveOptions(options: SharedTreeOptions): SharedTreeOptionsInt
 }
 
 function resolveFormatOptions(options: SharedTreeOptions): SharedTreeOptionsInternal {
+	if (options.externalAuthority !== undefined) {
+		const { documentEpoch, authorityId, authorityEpoch } = options.externalAuthority;
+		if (
+			[documentEpoch, authorityId, authorityEpoch].some(
+				(value) => typeof value !== "string" || value.length === 0,
+			)
+		) {
+			throw new UsageError(
+				"External authority requires nonempty documentEpoch, authorityId and authorityEpoch labels",
+			);
+		}
+	}
+	if (options.externalAuthority !== undefined && options.enableSharedBranches === true) {
+		throw new UsageError("External authority mode does not support shared branches");
+	}
 	const enableSharedBranches = options.enableSharedBranches ?? false;
 
 	if (enableSharedBranches) {

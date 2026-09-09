@@ -58,6 +58,7 @@ import {
 	type TaggedChange,
 	deltaFieldMapHasVisibleChanges,
 	findCommonAncestor,
+	findAncestor,
 } from "../core/index.js";
 import {
 	type FieldBatchCodec,
@@ -315,6 +316,7 @@ export function createTreeCheckout(
 		logger?: TelemetryLoggerExt;
 		breaker?: Breakable;
 		codecOptions?: Partial<CodecWriteOptions>;
+		externalAuthority?: boolean;
 	},
 ): TreeCheckout {
 	const breaker = args?.breaker ?? new Breakable("TreeCheckout");
@@ -360,6 +362,7 @@ export function createTreeCheckout(
 		args?.removedRoots,
 		args?.logger,
 		breaker,
+		args?.externalAuthority ?? false,
 	);
 }
 
@@ -531,6 +534,7 @@ export class TreeCheckout implements ITreeCheckout {
 		/** Optional logger for telemetry. */
 		private readonly logger?: TelemetryLoggerExt,
 		public readonly breaker: Breakable = new Breakable("TreeCheckout"),
+		private readonly externalAuthority = false,
 	) {
 		this.#transaction = this.createTransactionStack(branch);
 		this.editLock = new EditLock(this.#transaction.activeBranchEditor);
@@ -1233,6 +1237,7 @@ export class TreeCheckout implements ITreeCheckout {
 			this._removedRoots.clone(),
 			this.logger,
 			forkBreaker,
+			this.externalAuthority,
 		);
 		this.#events.emit("fork", checkout);
 		return checkout;
@@ -1420,7 +1425,14 @@ export class TreeCheckout implements ITreeCheckout {
 
 		const revertibleBranch = this.revertibleCommitBranches.get(revision);
 		assert(revertibleBranch !== undefined, 0x7cc /* expected to find a revertible commit */);
-		const commitToRevert = revertibleBranch.getHead();
+		// Authority insertion changes the semantic base of provisional edits. Undo
+		// must invert that revision in the new history, not its old authoring value.
+		const commitToRevert = this.externalAuthority
+			? (findAncestor(
+					this.#transaction.activeBranch.getHead(),
+					(commit) => commit.revision === revision,
+				) ?? fail("The undo revision is absent from the current authority history"))
+			: revertibleBranch.getHead();
 		const revisionForInvert = this.mintRevisionTag();
 
 		let change = tagChange(

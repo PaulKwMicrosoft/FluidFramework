@@ -5,6 +5,14 @@
 
 // For the time being, if exports are changed, additional files under entrypoints need updated.
 // Run `pnpm generate:entrypoint-sources` to update them.
+export {
+	getSharedTreeAuthority,
+	type SharedTreeAuthorityCapture,
+	type SharedTreeAuthorityDraft,
+	type SharedTreeAuthorityPublication,
+	type SharedTreeAuthorityController,
+} from "./shared-tree/index.js";
+export type { ExternalAuthorityConfiguration } from "./shared-tree-core/index.js";
 
 export {
 	ValueSchema,
