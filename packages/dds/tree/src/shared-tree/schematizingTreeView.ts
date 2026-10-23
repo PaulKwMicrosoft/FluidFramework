@@ -549,6 +549,7 @@ export class SchematizingSimpleTreeView<
 					HydratedContext.schemaMapFromRootSchema(
 						this.rootFieldSchema.allowedTypesFull.evaluate(),
 					),
+					compatibility.isEquivalent && !hasStagedSchemaUpgrades(this.viewSchema),
 				),
 			);
 

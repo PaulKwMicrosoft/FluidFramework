@@ -34,9 +34,11 @@ import { brand, type Mutable } from "../util/index.js";
 import {
 	getKernel,
 	type ImplicitAllowedTypes,
+	SimpleContextSlot,
 	type TreeNode,
 	type UnhydratedFlexTreeNode,
 } from "./core/index.js";
+import { isGeneratedUnhydratedContext } from "./createContext.js";
 import type { ImplicitFieldSchema } from "./fieldSchema.js";
 import {
 	type InsertableContent,
@@ -183,9 +185,70 @@ function validateAndPrepare(
 		// We can't simply enable it for them however due to contextual default fields which would not have been created yet (see comment above).
 		// Specifically at least clone can result in unhydrated trees which can end up violating their stored schema (but not view schema) just using the type safe APIs.
 		if (validateSchema === true) {
-			isFieldInSchema(mapTrees, fieldSchema, schemaAndPolicy, throwOutOfSchema);
+			if (isKnownInStoredSchema(mapTrees, fieldSchema, hydratedData)) {
+				debugAssert(() => {
+					isFieldInSchema(mapTrees, fieldSchema, schemaAndPolicy, throwOutOfSchema);
+					return true;
+				});
+			} else {
+				isFieldInSchema(mapTrees, fieldSchema, schemaAndPolicy, throwOutOfSchema);
+			}
 		}
 	}
+}
+
+/**
+ * Returns true if `mapTrees`, about to be inserted into a field with schema `fieldSchema` of the tree `hydratedData` views,
+ * are known to be in that tree's stored schema without checking them against it.
+ * @remarks
+ * This is the case when:
+ *
+ * - the view's stored schema matches its view schema, with no staged upgrades (see {@link HydratedContext.storedSchemaMatchesViewSchema}),
+ *
+ * - `fieldSchema` allows the type of each of `mapTrees`,
+ *
+ * - and every node in `mapTrees` belongs to an unhydrated context generated from view schema (see {@link isGeneratedUnhydratedContext}),
+ * with the same schema class for its type as the view.
+ *
+ * Content in such contexts was either constructed through its schema classes, which only accept content their view schema allows,
+ * or imported, which checks it against the context's stored schema.
+ * With no staged upgrades, that stored schema holds the same node schemas as the view's stored schema.
+ *
+ * Content in other contexts can still be out of the view's stored schema: for example, nodes cloned from a tree whose stored schema has optional fields the view schema doesn't know.
+ * Such content is always checked.
+ *
+ * Exported for testing purposes: otherwise should not be used outside this module.
+ */
+export function isKnownInStoredSchema(
+	mapTrees: readonly UnhydratedFlexTreeNode[],
+	fieldSchema: TreeFieldStoredSchema,
+	hydratedData: FlexTreeHydratedContextMinimal,
+): boolean {
+	const viewContext = hydratedData.checkout.forest.anchors.slots.get(SimpleContextSlot);
+	if (viewContext?.storedSchemaMatchesViewSchema !== true) {
+		return false;
+	}
+	const viewSchemas = viewContext.schema;
+	const pending: UnhydratedFlexTreeNode[] = [];
+	for (const node of mapTrees) {
+		if (!fieldSchema.types.has(node.type)) {
+			return false;
+		}
+		pending.push(node);
+	}
+	for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+		const context = node.simpleContext;
+		if (
+			!isGeneratedUnhydratedContext(context) ||
+			context.schema.get(node.type) !== viewSchemas.get(node.type)
+		) {
+			return false;
+		}
+		for (const field of node.allFieldsLazy.values()) {
+			pending.push(...field.children);
+		}
+	}
+	return true;
 }
 
 /**
