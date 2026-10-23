@@ -18,7 +18,14 @@ import type {
 import { MockStorage, validateUsageError } from "@fluidframework/test-runtime-utils/internal";
 
 import { FluidClientVersion, type CodecWriteOptions } from "../../../codec/index.js";
+import { EmptyKey, rootFieldKey } from "../../../core/index.js";
 import { FormatValidatorBasic } from "../../../external-utilities/index.js";
+// eslint-disable-next-line import-x/no-internal-modules
+import { BasicChunk } from "../../../feature-libraries/chunked-forest/basicChunk.js";
+// eslint-disable-next-line import-x/no-internal-modules
+import { ChunkedForest } from "../../../feature-libraries/chunked-forest/chunkedForest.js";
+// eslint-disable-next-line import-x/no-internal-modules
+import { UniformChunk } from "../../../feature-libraries/chunked-forest/uniformChunk.js";
 // eslint-disable-next-line import-x/no-internal-modules
 import type { FormatCommon } from "../../../feature-libraries/forest-summary/formatCommon.js";
 import {
@@ -436,6 +443,46 @@ describe("ForestSummarizer", () => {
 				});
 			});
 		}
+
+		it("stores loaded content compactly in an optimized forest without changing its summary", async () => {
+			const loadFactory = new SchemaFactory("forestSummarizerLoad");
+			class Item extends loadFactory.object("Item", {
+				label: loadFactory.optional(loadFactory.string),
+			}) {}
+			class Items extends loadFactory.array("Items", Item) {}
+			const schema = toStoredSchema(Items, StagedSchemaUpgradePolicy.permissive);
+			const { forestSummarizer } = createForestSummarizer({
+				initialContent: {
+					schema,
+					initialTree: fieldCursorFromInsertable(Items, [{ label: "a" }, { label: "b" }]),
+				},
+				encodeType: TreeCompressionStrategy.Compressed,
+				forestType: ForestTypeOptimized,
+			});
+			const summary = forestSummarizer.summarize({ stringify: JSON.stringify });
+
+			const { forestSummarizer: forestSummarizer2, checkout: checkout2 } =
+				createForestSummarizer({
+					initialContent: { schema, initialTree: fieldJsonCursor([]) },
+					encodeType: TreeCompressionStrategy.Compressed,
+					forestType: ForestTypeOptimized,
+				});
+			await forestSummarizer2.load(MockStorage.createFromSummary(summary.summary), JSON.parse);
+
+			// The decoder builds one chunk per node: the loaded items are chunked again into one uniform chunk.
+			const forest = checkout2.forest;
+			assert(forest instanceof ChunkedForest);
+			const root = forest.roots.fields.get(rootFieldKey)?.[0];
+			assert(root instanceof BasicChunk);
+			const items = root.fields.get(EmptyKey);
+			assert(items?.length === 1 && items[0] instanceof UniformChunk);
+			assert.equal(items[0].topLevelLength, 2);
+
+			assert.deepEqual(
+				forestSummarizer2.summarize({ stringify: JSON.stringify }).summary,
+				summary.summary,
+			);
+		});
 	});
 
 	describe("Incremental summarization", () => {

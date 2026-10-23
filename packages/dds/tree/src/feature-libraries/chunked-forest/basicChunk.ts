@@ -49,6 +49,14 @@ export class BasicChunk extends ReferenceCountedBase implements TreeChunk {
 		 * The value on this node, if any.
 		 */
 		public value?: TreeValue,
+		/**
+		 * Whether this chunk was laid out without a chunking policy, one chunk per node,
+		 * as the persisted-format decoder does.
+		 * @remarks
+		 * A chunker which can find a more compact layout re-chunks such content instead of reusing this chunk.
+		 * See `ChunkPolicy.contentShapes`.
+		 */
+		public readonly provisionalLayout: boolean = false,
 	) {
 		super();
 	}
@@ -62,7 +70,7 @@ export class BasicChunk extends ReferenceCountedBase implements TreeChunk {
 			});
 			fields.set(k, field);
 		}
-		return new BasicChunk(this.type, fields, this.value);
+		return new BasicChunk(this.type, fields, this.value, this.provisionalLayout);
 	}
 
 	public cursor(): ChunkedCursor {
