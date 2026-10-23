@@ -148,6 +148,7 @@ export {
 	comparePersistedSchema,
 	type ConciseTree,
 	checkSchemaCompatibility,
+	checkGeneratedSchemaCompatibility,
 	getSchemaIncompatibilityDetails,
 	type Unenforced,
 	type System_Unsafe,
@@ -339,6 +340,7 @@ export {
 	toUpgradeSchema,
 	toInitialSchema,
 	toUnhydratedSchema,
+	hasStagedSchemaUpgrades,
 } from "./toStoredSchema.js";
 export {
 	numberSchema,
