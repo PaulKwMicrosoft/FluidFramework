@@ -82,6 +82,21 @@ export function getCachedField(node: LazyTreeNode, key: FieldKey): FlexTreeField
 	return field === undefined || field.isFreed() ? undefined : field;
 }
 
+/**
+ * Disposes the fields {@link makeField} cached for `node`, releasing the cursors and anchor references they hold.
+ */
+export function disposeCachedFields(node: LazyTreeNode): void {
+	const fields = fieldCache.get(node);
+	if (fields === undefined) {
+		return;
+	}
+	fieldCache.delete(node);
+	for (const field of fields.values()) {
+		if (!field.isFreed()) {
+			field[disposeSymbol]();
+		}
+	}
+}
 
 /**
  * Gets the {@link FlexTreeField} for the field `cursor` is in, creating it if it is not cached.
