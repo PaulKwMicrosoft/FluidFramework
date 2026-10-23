@@ -17,11 +17,8 @@ import {
 } from "../../../codec/index.js";
 import { rootFieldKey } from "../../../core/index.js";
 import { FormatValidatorBasic } from "../../../external-utilities/index.js";
-import {
-	chunkField,
-	defaultChunkPolicy,
-	// eslint-disable-next-line import-x/no-internal-modules
-} from "../../../feature-libraries/chunked-forest/chunkTree.js";
+// eslint-disable-next-line import-x/no-internal-modules
+import { BasicChunk } from "../../../feature-libraries/chunked-forest/basicChunk.js";
 // eslint-disable-next-line import-x/no-internal-modules
 import type { TreeChunk } from "../../../feature-libraries/chunked-forest/index.js";
 import {
@@ -36,12 +33,11 @@ import type { FormatCommon } from "../../../feature-libraries/forest-summary/for
 import {
 	FieldBatchFormatVersion,
 	TreeCompressionStrategy,
-	cursorForJsonableTreeField,
 	fieldBatchCodecBuilder,
 } from "../../../feature-libraries/index.js";
 import { brand } from "../../../util/index.js";
 import { EmptyObject } from "../../cursorTestSuite.js";
-import { makeTestFieldBatchContexts, testIdCompressor } from "../../utils.js";
+import { makeTestFieldBatchContexts } from "../../utils.js";
 
 const codecOptionsOld: CodecWriteOptions = {
 	jsonValidator: FormatValidatorBasic,
@@ -66,12 +62,14 @@ const codecCurrent = forestCodecBuilder.build({
 	...codecOptionsCurrent,
 });
 
-const testFieldChunks: TreeChunk[] = chunkField(
-	cursorForJsonableTreeField([{ type: brand(EmptyObject.identifier) }]),
-	{ policy: defaultChunkPolicy, idCompressor: testIdCompressor },
+// Decoded chunks have a provisional layout (see `BasicChunk.provisionalLayout`), so the data to encode uses one too,
+// to compare equal to the decoded data.
+const testFieldChunk: TreeChunk = new BasicChunk(
+	brand(EmptyObject.identifier),
+	new Map(),
+	undefined,
+	true,
 );
-assert(testFieldChunks.length === 1);
-const testFieldChunk: TreeChunk = testFieldChunks[0];
 
 const malformedData: [string, unknown][] = [
 	[
