@@ -41,7 +41,12 @@ export function cloneTree<const TSchema extends ImplicitFieldSchema>(
 		types: new Set([brand(kernel.schema.identifier)]),
 		persistedMetadata: undefined,
 	};
-	return createFromCursor(kernel.schema, cursor, fieldSchema, context) as Unhydrated<
-		TreeFieldFromImplicitField<TSchema>
-	>;
+	// A hydrated node's content was read from its forest, which only holds content in the stored schema the clone's context uses.
+	return createFromCursor(
+		kernel.schema,
+		cursor,
+		fieldSchema,
+		context,
+		kernel.isHydrated(),
+	) as Unhydrated<TreeFieldFromImplicitField<TSchema>>;
 }

@@ -54,6 +54,13 @@ export class HydratedContext extends Context {
 	public constructor(
 		public override readonly flexContext: FlexTreeHydratedContext,
 		schema: ReadonlyMap<string, TreeNodeSchema>,
+		/**
+		 * True when the view schema has no staged upgrades, and the stored schema allows exactly the content the view schema does
+		 * (see {@link SchemaCompatibilityStatus.isEquivalent}).
+		 * @remarks
+		 * The stored schema then holds, for each schema class in `schema`, the same node schema as unhydrated contexts generated from view schema.
+		 */
+		public readonly storedSchemaMatchesViewSchema: boolean = false,
 	) {
 		super(flexContext, schema);
 	}
