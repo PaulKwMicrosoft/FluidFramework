@@ -17,12 +17,18 @@ import {
 	rootFieldKey,
 } from "../../../core/index.js";
 import type { Context } from "../../../feature-libraries/flex-tree/context.js";
+import { LazyField } from "../../../feature-libraries/flex-tree/lazyField.js";
 import { LazyTreeNode } from "../../../feature-libraries/flex-tree/lazyNode.js";
 import type { FlexTreeField, FlexTreeNode } from "../../../feature-libraries/index.js";
 import { JsonAsTree } from "../../../jsonDomainSchema.js";
-import { SchemaFactory } from "../../../simple-tree/index.js";
+import {
+	getInnerNode,
+	SchemaFactory,
+	TreeViewConfiguration,
+} from "../../../simple-tree/index.js";
 import { stringSchema } from "../../../simple-tree/leafNodeSchema.js";
 import { brand } from "../../../util/index.js";
+import { getView } from "../../utils.js";
 
 import { readonlyTreeWithContent } from "./utils.js";
 
@@ -123,6 +129,81 @@ describe("LazyNode", () => {
 			);
 
 			assert.equal(node.value, "Hello world");
+		});
+
+		describe("fields", () => {
+			const factory = new SchemaFactory("LazyNode-fields");
+			class Item extends factory.object("Item", { value: factory.number }) {}
+			class Holder extends factory.object("Holder", {
+				item: factory.optional(Item),
+				items: factory.array(Item),
+			}) {}
+			const config = new TreeViewConfiguration({ schema: Holder });
+
+			function setup() {
+				const view = getView(config);
+				view.initialize({ item: { value: 1 }, items: [{ value: 2 }, { value: 3 }] });
+				const node = getInnerNode(view.root);
+				assert(node instanceof LazyTreeNode);
+				const anchors = view.checkout.forest.anchors;
+				let tracked = 0;
+				const track = anchors.track.bind(anchors);
+				anchors.track = (path) => {
+					tracked++;
+					return track(path);
+				};
+				return { view, node, anchors, trackCount: () => tracked };
+			}
+
+			it("tryGetField and getBoxed reuse the cached field without anchoring", () => {
+				const { view, node, trackCount } = setup();
+				const field = node.getBoxed(brand("items"));
+				const afterFirstRead = trackCount();
+				assert.equal(node.tryGetField(brand("items")), field);
+				assert.equal(node.getBoxed(brand("items")), field);
+				assert.equal(node.fields.get(brand("items")), field);
+				assert.equal(trackCount(), afterFirstRead);
+				view.dispose();
+			});
+
+			it("tryGetField returns undefined for an empty cached field", () => {
+				const { view, node } = setup();
+				const field = node.getBoxed(brand("item"));
+				assert.equal(field.length, 1);
+				view.root.item = undefined;
+				assert.equal(node.tryGetField(brand("item")), undefined);
+				assert.equal(node.getBoxed(brand("item")), field);
+				view.root.item = new Item({ value: 4 });
+				assert.equal(node.tryGetField(brand("item")), field);
+				view.dispose();
+			});
+
+			it("anchors new fields and child nodes from the parent's anchor node", () => {
+				const { view, anchors } = setup();
+				const arrayNode = getInnerNode(view.root.items);
+				assert(arrayNode instanceof LazyTreeNode);
+				const field = arrayNode.getBoxed(EmptyKey);
+				assert(field instanceof LazyField);
+				assert(field.anchor.parent !== undefined);
+				assert.equal(anchors.locate(field.anchor.parent), arrayNode.anchorNode);
+
+				const unboxed = field.atIndex(0);
+				assert(unboxed instanceof LazyTreeNode);
+				assert.equal(unboxed.anchorNode.parent, arrayNode.anchorNode);
+				assert.equal(anchors.locate(unboxed.anchor), unboxed.anchorNode);
+				assert.equal(field.atIndex(0), unboxed);
+				assert.equal(field.boxedAt(0), unboxed);
+
+				// Fields and nodes keep working after edits move them.
+				view.root.items.insertAt(0, { value: 0 });
+				assert.equal(unboxed.anchorNode.parentIndex, 1);
+				assert.equal(field.atIndex(1), unboxed);
+				assert.equal(field.length, 3);
+				assert.equal(view.root.items[1].value, 2);
+
+				view.dispose();
+				assert(anchors.isEmpty());
+			});
 		});
 	});
 });
