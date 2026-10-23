@@ -215,6 +215,68 @@ export function toInitialSchema(
 export const toUnhydratedSchema: StagedSchemaUpgradePolicy =
 	StagedSchemaUpgradePolicy.permissive;
 
+const hasStagedSchemaUpgradesCache = new WeakMap<SimpleTreeSchema, boolean>();
+
+/**
+ * Returns true if a view schema contains any staged schema upgrades:
+ * staged allowed types or {@link SchemaStaticsAlpha.stagedOptional | staged optional} fields.
+ * @remarks
+ * Staged upgrades are the only part of a view schema which a {@link StagedSchemaUpgradePolicy} affects.
+ * Without them, every policy (including {@link toUnhydratedSchema}) generates the same stored schema from the view schema.
+ *
+ * The result is cached per schema object.
+ */
+export function hasStagedSchemaUpgrades(schema: SimpleTreeSchema<SchemaType.View>): boolean {
+	return getOrCreate(hasStagedSchemaUpgradesCache, schema, () => {
+		const fieldHasStagedUpgrades = (field: SimpleFieldSchema<SchemaType.View>): boolean =>
+			(field.isStagedOptional !== undefined && field.isStagedOptional !== false) ||
+			allowedTypesHaveStagedUpgrades(field.simpleAllowedTypes);
+
+		if (fieldHasStagedUpgrades(schema.root)) {
+			return true;
+		}
+		for (const nodeSchema of schema.definitions.values()) {
+			const kind = nodeSchema.kind;
+			switch (kind) {
+				case NodeKind.Leaf: {
+					break;
+				}
+				case NodeKind.Array:
+				case NodeKind.Map:
+				case NodeKind.Record: {
+					if (allowedTypesHaveStagedUpgrades(nodeSchema.simpleAllowedTypes)) {
+						return true;
+					}
+					break;
+				}
+				case NodeKind.Object: {
+					for (const field of nodeSchema.fields.values()) {
+						if (fieldHasStagedUpgrades(field)) {
+							return true;
+						}
+					}
+					break;
+				}
+				default: {
+					unreachableCase(kind);
+				}
+			}
+		}
+		return false;
+	});
+}
+
+function allowedTypesHaveStagedUpgrades(
+	allowedTypes: SimpleAllowedTypes<SchemaType.View>,
+): boolean {
+	for (const { isStaged } of allowedTypes.values()) {
+		if (isStaged !== false) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /**
  * Converts a {@link ImplicitFieldSchema} into a {@link TreeStoredSchema}.
  *
