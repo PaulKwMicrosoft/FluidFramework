@@ -3,7 +3,7 @@
  * Licensed under the MIT License.
  */
 
-import { assert } from "@fluidframework/core-utils/internal";
+import { assert, debugAssert } from "@fluidframework/core-utils/internal";
 import { UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import {
@@ -37,12 +37,17 @@ import { unknownTypeError } from "./customTree.js";
  * @remarks
  * Does not support providing missing defaults values.
  * Validates the field is in schema using `destinationSchema` the provided `contextForNewNodes` or the default unhydrated context if not provided.
+ *
+ * @param contentIsInSchema - True when the cursor's content is already known to be in `destinationSchema`,
+ * in the stored schema of `contextForNewNodes`: for example, content read from a forest which uses that stored schema.
+ * The content is then only validated in debug builds.
  */
 export function createFromCursor<const TSchema extends ImplicitFieldSchema>(
 	schema: TSchema,
 	cursor: ITreeCursorSynchronous | undefined,
 	destinationSchema: TreeFieldStoredSchema,
 	contextForNewNodes?: Context,
+	contentIsInSchema = false,
 ): Unhydrated<TreeFieldFromImplicitField<TSchema>> {
 	const context = contextForNewNodes ?? getUnhydratedContext(schema);
 	assert(context.flexContext.isHydrated() === false, 0xbfe /* Expected unhydrated context */);
@@ -54,7 +59,14 @@ export function createFromCursor<const TSchema extends ImplicitFieldSchema>(
 	};
 
 	// Assuming the caller provides the correct `contextForNewNodes`, this should handle unknown optional fields.
-	isFieldInSchema(mapTrees, destinationSchema, schemaAndPolicy, throwOutOfSchema);
+	if (contentIsInSchema) {
+		debugAssert(() => {
+			isFieldInSchema(mapTrees, destinationSchema, schemaAndPolicy, throwOutOfSchema);
+			return true;
+		});
+	} else {
+		isFieldInSchema(mapTrees, destinationSchema, schemaAndPolicy, throwOutOfSchema);
+	}
 
 	if (mapTrees.length === 0) {
 		return undefined as Unhydrated<TreeFieldFromImplicitField<TSchema>>;
