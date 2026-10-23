@@ -111,6 +111,7 @@ export {
 	chunkField,
 	chunkFieldSingle,
 	buildChunkedForest,
+	chunkFieldForForest,
 	defaultChunkPolicy,
 	type FieldBatch,
 	type FieldBatchCodec,
@@ -162,6 +163,7 @@ export {
 	isNodeInSchema,
 	isFieldInSchema,
 	throwOutOfSchema,
+	compliesWithMultiplicity,
 } from "./schemaChecker.js";
 
 export {

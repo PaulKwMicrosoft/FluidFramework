@@ -18,6 +18,7 @@ import {
 	type FieldKey,
 	type ForestEvents,
 	type IEditableForest,
+	type IForestSubscription,
 	type ITreeCursorSynchronous,
 	type ITreeSubscriptionCursor,
 	ITreeSubscriptionCursorState,
@@ -45,6 +46,7 @@ import {
 	Breakable,
 	type WithBreakable,
 } from "../../util/index.js";
+import { type CursorAdapter, stackTreeFieldCursor } from "../treeCursorUtils.js";
 
 import { BasicChunk, BasicChunkCursor, type SiblingsOrKey } from "./basicChunk.js";
 import {
@@ -52,6 +54,7 @@ import {
 	type IChunker,
 	basicChunkTree,
 	chunkField,
+	chunkFieldFromAdapter,
 	chunkTree,
 	coalesceUniformChunks,
 	splitFieldAtIndex,
@@ -674,4 +677,29 @@ export function buildChunkedForest(
 		idCompressor,
 		breaker,
 	);
+}
+
+/**
+ * Chunks the content of `detachedField` under `root`, read through `adapter`, for insertion into `forest`.
+ *
+ * @remarks
+ * Gives the chunks `forest.chunkField` gives for a cursor over the content ({@link stackTreeFieldCursor}).
+ * A {@link ChunkedForest} builds them directly from the content (see {@link chunkFieldFromAdapter}),
+ * other forests through such a cursor.
+ */
+export function chunkFieldForForest<TNode>(
+	forest: IForestSubscription,
+	adapter: CursorAdapter<TNode>,
+	root: TNode,
+	detachedField: DetachedField,
+): TreeChunk[] {
+	if (forest instanceof ChunkedForest) {
+		forest.breaker.use();
+		return chunkFieldFromAdapter(
+			adapter.getFieldFromNode(root, detachedFieldAsKey(detachedField)),
+			adapter,
+			{ idCompressor: forest.idCompressor, policy: forest.chunker },
+		);
+	}
+	return forest.chunkField(stackTreeFieldCursor(adapter, root, detachedField));
 }
