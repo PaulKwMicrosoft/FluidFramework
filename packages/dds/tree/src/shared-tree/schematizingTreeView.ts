@@ -9,10 +9,16 @@ import type {
 	IEmitter,
 	Listenable,
 } from "@fluidframework/core-interfaces/internal";
-import { assert } from "@fluidframework/core-utils/internal";
+import { assert, debugAssert } from "@fluidframework/core-utils/internal";
 import { tagSchemaArtifacts, UsageError } from "@fluidframework/telemetry-utils/internal";
 
-import { anchorSlot, rootFieldKey, type RevertToOptionsAlpha } from "../core/index.js";
+import {
+	anchorSlot,
+	rootFieldKey,
+	schemaDataIsEmpty,
+	type RevertToOptionsAlpha,
+	type TreeStoredSchema,
+} from "../core/index.js";
 import {
 	type NodeIdentifierManager,
 	defaultSchemaPolicy,
@@ -34,6 +40,8 @@ import {
 	setField,
 	normalizeFieldSchema,
 	checkSchemaCompatibility,
+	checkGeneratedSchemaCompatibility,
+	hasStagedSchemaUpgrades,
 	type InsertableContent,
 	type StagedSchemaUpgradePolicy,
 	type TreeViewConfiguration,
@@ -88,6 +96,19 @@ import { type CheckoutBase, TreeCheckout } from "./treeCheckout.js";
  * exists and error if creating a second.
  */
 export const ViewSlot = anchorSlot<TreeContextAlpha>();
+
+function isSameCompatibility(
+	a: ReturnType<typeof checkSchemaCompatibility>,
+	b: ReturnType<typeof checkSchemaCompatibility>,
+): boolean {
+	return (
+		a.canView === b.canView &&
+		a.canUpgrade === b.canUpgrade &&
+		a.isEquivalent === b.isEquivalent &&
+		JSON.stringify(a.discrepancies) === JSON.stringify(b.discrepancies) &&
+		JSON.stringify([...a.enabledUpgrades]) === JSON.stringify([...b.enabledUpgrades])
+	);
+}
 
 function throwIfSchemaIsIncompatible(compatibility: SchemaCompatibilityStatusBeta): void {
 	if (compatibility.canView) {
@@ -170,6 +191,15 @@ export class SchematizingSimpleTreeView<
 	 * Hydration work deferred until Context has been created.
 	 */
 	private pendingHydration?: () => void;
+
+	/**
+	 * While {@link SchematizingSimpleTreeView.initialize} installs a stored schema generated from a view schema with no staged upgrades,
+	 * the stored schema it generated.
+	 * @remarks
+	 * Every non-empty stored schema installed meanwhile has this schema's node schemas, so compatibility only depends on the root field:
+	 * see {@link checkGeneratedSchemaCompatibility}.
+	 */
+	private initializingSchema: TreeStoredSchema | undefined;
 
 	private readonly rootFieldSchema: FieldSchema;
 	public readonly breaker: Breakable;
@@ -314,18 +344,25 @@ export class SchematizingSimpleTreeView<
 			);
 
 			this.runTransaction(() => {
-				initialize(
-					this.checkout,
-					schema,
-					initializerFromChunk(this.checkout, () => {
-						// This must be done after initial schema is set!
-						return combineChunks(
-							this.checkout.forest.chunkField(
-								cursorForMapTreeField(mapTree === undefined ? [] : [mapTree]),
-							),
-						);
-					}),
-				);
+				this.initializingSchema = hasStagedSchemaUpgrades(this.viewSchema)
+					? undefined
+					: schema;
+				try {
+					initialize(
+						this.checkout,
+						schema,
+						initializerFromChunk(this.checkout, () => {
+							// This must be done after initial schema is set!
+							return combineChunks(
+								this.checkout.forest.chunkField(
+									cursorForMapTreeField(mapTree === undefined ? [] : [mapTree]),
+								),
+							);
+						}),
+					);
+				} finally {
+					this.initializingSchema = undefined;
+				}
 			});
 		});
 		if (schemaHash !== undefined) {
@@ -564,10 +601,24 @@ export class SchematizingSimpleTreeView<
 	 * Computes the current schema compatibility status and updates the cached enabled upgrades.
 	 */
 	private computeCompatibility(): SchemaCompatibilityStatusBeta {
-		const { enabledUpgrades, ...compatibility } = checkSchemaCompatibility(
-			this.viewSchema,
-			this.checkout.storedSchema,
-			this.stagedUpgradePolicy,
+		const storedSchema = this.checkout.storedSchema;
+		const initializingSchema = this.initializingSchema;
+		const { enabledUpgrades, ...compatibility } =
+			initializingSchema === undefined || schemaDataIsEmpty(storedSchema)
+				? checkSchemaCompatibility(this.viewSchema, storedSchema, this.stagedUpgradePolicy)
+				: checkGeneratedSchemaCompatibility(
+						this.viewSchema,
+						initializingSchema,
+						storedSchema.rootFieldSchema,
+					);
+		debugAssert(
+			() =>
+				initializingSchema === undefined ||
+				isSameCompatibility(
+					{ ...compatibility, enabledUpgrades },
+					checkSchemaCompatibility(this.viewSchema, storedSchema, this.stagedUpgradePolicy),
+				) ||
+				"Compatibility of the schema being initialized should match a full comparison",
 		);
 		this.currentEnabledUpgrades = enabledUpgrades;
 		return {
