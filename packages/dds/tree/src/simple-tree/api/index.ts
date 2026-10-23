@@ -155,6 +155,7 @@ export {
 	verboseFromCursor,
 	replaceVerboseTreeHandles,
 } from "./verboseTree.js";
+export { insertVerbose, setVerbose } from "./verboseInsertion.js";
 
 export {
 	type TreeEncodingOptions,

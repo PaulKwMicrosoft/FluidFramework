@@ -191,6 +191,8 @@ export {
 	applySchemaToParserOptions,
 	cursorFromVerbose,
 	verboseFromCursor,
+	insertVerbose,
+	setVerbose,
 	conciseFromCursor,
 	createFromCursor,
 	asTreeViewAlpha,

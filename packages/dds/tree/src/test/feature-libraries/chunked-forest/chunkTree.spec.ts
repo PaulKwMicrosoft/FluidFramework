@@ -34,6 +34,7 @@ import {
 	type ShapeInfo,
 	basicOnlyChunkPolicy,
 	chunkField,
+	chunkFieldFromAdapter,
 	chunkFieldSingle,
 	chunkRange,
 	chunkTree,
@@ -70,6 +71,8 @@ import {
 	jsonableTreeFromCursor,
 	jsonableTreeFromFieldCursor,
 } from "../../../feature-libraries/index.js";
+// eslint-disable-next-line import-x/no-internal-modules
+import { adapter as jsonableTreeAdapter } from "../../../feature-libraries/treeTextCursor.js";
 import { JsonAsTree } from "../../../jsonDomainSchema.js";
 import {
 	incrementalEncodingPolicyForAllowedTypes,
@@ -85,6 +88,7 @@ import { brand, makeArray } from "../../../util/index.js";
 import { fieldJsonCursor, singleJsonCursor } from "../../json/index.js";
 import { testIdCompressor } from "../../utils.js";
 
+import { describeChunkLayout } from "./chunkLayout.js";
 import { assertChunkCursorEquals, numberSequenceField } from "./fieldCursorTestUtilities.js";
 import { polygonTree, testData } from "./uniformChunkTestData.js";
 
@@ -1765,6 +1769,108 @@ describe("chunkTree", () => {
 			assert(chunker.contentShapes !== undefined);
 			assert.notEqual(chunker.contentShapes, cache);
 			chunker.dispose();
+		});
+
+		describe("chunkFieldFromAdapter", () => {
+			function pair(a: number, b: number): JsonableTree {
+				return {
+					type: brand(Pair.identifier),
+					fields: { a: [{ type: numberType, value: a }], b: [{ type: numberType, value: b }] },
+				};
+			}
+
+			const labels: JsonableTree = {
+				type: brand(Labels.identifier),
+				fields: {
+					k: [{ type: stringType, value: "v" }],
+					j: [{ type: stringType, value: "w" }],
+				},
+			};
+
+			const mixed: JsonableTree[] = [
+				pair(1, 2),
+				pair(3, 4),
+				item("a", point(1, 2)),
+				item("b"),
+				item(undefined, point(3)),
+				pair(5, 6),
+				labels,
+				itemList([item("c"), item("d", point(4, 5)), item()]),
+				{ type: stringType, value: "s" },
+				{ type: numberType, value: 7 },
+				{ type: numberType, value: 8 },
+			];
+
+			const testCases: [name: string, content: JsonableTree[]][] = [
+				["empty", []],
+				["mixed content", mixed],
+				["schema-derived shapes only", makeArray(500, (index) => pair(index, -index))],
+				["content-derived shapes only", makeArray(300, (index) => item(`${index}`))],
+				[
+					"long varied sequences",
+					makeArray(200, (index) => mixed[index % mixed.length] ?? assert.fail()),
+				],
+				["nested lists", [itemList(makeArray(50, (index) => item(`${index}`, point(index))))]],
+			];
+
+			/**
+			 * The policy of `chunker`, with a small {@link ChunkPolicy.sequenceChunkSplitThreshold}.
+			 */
+			function withSequenceChunks(chunker: Chunker): ChunkPolicy {
+				return {
+					sequenceChunkSplitThreshold: 3,
+					sequenceChunkInlineThreshold: chunker.sequenceChunkInlineThreshold,
+					uniformChunkNodeCount: chunker.uniformChunkNodeCount,
+					uniformChunkNodeCountDynamicTargetMax: chunker.uniformChunkNodeCountDynamicTargetMax,
+					shapeFromSchema: (type) => chunker.shapeFromSchema(type),
+					contentShapes: chunker.contentShapes,
+				};
+			}
+
+			const policies: [name: string, makePolicy: () => ChunkPolicy][] = [
+				["without content shapes", () => makeChunker()],
+				["with content shapes", () => makeChunker({})],
+				["with sequence chunks", () => withSequenceChunks(makeChunker({}))],
+				["basic chunks only", () => basicOnlyChunkPolicy],
+			];
+
+			for (const [policyName, makePolicy] of policies) {
+				describe(policyName, () => {
+					for (const [name, content] of testCases) {
+						it(`chunks ${name} as a cursor over it would be chunked`, () => {
+							const policy = makePolicy();
+							const fromAdapter = chunkFieldFromAdapter(content, jsonableTreeAdapter, {
+								policy,
+								idCompressor: undefined,
+							});
+							const fromCursor = chunkContent(policy, content);
+							assert.deepEqual(
+								describeChunkLayout(fromAdapter),
+								describeChunkLayout(fromCursor),
+							);
+							assertContent(fromAdapter, content);
+						});
+					}
+				});
+			}
+
+			it("compresses identifiers as chunking a cursor does", () => {
+				const idCompressor = testIdCompressor;
+				const content: JsonableTree[] = makeArray(3, () => ({
+					type: stringType,
+					value: idCompressor.decompress(idCompressor.generateCompressedId()),
+				}));
+				const compressor = { policy: makeChunker({}), idCompressor };
+				const fromAdapter = chunkFieldFromAdapter(content, jsonableTreeAdapter, compressor);
+				const fromCursor = chunkField(cursorForJsonableTreeField(content), compressor);
+				const [adapterChunk] = fromAdapter;
+				const [cursorChunk] = fromCursor;
+				assert(adapterChunk instanceof UniformChunk);
+				assert(cursorChunk instanceof UniformChunk);
+				assert.deepEqual(adapterChunk.values, cursorChunk.values);
+				assert.equal(typeof adapterChunk.values[0], "number");
+				assertContent(fromAdapter, content);
+			});
 		});
 	});
 });
