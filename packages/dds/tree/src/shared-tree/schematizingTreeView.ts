@@ -539,7 +539,11 @@ export class SchematizingSimpleTreeView<
 			assert(!slots.has(SimpleContextSlot), 0xa47 /* extra simple tree context */);
 			slots.set(
 				SimpleContextSlot,
-				new HydratedContext(this.flexTreeContext, this.viewSchema.definitions),
+				new HydratedContext(
+					this.flexTreeContext,
+					this.viewSchema.definitions,
+					compatibility.isEquivalent && !hasStagedSchemaUpgrades(this.viewSchema),
+				),
 			);
 
 			// Trigger "rootChanged" events if the root changes in the future.
