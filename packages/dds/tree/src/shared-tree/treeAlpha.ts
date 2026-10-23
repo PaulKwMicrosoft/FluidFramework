@@ -95,6 +95,8 @@ import {
 	type TreeArrayNode,
 	type TreeMapNode,
 	releaseTreeNode,
+	insertVerbose,
+	setVerbose,
 } from "../simple-tree/index.js";
 import { brand, extractFromOpaque, type JsonCompatible } from "../util/index.js";
 
@@ -626,6 +628,73 @@ export interface TreeAlpha {
 		key: string | number,
 		newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined,
 	): void;
+
+	/**
+	 * {@link (TreeAlpha:interface).replaceAsBase} for content in the {@link VerboseTree} format, which is checked and built as {@link (TreeAlpha:interface).insertVerbose} and {@link (TreeAlpha:interface).setVerbose} check and build it.
+	 *
+	 * @param parent - See {@link (TreeAlpha:interface).replaceAsBase}.
+	 * @param key - See {@link (TreeAlpha:interface).replaceAsBase}.
+	 * @param newContent - The new content, using stored keys (see {@link (TreeAlpha:interface).insertVerbose}).
+	 * `undefined` empties an optional field, map entry, or record entry.
+	 *
+	 * @remarks
+	 * This is a prototype, like {@link (TreeAlpha:interface).insertVerbose}.
+	 *
+	 * @throws A `UsageError` in the cases {@link (TreeAlpha:interface).replaceAsBase} and {@link (TreeAlpha:interface).insertVerbose} throw.
+	 */
+	replaceAsBaseVerbose(
+		parent: TreeNode,
+		key: string | number,
+		newContent: VerboseTree | undefined,
+	): void;
+
+	/**
+	 * Inserts content in the {@link VerboseTree} format into an array node of a tree, building it directly in the tree.
+	 *
+	 * @param array - The array node to insert into. It must be in the document of a tree.
+	 * @param index - The index at which to insert, as for {@link (TreeArrayNode:interface).insertAt}.
+	 * @param content - The items to insert. Object nodes in them must use stored keys:
+	 * this is the format {@link (TreeAlpha:interface).(exportVerbose:1)} produces with {@link KeyEncodingOptions.allStoredKeys}.
+	 *
+	 * @remarks
+	 * This is a prototype of importing content directly into a specific tree, and may be replaced by APIs which create content in the context of a tree.
+	 *
+	 * Inserting content built with {@link (TreeAlpha:interface).importVerbose} checks it against the schema twice:
+	 * against its view schema (allowing {@link SchemaStaticsBeta.staged | staged} types, since unhydrated nodes do not belong to a document),
+	 * then against the stored schema of the tree it is inserted into.
+	 * This checks the content once, against the stored schema of the tree `array` is in,
+	 * and creates no {@link TreeNode}s: reading the inserted content creates them as needed.
+	 *
+	 * The edit, its events, and its behavior in transactions and when reverted, are those of {@link (TreeArrayNode:interface).insertAt} inserting the same content.
+	 *
+	 * The content is checked against the stored schema only.
+	 * Checks made by node construction from the view schema are not made:
+	 * for example, the invariants checked by the constructors of tables made by `TableSchema` are not enforced.
+	 * Since keys are stored keys, the content can include {@link ObjectSchemaOptions.allowUnknownOptionalFields | unknown optional fields} the stored schema has.
+	 * An identifier field without content gets a new identifier, as when constructing a node.
+	 *
+	 * @throws A `UsageError` if `array` is not an array node in the document of a tree, if `index` is out of bounds, or if `content` is out of schema.
+	 */
+	insertVerbose(array: TreeNode, index: number, content: readonly VerboseTree[]): void;
+
+	/**
+	 * Sets a property of an object node, or an entry of a map or record node, to content in the {@link VerboseTree} format, building it directly in the tree.
+	 *
+	 * @param parent - The object, map or record node. It must be in the document of a tree.
+	 * @param key - The property key (for object nodes) or key (for map and record nodes) to set.
+	 * @param content - The new content, using stored keys (see {@link (TreeAlpha:interface).insertVerbose}).
+	 * `undefined` empties an optional field, map entry, or record entry.
+	 *
+	 * @remarks
+	 * This is a prototype: see {@link (TreeAlpha:interface).insertVerbose}, which describes how the content is checked.
+	 *
+	 * The edit, its events, and its behavior in transactions and when reverted, are those of assigning the property or setting the entry to the same content.
+	 * Emptying a field that is already empty does nothing.
+	 *
+	 * @throws A `UsageError` if `parent` is not an object, map or record node in the document of a tree, if `key` is not a property of an object node,
+	 * if the property is an identifier, or if `content` is out of schema.
+	 */
+	setVerbose(parent: TreeNode, key: string, content: VerboseTree | undefined): void;
 
 	/**
 	 * Releases the objects created for reading `node` and the nodes under it, reducing memory use.
@@ -1202,7 +1271,35 @@ export const TreeAlpha: TreeAlpha = {
 		key: string | number,
 		newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined,
 	): void {
-		replaceAsBase(parent, key, newContent);
+		replaceAsBase(parent, key, newContent === undefined, {
+			insertElement: (array, index) => {
+				assert(newContent !== undefined, "An array element must have content");
+				array.insertAt(index, newContent);
+			},
+			setField: () => setNodeContent(parent, key, newContent),
+		});
+	},
+
+	replaceAsBaseVerbose(
+		parent: TreeNode,
+		key: string | number,
+		newContent: VerboseTree | undefined,
+	): void {
+		replaceAsBase(parent, key, newContent === undefined, {
+			insertElement: (array, index) => {
+				assert(newContent !== undefined, "An array element must have content");
+				insertVerbose(array, index, [newContent]);
+			},
+			setField: () => setVerbose(parent, String(key), newContent),
+		});
+	},
+
+	insertVerbose(array: TreeNode, index: number, content: readonly VerboseTree[]): void {
+		insertVerbose(array, index, content);
+	},
+
+	setVerbose(parent: TreeNode, key: string, content: VerboseTree | undefined): void {
+		setVerbose(parent, key, content);
 	},
 
 	release(node: TreeNode): void {
@@ -1211,12 +1308,32 @@ export const TreeAlpha: TreeAlpha = {
 };
 
 /**
- * Implementation of {@link (TreeAlpha:interface).replaceAsBase}.
+ * Writes the new content for {@link replaceAsBase}.
+ */
+interface BaseContentWriter {
+	/**
+	 * Inserts the new content at `index` of `array`, from which the replaced element has been removed.
+	 */
+	insertElement(
+		array: TreeArrayNode<ImplicitAllowedTypes, unknown, InsertableContent>,
+		index: number,
+	): void;
+	/**
+	 * Sets the field of the parent to the new content.
+	 */
+	setField(): void;
+}
+
+/**
+ * Implementation of {@link (TreeAlpha:interface).replaceAsBase} and {@link (TreeAlpha:interface).replaceAsBaseVerbose}.
+ *
+ * @param isEmpty - Whether the new content is `undefined`.
  */
 function replaceAsBase(
 	parent: TreeNode,
 	key: string | number,
-	newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined,
+	isEmpty: boolean,
+	writer: BaseContentWriter,
 ): void {
 	if (getKernel(parent).getStatus() !== TreeStatus.InDocument) {
 		throw new UsageError("Base content can only be applied to a node in the document.");
@@ -1233,7 +1350,7 @@ function replaceAsBase(
 	const schema = treeNodeApi.schema(parent);
 	let current: TreeNode | TreeLeafValue | undefined;
 	let storedKey: FieldKey;
-	let edit: () => void;
+	let edit: () => void = () => writer.setField();
 	switch (schema.kind) {
 		case NodeKind.Array: {
 			const array = parent as TreeArrayNode<ImplicitAllowedTypes, unknown, InsertableContent>;
@@ -1245,14 +1362,14 @@ function replaceAsBase(
 			) {
 				throw new UsageError(`${String(key)} is not the index of an element of the array.`);
 			}
-			if (newContent === undefined) {
+			if (isEmpty) {
 				throw new UsageError("An array element cannot be replaced with undefined.");
 			}
 			current = TreeAlpha.child(parent, key);
 			storedKey = EmptyKey;
 			edit = () => {
 				array.removeAt(key);
-				array.insertAt(key, newContent);
+				writer.insertElement(array, key);
 			};
 			break;
 		}
@@ -1260,36 +1377,16 @@ function replaceAsBase(
 			if (typeof key !== "string") {
 				throw new UsageError("Map keys must be strings.");
 			}
-			const map = parent as TreeMapNode;
-			current = map.get(key);
+			current = (parent as TreeMapNode).get(key);
 			storedKey = brand(key);
-			edit = () => {
-				if (newContent === undefined) {
-					map.delete(key);
-				} else {
-					map.set(
-						key,
-						newContent as InsertableTreeNodeFromImplicitAllowedTypes<ImplicitAllowedTypes>,
-					);
-				}
-			};
 			break;
 		}
 		case NodeKind.Record: {
 			if (typeof key !== "string") {
 				throw new UsageError("Record keys must be strings.");
 			}
-			const record = parent as unknown as Record<string, unknown>;
 			current = TreeAlpha.child(parent, key);
 			storedKey = brand(key);
-			edit = () => {
-				if (newContent === undefined) {
-					// eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- Records support removing entries with `delete`.
-					delete record[key];
-				} else {
-					record[key] = newContent;
-				}
-			};
 			break;
 		}
 		case NodeKind.Object: {
@@ -1298,12 +1395,8 @@ function replaceAsBase(
 			if (fieldSchema === undefined) {
 				throw new UsageError(`${String(key)} is not a property of ${schema.identifier}.`);
 			}
-			const object = parent as unknown as Record<string, unknown>;
 			current = TreeAlpha.child(parent, key);
 			storedKey = brand(fieldSchema.storedKey);
-			edit = () => {
-				object[String(key)] = newContent;
-			};
 			break;
 		}
 		case NodeKind.Leaf: {
@@ -1321,10 +1414,45 @@ function replaceAsBase(
 		target = currentFlexNode.anchorNode;
 	}
 	const field =
-		current === undefined || newContent === undefined
+		current === undefined || isEmpty
 			? { parent: flexNode.anchorNode, key: storedKey }
 			: undefined;
 	checkout.applyAsBaseContent(target, field, edit);
+}
+
+/**
+ * Sets the property `key` of an object node, or the entry `key` of a map or record node, to `newContent`
+ * as assigning the property or setting the entry does.
+ */
+function setNodeContent(
+	parent: TreeNode,
+	key: string | number,
+	newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined,
+): void {
+	const kind = treeNodeApi.schema(parent).kind;
+	if (kind === NodeKind.Map) {
+		const map = parent as TreeMapNode;
+		if (newContent === undefined) {
+			map.delete(String(key));
+		} else {
+			map.set(
+				String(key),
+				newContent as InsertableTreeNodeFromImplicitAllowedTypes<ImplicitAllowedTypes>,
+			);
+		}
+	} else {
+		assert(
+			kind === NodeKind.Record || kind === NodeKind.Object,
+			"Expected an object, map or record node",
+		);
+		const object = parent as unknown as Record<string, unknown>;
+		if (newContent === undefined && kind === NodeKind.Record) {
+			// eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- Records support removing entries with `delete`.
+			delete object[String(key)];
+		} else {
+			object[String(key)] = newContent;
+		}
+	}
 }
 
 /**
