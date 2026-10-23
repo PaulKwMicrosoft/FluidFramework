@@ -24,7 +24,12 @@ import {
 	type CodecWriteOptions,
 	FormatValidatorNoOp,
 } from "../codec/index.js";
-import { EmptyKey, type FieldKey, type ITreeCursorSynchronous } from "../core/index.js";
+import {
+	EmptyKey,
+	type AnchorNode,
+	type FieldKey,
+	type ITreeCursorSynchronous,
+} from "../core/index.js";
 import {
 	cursorForMapTreeField,
 	defaultSchemaPolicy,
@@ -32,6 +37,7 @@ import {
 	fieldBatchCodecBuilder,
 	mapTreeFromCursor,
 	TreeCompressionStrategy,
+	TreeStatus,
 	type FieldBatch,
 	type FieldBatchEncodingContext,
 	type LocalNodeIdentifier,
@@ -83,6 +89,11 @@ import {
 	type TreeContextAlpha,
 	type TreeNodeSchema,
 	getUnhydratedRootFieldSchema,
+	type ImplicitAllowedTypes,
+	type InsertableContent,
+	type InsertableTreeNodeFromImplicitAllowedTypes,
+	type TreeArrayNode,
+	type TreeMapNode,
 } from "../simple-tree/index.js";
 import { brand, extractFromOpaque, type JsonCompatible } from "../util/index.js";
 
@@ -94,6 +105,7 @@ import {
 	importConcise,
 	TreeBeta,
 } from "./treeBeta.js";
+import { CheckoutBase } from "./treeCheckout.js";
 import { UnhydratedTreeContext } from "./unhydratedTreeContext.js";
 
 const identifier: TreeIdentifierUtils = (node: TreeNode): string | undefined => {
@@ -571,6 +583,48 @@ export interface TreeAlpha {
 		schema: TSchema,
 		content: TContent,
 	): TContent;
+
+	/**
+	 * Replaces the content under a key of a node as part of the base state of the tree's history, rather than as an edit.
+	 *
+	 * @param parent - The node whose content is replaced.
+	 * It must be in the document of a tree created by {@link createIndependentTreeAlpha} with {@link IndependentTreeHistoryOptions.enableBaseContent}.
+	 * @param key - For array nodes, the index of the element to replace.
+	 * Otherwise, the property key (for object nodes) or key (for map and record nodes) of the field to set.
+	 * @param newContent - The new content: an {@link Unhydrated} node or a leaf value.
+	 * `undefined` empties an optional field, map entry, or record entry; array elements cannot be replaced with `undefined`.
+	 *
+	 * @remarks
+	 * This is for content which is loaded into an existing tree in steps, such as the parts of a large document loaded on demand to replace placeholders.
+	 * It updates the tree, its nodes, and raises node change events (such as {@link TreeChangeEvents.nodeChanged}) as the equivalent edit would.
+	 * However, it creates no commit: the tree behaves as if the new content had always been in place of the replaced content.
+	 * In particular:
+	 *
+	 * - No `changed` or `commitApplied` event is emitted, so no revertible is offered for it.
+	 *
+	 * - It is not part of the history: reverting commits made before or after it does not revert it,
+	 * and the cost of reverting them does not depend on it.
+	 * Reverting a commit that inserted, moved or removed `parent` or the replaced node as a whole applies to the new content instead.
+	 *
+	 * - The replaced content is discarded and cannot be restored.
+	 *
+	 * This is only supported by independent trees: since it is not an edit, it could not be sent to other clients of a collaborative tree.
+	 *
+	 * The replaced content must not have been changed by a commit retained in the tree's history:
+	 * no retained commit may have changed anything inside the replaced node,
+	 * nor, if the field is empty before or after the replacement, that field.
+	 * Such a commit could no longer be reverted.
+	 * When the tree limits its history with {@link IndependentTreeHistoryOptions.maxRevertibles},
+	 * commits that no valid revertible needs are not retained.
+	 *
+	 * @throws A `UsageError` if `parent` is not in the document of such a tree, if the replaced content was changed by a retained commit,
+	 * if `key` is not a valid key or index for `parent`, during a transaction or a change event, or while the tree has forks.
+	 */
+	replaceAsBase(
+		parent: TreeNode,
+		key: string | number,
+		newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined,
+	): void;
 }
 
 /**
@@ -1109,7 +1163,132 @@ export const TreeAlpha: TreeAlpha = {
 		}
 		return node;
 	},
+
+	replaceAsBase(
+		parent: TreeNode,
+		key: string | number,
+		newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined,
+	): void {
+		replaceAsBase(parent, key, newContent);
+	},
 };
+
+/**
+ * Implementation of {@link (TreeAlpha:interface).replaceAsBase}.
+ */
+function replaceAsBase(
+	parent: TreeNode,
+	key: string | number,
+	newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined,
+): void {
+	if (getKernel(parent).getStatus() !== TreeStatus.InDocument) {
+		throw new UsageError("Base content can only be applied to a node in the document.");
+	}
+	const flexNode = getInnerNode(parent);
+	assert(flexNode.isHydrated(), "A node in the document must be hydrated");
+	const checkout = flexNode.context.checkout;
+	if (!(checkout instanceof CheckoutBase)) {
+		throw new UsageError(
+			'Base content requires an independent tree created with "enableBaseContent".',
+		);
+	}
+
+	const schema = treeNodeApi.schema(parent);
+	let current: TreeNode | TreeLeafValue | undefined;
+	let storedKey: FieldKey;
+	let edit: () => void;
+	switch (schema.kind) {
+		case NodeKind.Array: {
+			const array = parent as TreeArrayNode<ImplicitAllowedTypes, unknown, InsertableContent>;
+			if (
+				typeof key !== "number" ||
+				!Number.isInteger(key) ||
+				key < 0 ||
+				key >= array.length
+			) {
+				throw new UsageError(`${String(key)} is not the index of an element of the array.`);
+			}
+			if (newContent === undefined) {
+				throw new UsageError("An array element cannot be replaced with undefined.");
+			}
+			current = TreeAlpha.child(parent, key);
+			storedKey = EmptyKey;
+			edit = () => {
+				array.removeAt(key);
+				array.insertAt(key, newContent);
+			};
+			break;
+		}
+		case NodeKind.Map: {
+			if (typeof key !== "string") {
+				throw new UsageError("Map keys must be strings.");
+			}
+			const map = parent as TreeMapNode;
+			current = map.get(key);
+			storedKey = brand(key);
+			edit = () => {
+				if (newContent === undefined) {
+					map.delete(key);
+				} else {
+					map.set(
+						key,
+						newContent as InsertableTreeNodeFromImplicitAllowedTypes<ImplicitAllowedTypes>,
+					);
+				}
+			};
+			break;
+		}
+		case NodeKind.Record: {
+			if (typeof key !== "string") {
+				throw new UsageError("Record keys must be strings.");
+			}
+			const record = parent as unknown as Record<string, unknown>;
+			current = TreeAlpha.child(parent, key);
+			storedKey = brand(key);
+			edit = () => {
+				if (newContent === undefined) {
+					// eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- Records support removing entries with `delete`.
+					delete record[key];
+				} else {
+					record[key] = newContent;
+				}
+			};
+			break;
+		}
+		case NodeKind.Object: {
+			assert(isObjectNodeSchema(schema), "Expected object schema");
+			const fieldSchema = schema.fields.get(String(key));
+			if (fieldSchema === undefined) {
+				throw new UsageError(`${String(key)} is not a property of ${schema.identifier}.`);
+			}
+			const object = parent as unknown as Record<string, unknown>;
+			current = TreeAlpha.child(parent, key);
+			storedKey = brand(fieldSchema.storedKey);
+			edit = () => {
+				object[String(key)] = newContent;
+			};
+			break;
+		}
+		case NodeKind.Leaf: {
+			fail("Leaf schema associated with non-leaf tree node");
+		}
+		default: {
+			unreachableCase(schema.kind);
+		}
+	}
+
+	let target: AnchorNode | undefined;
+	if (isTreeNode(current)) {
+		const currentFlexNode = getInnerNode(current);
+		assert(currentFlexNode.isHydrated(), "A node in the document must be hydrated");
+		target = currentFlexNode.anchorNode;
+	}
+	const field =
+		current === undefined || newContent === undefined
+			? { parent: flexNode.anchorNode, key: storedKey }
+			: undefined;
+	checkout.applyAsBaseContent(target, field, edit);
+}
 
 /**
  * Borrow a cursor from a field.

@@ -65,7 +65,7 @@ export interface IndependentViewTelemetryOptions {
 }
 
 /**
- * Options for limiting the edit history retained by an independent tree.
+ * Options for the edit history retained by an independent tree.
  * @alpha @input
  */
 export interface IndependentTreeHistoryOptions {
@@ -91,6 +91,19 @@ export interface IndependentTreeHistoryOptions {
 	 * When undefined (the default), the number of revertibles is not limited and all history is retained.
 	 */
 	readonly maxRevertibles?: number | undefined;
+
+	/**
+	 * Whether content can be applied to the tree as part of the base state of its history,
+	 * using {@link (TreeAlpha:interface).replaceAsBase}.
+	 *
+	 * @remarks
+	 * When enabled, the tree records the fields changed by each commit it retains (as anchors to the nodes that have them),
+	 * which `replaceAsBase` uses to check that it does not replace content changed by a retained commit.
+	 * The records are released with their commits: use {@link IndependentTreeHistoryOptions.maxRevertibles} to bound them.
+	 *
+	 * Defaults to false.
+	 */
+	readonly enableBaseContent?: boolean | undefined;
 }
 
 /**
@@ -337,6 +350,7 @@ export function createIndependentTreeCheckout(
 		schema: schemaRepository,
 		codecOptions: options,
 		maxRevertibles,
+		enableBaseContent: options?.enableBaseContent,
 	});
 
 	if (options?.content !== undefined) {
