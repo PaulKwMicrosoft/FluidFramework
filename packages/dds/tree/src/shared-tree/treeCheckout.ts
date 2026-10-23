@@ -9,7 +9,12 @@ import type {
 	IFluidHandle,
 	Listenable,
 } from "@fluidframework/core-interfaces/internal";
-import { assert, unreachableCase, fail } from "@fluidframework/core-utils/internal";
+import {
+	assert,
+	debugAssert,
+	unreachableCase,
+	fail,
+} from "@fluidframework/core-utils/internal";
 import type { IIdCompressor, StableId } from "@fluidframework/id-compressor";
 import {
 	type TelemetryLoggerExt,
@@ -34,6 +39,7 @@ import {
 	CommitOutcome,
 	type DeltaVisitor,
 	type DetachedFieldIndex,
+	type FieldKey,
 	type IEditableForest,
 	type IForestSubscription,
 	type JsonableTree,
@@ -73,6 +79,7 @@ import {
 	type LocalCommitEvents,
 	getDeltaChangeProfile,
 	findAncestor,
+	type UpPath,
 } from "../core/index.js";
 import {
 	type FieldBatchCodec,
@@ -402,11 +409,17 @@ export function createTreeCheckout(
 		 * Must not be provided with `branch`: the checkout trims the history of the branch it creates.
 		 */
 		maxRevertibles?: number;
+		/**
+		 * See {@link TreeCheckoutOptions.enableBaseContent}.
+		 * Must not be true when `branch` is provided.
+		 */
+		enableBaseContent?: boolean;
 	},
 ): TreeCheckout {
 	assert(
-		args?.maxRevertibles === undefined || args.branch === undefined,
-		"History trimming requires the checkout to create its own branch",
+		(args?.maxRevertibles === undefined && args?.enableBaseContent !== true) ||
+			args?.branch === undefined,
+		"History trimming and base content require the checkout to create its own branch",
 	);
 	const schema = args?.schema ?? new TreeStoredSchemaRepository();
 	const forest = args?.forest ?? buildForest(new Breakable("TreeCheckout"), schema);
@@ -454,6 +467,7 @@ export function createTreeCheckout(
 		disposeForksAfterTransaction: true,
 		getFinalizedCommit: args?.getFinalizedCommit,
 		maxRevertibles: args?.maxRevertibles,
+		enableBaseContent: args?.enableBaseContent,
 	});
 }
 
@@ -469,6 +483,20 @@ export interface RevertMetrics {
 	readonly age: number;
 
 	// TODO: add other stats as needed for telemetry, etc.
+}
+
+/**
+ * A field changed by a commit, as recorded by a checkout with base content enabled.
+ */
+interface EditedField {
+	/**
+	 * An anchor to the node that has the field.
+	 */
+	readonly parent: Anchor;
+	/**
+	 * The key of the field.
+	 */
+	readonly key: FieldKey;
 }
 
 /**
@@ -645,6 +673,17 @@ export interface TreeCheckoutOptions {
 	 * Must be a positive integer or `Number.POSITIVE_INFINITY`.
 	 */
 	readonly maxRevertibles?: number;
+
+	/**
+	 * Whether {@link CheckoutBase.applyAsBaseContent} can be used.
+	 * @remarks
+	 * When true, the checkout records the fields changed by each commit applied to its forest for as long as the commit is retained,
+	 * so that base content can be checked against the retained history.
+	 * Must only be true for a checkout that owns its branch and cannot switch it to another branch.
+	 * Forks of the checkout do not inherit this option.
+	 * Defaults to false.
+	 */
+	readonly enableBaseContent?: boolean;
 }
 
 /**
@@ -750,8 +789,8 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	 * Undisposed branches forked (directly or transitively) from this checkout's branch, excluding the branches held by this checkout's revertibles.
 	 * Each is mapped to a function which stops tracking its forks.
 	 * @remarks
-	 * Such a branch may share history with this checkout's branch, so history is not trimmed while any exist.
-	 * Only tracked when {@link CheckoutBase.maxRevertibles} is defined.
+	 * Such a branch may share history with this checkout's branch, so history is not trimmed and base content is not applied while any exist.
+	 * Only tracked when {@link CheckoutBase.maxRevertibles} is defined or base content is enabled.
 	 */
 	private readonly liveForks = new Map<
 		SharedTreeBranch<
@@ -773,6 +812,26 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	 * Such a revertible does not count toward {@link CheckoutBase.maxRevertibles} while the revert creates new revertibles.
 	 */
 	private revisionBeingReverted: RevisionTag | undefined;
+
+	/**
+	 * For each retained commit applied to the forest, the fields it changed.
+	 * @remarks
+	 * Defined if and only if base content is enabled (see {@link TreeCheckoutOptions.enableBaseContent}).
+	 * When a change applied to the forest combines several commits, its fields are recorded under the newest of them.
+	 * Entries are removed when their commits are trimmed.
+	 */
+	private readonly editedFields: Map<RevisionTag, EditedField[]> | undefined;
+
+	/**
+	 * Revisions with {@link CheckoutBase.editedFields} recorded during the current transaction.
+	 * @remarks If the transaction is aborted, these records are removed.
+	 */
+	private readonly revisionsEditedInTransaction = new Set<RevisionTag>();
+
+	/**
+	 * Whether {@link CheckoutBase.applyAsBaseContent} is applying base content.
+	 */
+	private applyingBaseContent = false;
 
 	/**
 	 * The name of the telemetry event logged for calls to {@link CheckoutBase.revertRevertible}.
@@ -861,6 +920,7 @@ export abstract class CheckoutBase implements ITreeCheckout {
 		disposeForksAfterTransaction = true,
 		getFinalizedCommit,
 		maxRevertibles,
+		enableBaseContent = false,
 	}: TreeCheckoutOptions) {
 		this.branch = branch;
 		this.isSharedBranch = isSharedBranch;
@@ -880,6 +940,9 @@ export abstract class CheckoutBase implements ITreeCheckout {
 		} else {
 			this.historyTrimmer = createEmitter<BranchTrimmingEvents>();
 			branch.trimmer = this.historyTrimmer;
+		}
+		this.editedFields = enableBaseContent ? new Map() : undefined;
+		if (maxRevertibles !== undefined || enableBaseContent) {
 			this.trackForks(branch);
 		}
 		this.serializedChangeCodec = makeSerializedChangeCodec(
@@ -1132,16 +1195,23 @@ export abstract class CheckoutBase implements ITreeCheckout {
 				switch (result) {
 					case InternalTransactionResult.Abort: {
 						restoreRemovedRoots();
+						if (this.transaction.size === 0) {
+							for (const revision of this.revisionsEditedInTransaction) {
+								this.forgetEditedFields(revision);
+							}
+							this.revisionsEditedInTransaction.clear();
+						}
 						if (viewUpdate !== undefined) {
-							this.applyInternalChange(viewUpdate, newHead.revision);
+							this.applyInternalChange(viewUpdate, newHead.revision, newHead.revision);
 						}
 						break;
 					}
 					case InternalTransactionResult.Commit: {
 						if (viewUpdate !== undefined) {
-							this.applyInternalChange(viewUpdate, newHead.revision);
+							this.applyInternalChange(viewUpdate, newHead.revision, newHead.revision);
 						}
 						if (this.transaction.size === 0) {
+							this.revisionsEditedInTransaction.clear();
 							// The changes in a transaction squash commit have already applied to the checkout and are known to be valid, so we can validate the squash commit automatically.
 							this.validateCommit(newHead);
 							this.trimHistory();
@@ -1211,6 +1281,10 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	private readonly onAfterBranchChange = (
 		event: SharedTreeBranchChange<SharedTreeChange>,
 	): void => {
+		if (this.applyingBaseContent) {
+			// Base content is folded into the base of the history, so it is not reported as a commit.
+			return;
+		}
 		// The following logic allows revertibles to be generated for the change.
 		// Currently only appends (including merges and transaction commits) are supported.
 		if (event.type === "append") {
@@ -1289,6 +1363,7 @@ export abstract class CheckoutBase implements ITreeCheckout {
 			// Commits that are rolled back should no longer be revertible
 			for (const commit of event.removedCommits) {
 				this.revertibles.get(commit.revision)?.dispose();
+				this.forgetEditedFields(commit.revision);
 			}
 		} else if (this.isRemoteChangeEvent(event)) {
 			// TODO: figure out how to plumb through commit kind info for remote changes
@@ -1339,7 +1414,11 @@ export abstract class CheckoutBase implements ITreeCheckout {
 					? this.#transaction.activeBranch.getHead().revision
 					: event.change.revision;
 
-			this.applyInternalChange(event.change.change, revision);
+			this.applyInternalChange(
+				event.change.change,
+				revision,
+				event.type === "remove" ? undefined : event.newCommits.at(-1)?.revision,
+			);
 		}
 		this.#events.emit("afterBatch");
 		this.editLock.unlock();
@@ -1520,13 +1599,23 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	// #endregion UntypedTreeViewAlpha
 
 	// Revision is the revision of the commit, if any, which caused this change.
-	private applyInternalChange(change: SharedTreeChange, revision?: RevisionTag): void {
+	// `recordAs` is the revision of the newest commit whose changes this applies, if those changes are retained in the history.
+	private applyInternalChange(
+		change: SharedTreeChange,
+		revision?: RevisionTag,
+		recordAs?: RevisionTag,
+	): void {
 		// Conflicts due to schema will be empty and thus are not applied.
 		for (const innerChange of change.changes) {
 			if (innerChange.type === "data") {
 				const delta = intoDelta(tagChange(innerChange.innerChange, revision));
 				this.withCombinedVisitor((visitor) => {
-					visitDelta(delta, visitor, this._removedRoots, revision);
+					visitDelta(
+						delta,
+						this.recordEditedFields(visitor, recordAs),
+						this._removedRoots,
+						revision,
+					);
 				});
 			} else if (innerChange.type === "schema") {
 				// Schema changes from a current to a new schema are expected to be backwards compatible.
@@ -1567,8 +1656,14 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	}
 
 	private readonly onAncestryTrimmed = (revisions: RevisionTag[]): void => {
-		// When the branch is trimmed, we can garbage collect any repair data whose latest relevant revision is one of the
-		// trimmed revisions.
+		this.discardHistory(revisions);
+	};
+
+	/**
+	 * Releases the state kept for commits which are no longer in the history: repair data, commit events, and recorded edits.
+	 */
+	private discardHistory(revisions: readonly RevisionTag[]): void {
+		// Garbage collect any repair data whose latest relevant revision is one of the discarded revisions.
 		this.withCombinedVisitor((visitor) => {
 			for (const revision of revisions) {
 				// get all the roots last created or used by the revision
@@ -1583,10 +1678,92 @@ export abstract class CheckoutBase implements ITreeCheckout {
 			}
 		});
 		for (const revision of revisions) {
-			// A trimmed commit can no longer settle, so its events will never be emitted.
+			// A discarded commit can no longer settle, so its events will never be emitted.
 			this.localCommitEventEmitters.delete(revision);
+			this.forgetEditedFields(revision);
 		}
-	};
+	}
+
+	/**
+	 * Wraps `visitor` to record the fields it changes in {@link CheckoutBase.editedFields} under `revision`.
+	 * @returns `visitor` itself if base content is not enabled, `revision` is undefined, or base content is being applied.
+	 */
+	private recordEditedFields(
+		visitor: DeltaVisitor,
+		revision: RevisionTag | undefined,
+	): DeltaVisitor {
+		const editedFields = this.editedFields;
+		if (editedFields === undefined || revision === undefined || this.applyingBaseContent) {
+			return visitor;
+		}
+		if (this.#transaction.size > 0) {
+			this.revisionsEditedInTransaction.add(revision);
+		}
+		const anchors = this.forest.anchors;
+		const edits = getOrCreate(editedFields, revision, () => []);
+		// The node and field currently being visited. Fields under no node (the root field and detached fields) are not recorded.
+		let parent: UpPath | undefined;
+		let field: FieldKey | undefined;
+		const record = (): void => {
+			if (parent === undefined || field === undefined) {
+				return;
+			}
+			const anchor = anchors.track(parent);
+			const last = edits.at(-1);
+			if (last?.key === field && anchors.locate(last.parent) === anchors.locate(anchor)) {
+				anchors.forget(anchor);
+			} else {
+				edits.push({ parent: anchor, key: field });
+			}
+		};
+		return {
+			free: () => visitor.free(),
+			create: (content, destination) => visitor.create(content, destination),
+			destroy: (detachedField, count) => visitor.destroy(detachedField, count),
+			attach: (source, count, destination) => {
+				visitor.attach(source, count, destination);
+				record();
+			},
+			detach: (source, destination, id, isReplaced) => {
+				visitor.detach(source, destination, id, isReplaced);
+				record();
+			},
+			enterNode: (index) => {
+				visitor.enterNode(index);
+				assert(field !== undefined, "Must be in a field to enter a node");
+				parent = { parent, parentField: field, parentIndex: index };
+				field = undefined;
+			},
+			exitNode: (index) => {
+				visitor.exitNode(index);
+				assert(parent !== undefined, "Must be in a node to exit it");
+				field = parent.parentField;
+				parent = parent.parent;
+			},
+			enterField: (key) => {
+				visitor.enterField(key);
+				field = key;
+			},
+			exitField: (key) => {
+				visitor.exitField(key);
+				field = undefined;
+			},
+			fieldMarks: (marks) => visitor.fieldMarks?.(marks),
+		};
+	}
+
+	/**
+	 * Removes the {@link CheckoutBase.editedFields} recorded for `revision`, if any.
+	 */
+	private forgetEditedFields(revision: RevisionTag): void {
+		const edits = this.editedFields?.get(revision);
+		if (edits !== undefined) {
+			for (const { parent } of edits) {
+				this.forest.anchors.forget(parent);
+			}
+			this.editedFields?.delete(revision);
+		}
+	}
 
 	/**
 	 * Adds the forks of `branch` to {@link CheckoutBase.liveForks} as they are created, along with their own forks.
@@ -1665,6 +1842,7 @@ export abstract class CheckoutBase implements ITreeCheckout {
 		if (
 			trimmer === undefined ||
 			this.disposed ||
+			this.applyingBaseContent ||
 			this.#transaction.size > 0 ||
 			this.editLock.isLocked ||
 			this.liveForks.size > 0
@@ -2239,6 +2417,122 @@ export abstract class CheckoutBase implements ITreeCheckout {
 			);
 		}
 		this.editor.schema.setStoredSchema(this.storedSchema.clone(), newSchema);
+	}
+
+	/**
+	 * Applies an edit as part of the base state of the history, rather than as a commit.
+	 * @param target - The node whose content the edit replaces, if any.
+	 * No retained commit may have changed anything inside it.
+	 * @param field - The field whose content the edit replaces, if the edit fills or empties it.
+	 * No retained commit may have changed this field.
+	 * @param edit - Makes the edit. It must only replace `target` or the content of `field`,
+	 * leaving the number of nodes in the field it edits unchanged unless that field is `field`.
+	 * @remarks
+	 * The edit is applied as a transaction, so the forest, anchors and node events behave as for any edit.
+	 * Its commit is then removed from the branch without events, and the repair data it created is destroyed:
+	 * the change becomes part of the state that the retained history is based on.
+	 * No `changed` event is emitted and no revertible is offered for it.
+	 *
+	 * This is valid because the retained commits do not change anything the edit replaces,
+	 * so they are unaffected by whether the edit is applied before them or after them.
+	 * @throws A `UsageError` if base content is not enabled for this checkout, if a retained commit changed `target` or `field`,
+	 * during a transaction or a change event, or while the branch has forks.
+	 */
+	public applyAsBaseContent(
+		target: AnchorNode | undefined,
+		field: { readonly parent: AnchorNode; readonly key: FieldKey } | undefined,
+		edit: () => void,
+	): void {
+		this.checkNotDisposed();
+		if (this.editedFields === undefined) {
+			throw new UsageError(
+				'Base content requires an independent tree created with "enableBaseContent".',
+			);
+		}
+		this.editLock.checkUnlocked("Applying base content");
+		if (this.#transaction.size > 0) {
+			throw new UsageError("Base content cannot be applied during a transaction.");
+		}
+		if (this.liveForks.size > 0) {
+			throw new UsageError("Base content cannot be applied while the tree has forks.");
+		}
+		if (this.historyChanged(target, field)) {
+			throw new UsageError(
+				"Base content cannot replace content changed by a commit retained in the history, as reverting that commit would no longer be possible.",
+			);
+		}
+
+		const branch = this.#transaction.branch;
+		const base = branch.getHead();
+		this.applyingBaseContent = true;
+		try {
+			this.#transaction.start();
+			try {
+				edit();
+			} catch (error: unknown) {
+				this.#transaction.abort();
+				throw error;
+			}
+			this.#transaction.commit();
+		} finally {
+			this.applyingBaseContent = false;
+		}
+
+		const commit = branch.getHead();
+		if (commit === base) {
+			return;
+		}
+		assert(commit.parent === base, "Base content must be applied as a single commit");
+		debugAssert(() =>
+			[...this._removedRoots.entries()].every(
+				({ id, latestRelevantRevision }) =>
+					latestRelevantRevision !== commit.revision || id.major === commit.revision,
+			)
+				? true
+				: "Base content must only remove the content it replaces",
+		);
+		branch.setHead(base);
+		this._branchHistory?.recountCommits();
+		this.discardHistory([commit.revision]);
+	}
+
+	/**
+	 * Whether a commit retained in the history changed anything inside `target` or changed `field`.
+	 */
+	private historyChanged(
+		target: AnchorNode | undefined,
+		field: { readonly parent: AnchorNode; readonly key: FieldKey } | undefined,
+	): boolean {
+		const editedFields = this.editedFields;
+		if (editedFields === undefined || editedFields.size === 0) {
+			return false;
+		}
+		const anchors = this.forest.anchors;
+		for (
+			let commit: GraphCommit<SharedTreeChange> | undefined =
+				this.#transaction.branch.getHead();
+			commit !== undefined;
+			commit = commit.parent
+		) {
+			for (const { parent, key } of editedFields.get(commit.revision) ?? []) {
+				const node = anchors.locate(parent);
+				if (node === undefined) {
+					continue;
+				}
+				if (node === field?.parent && key === field.key) {
+					return true;
+				}
+				if (target !== undefined) {
+					for (let ancestor: UpPath | undefined = node; ancestor !== undefined; ) {
+						if (ancestor === target) {
+							return true;
+						}
+						ancestor = ancestor.parent;
+					}
+				}
+			}
+		}
+		return false;
 	}
 
 	public dispose(): void {
