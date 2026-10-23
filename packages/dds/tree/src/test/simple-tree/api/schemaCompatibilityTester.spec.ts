@@ -8,15 +8,22 @@ import { strict as assert } from "node:assert";
 import {
 	EmptyKey,
 	storedEmptyFieldSchema,
+	type TreeNodeSchemaIdentifier,
 	type TreeStoredSchema,
 	ValueSchema,
 } from "../../../core/index.js";
-import { allowsRepoSuperset, defaultSchemaPolicy } from "../../../feature-libraries/index.js";
+import {
+	allowsRepoSuperset,
+	defaultSchemaPolicy,
+	FieldKinds,
+} from "../../../feature-libraries/index.js";
 // eslint-disable-next-line import-x/no-internal-modules
 import { LeafNodeSchema } from "../../../simple-tree/leafNodeSchema.js";
 import {
+	checkGeneratedSchemaCompatibility,
 	checkSchemaCompatibility,
 	getSchemaIncompatibilityDetails,
+	hasStagedSchemaUpgrades,
 	type ImplicitFieldSchema,
 	type SchemaCompatibilityStatus,
 	type SchemaUpgrade,
@@ -28,6 +35,7 @@ import {
 	toUpgradeSchema,
 } from "../../../simple-tree/index.js";
 import { SchemaFactoryAlpha } from "../../../simple-tree/index.js";
+import { brand } from "../../../util/index.js";
 import { TestSchemaRepository } from "../../utils.js";
 
 const emptySchema: TreeStoredSchema = {
@@ -924,5 +932,74 @@ describe("checkSchemaCompatibility enabledUpgrades", () => {
 		);
 		assert(result.enabledUpgrades !== undefined);
 		assert.equal(result.enabledUpgrades.get(childUpgrade), "enabled");
+	});
+});
+
+describe("checkGeneratedSchemaCompatibility", () => {
+	class Point extends factory.object("Point", { x: factory.number, y: factory.number }) {}
+	class Item extends factory.objectAlpha(
+		"Item",
+		{
+			label: factory.optional(factory.string),
+			id: factory.identifier,
+			point: Point,
+		},
+		{ allowUnknownOptionalFields: true },
+	) {}
+	class Items extends factory.array("Items", [Item, Point]) {}
+	class Lookup extends factory.map("Lookup", [Items, factory.null]) {}
+
+	const roots: [string, ImplicitFieldSchema][] = [
+		["required root", Lookup],
+		["optional root", factory.optional([Items, Item])],
+		["leaf root", factory.number],
+	];
+
+	for (const [name, root] of roots) {
+		it(`matches checkSchemaCompatibility for ${name}`, () => {
+			const view = new TreeViewConfigurationAlpha({ schema: root });
+			const generated = toUpgradeSchema(view.root);
+			const storedRoots = [
+				generated.rootFieldSchema,
+				{ ...generated.rootFieldSchema, kind: FieldKinds.optional.identifier },
+				{ ...generated.rootFieldSchema, kind: FieldKinds.required.identifier },
+				{
+					...generated.rootFieldSchema,
+					types: new Set([brand<TreeNodeSchemaIdentifier>(Point.identifier)]),
+				},
+			];
+			for (const storedRoot of storedRoots) {
+				const stored: TreeStoredSchema = {
+					nodeSchema: generated.nodeSchema,
+					rootFieldSchema: storedRoot,
+				};
+				assert.deepEqual(
+					checkGeneratedSchemaCompatibility(view, generated, storedRoot),
+					checkSchemaCompatibility(view, stored),
+				);
+			}
+		});
+	}
+
+	it("is only valid for schema without staged upgrades", () => {
+		assert.equal(
+			hasStagedSchemaUpgrades(new TreeViewConfigurationAlpha({ schema: Lookup })),
+			false,
+		);
+		assert.equal(
+			hasStagedSchemaUpgrades(
+				new TreeViewConfigurationAlpha({
+					schema: factory.types([factory.number, factory.staged(factory.string)]),
+				}),
+			),
+			true,
+		);
+		class WithStagedOptional extends factory.objectAlpha("WithStagedOptional", {
+			value: factory.stagedOptional(factory.number),
+		}) {}
+		assert.equal(
+			hasStagedSchemaUpgrades(new TreeViewConfigurationAlpha({ schema: WithStagedOptional })),
+			true,
+		);
 	});
 });
