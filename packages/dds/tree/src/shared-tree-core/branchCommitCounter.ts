@@ -34,6 +34,16 @@ export class BranchCommitCounter<
 	}
 
 	/**
+	 * Discards the cached count, so that it is recomputed from the branch when next read.
+	 * @remarks
+	 * Must be called after the head of the branch is replaced without a change event (see {@link SharedTreeBranch.setHead}).
+	 */
+	public reset(): void {
+		this.unsubscribeFromBranch();
+		this.commitCountInitialized = false;
+	}
+
+	/**
 	 * Gets the number of commits in the branch.
 	 */
 	public get count(): number {

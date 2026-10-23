@@ -118,6 +118,15 @@ export class DefaultTreeBranchHistory implements TreeBranchHistory {
 		this.commitCounter.dispose();
 	}
 
+	/**
+	 * Recounts the commits of the branch when {@link DefaultTreeBranchHistory.length} is next read.
+	 * @remarks
+	 * Must be called after the head of the branch is replaced without a change event.
+	 */
+	public recountCommits(): void {
+		this.commitCounter.reset();
+	}
+
 	public get length(): number {
 		return this.commitCounter.count;
 	}
