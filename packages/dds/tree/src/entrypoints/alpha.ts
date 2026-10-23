@@ -218,6 +218,7 @@ export {
 	ITreeAlpha, 
 	ITreeViewConfigurationAlpha, 
 	IncrementalEncodingPolicy, 
+	IndependentTreeHistoryOptions, 
 	IndependentViewOptions, 
 	IndependentViewTelemetryOptions, 
 	Insertable, 
