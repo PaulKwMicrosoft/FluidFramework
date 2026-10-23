@@ -663,6 +663,7 @@ export function independentInitializedView<const TSchema extends ImplicitFieldSc
 
 // @alpha @input
 export interface IndependentTreeHistoryOptions {
+    readonly enableBaseContent?: boolean | undefined;
     readonly maxRevertibles?: number | undefined;
 }
 
@@ -1993,6 +1994,7 @@ export interface TreeAlpha {
     key2(node: TreeNode): string | number | undefined;
     // @deprecated
     on<K extends keyof TreeChangeEventsBeta<TNode>, TNode extends TreeNode>(node: TNode, eventName: K, listener: NoInfer<TreeChangeEventsBeta<TNode>[K]>): () => void;
+    replaceAsBase(parent: TreeNode, key: string | number, newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined): void;
     tagContentSchema<TSchema extends TreeNodeSchema, TContent extends InsertableField<TSchema>>(schema: TSchema, content: TContent): TContent;
     trackObservations<TResult>(onInvalidation: () => void, trackDuring: () => TResult): ObservationResults<TResult>;
     trackObservationsOnce<TResult>(onInvalidation: () => void, trackDuring: () => TResult): ObservationResults<TResult>;
