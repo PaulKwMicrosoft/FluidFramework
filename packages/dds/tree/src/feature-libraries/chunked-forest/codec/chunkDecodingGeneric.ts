@@ -63,6 +63,15 @@ export class DecoderContext<TEncodedShape = unknown> {
 		 * See {@link IncrementalDecoder} for more information.
 		 */
 		public readonly incrementalDecoder: IncrementalDecoder | undefined,
+		/**
+		 * Whether decoded nodes may be re-chunked by a chunker.
+		 * @remarks
+		 * When true, decoded chunks are marked as having a provisional layout, which a chunker may replace with a more
+		 * compact one when the content is added to a forest.
+		 * False for content whose chunks must keep their identity, such as incrementally summarized chunks
+		 * (see {@link IncrementalDecoder}).
+		 */
+		public readonly provisionalLayout: boolean = true,
 	) {}
 
 	public identifier<T extends string & BrandedType<string, string>>(
