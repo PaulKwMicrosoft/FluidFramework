@@ -215,6 +215,18 @@ export function toStoredSchema(
 }
 
 /**
+ * Converts a view {@link SimpleFieldSchema} into a {@link TreeFieldStoredSchema}, as {@link toStoredSchema} does for the root field.
+ */
+export function toStoredFieldSchema(
+	field: SimpleFieldSchema<SchemaType.View>,
+	options: StagedSchemaUpgradePolicy,
+): TreeFieldStoredSchema {
+	return convertField(
+		filterFieldAllowedTypes(field, options) as SimpleFieldSchema<SchemaType.Stored>,
+	);
+}
+
+/**
  * Converts a {@link SimpleTreeSchema} from `SchemaType.View` to `SchemaType.Stored`.
  */
 export function transformSimpleSchema(

@@ -82,7 +82,7 @@ import {
 	contentSchemaSymbol,
 	type TreeContextAlpha,
 	type TreeNodeSchema,
-	getUnhydratedContext,
+	getUnhydratedRootFieldSchema,
 } from "../simple-tree/index.js";
 import { brand, extractFromOpaque, type JsonCompatible } from "../util/index.js";
 
@@ -882,11 +882,7 @@ export const TreeAlpha: TreeAlpha = {
 			return undefined as Unhydrated<TreeFieldFromImplicitField<TSchema>>;
 		}
 		const cursor = cursorFromVerbose(data, schemalessConfig);
-		return createFromCursor(
-			schema,
-			cursor,
-			getUnhydratedContext(schema).flexContext.schema.rootFieldSchema,
-		);
+		return createFromCursor(schema, cursor, getUnhydratedRootFieldSchema(schema));
 	},
 
 	exportVerbose(node: TreeNode | TreeLeafValue, options?: TreeEncodingOptions): VerboseTree {
