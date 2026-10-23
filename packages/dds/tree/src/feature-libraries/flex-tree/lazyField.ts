@@ -80,7 +80,7 @@ import { indexForAt, treeStatusFromAnchorCache } from "./utilities.js";
  * `getCachedField` avoids that work when the parent wrapper is already available.
  * Reuse also reduces repeated field-access costs by avoiding wrapper allocation, cursor creation, and listener registration.
  */
-const fieldCache: WeakMap<HydratedFlexTreeNode, Map<FieldKey, FlexTreeField>> = new WeakMap();
+const fieldCache: WeakMap<HydratedFlexTreeNode, Map<FieldKey, LazyField>> = new WeakMap();
 
 /**
  * Looks up a field without navigating a cursor.
@@ -88,6 +88,22 @@ const fieldCache: WeakMap<HydratedFlexTreeNode, Map<FieldKey, FlexTreeField>> = 
  */
 export function getCachedField(node: LazyTreeNode, key: FieldKey): FlexTreeField | undefined {
 	return fieldCache.get(node)?.get(key);
+}
+
+/**
+ * Disposes the fields {@link makeField} cached for `node`, releasing the cursors and anchor references they hold.
+ */
+export function disposeCachedFields(node: LazyTreeNode): void {
+	const fields = fieldCache.get(node);
+	if (fields === undefined) {
+		return;
+	}
+	fieldCache.delete(node);
+	for (const field of fields.values()) {
+		if (!field.isFreed()) {
+			field[disposeSymbol]();
+		}
+	}
 }
 
 /**
@@ -144,7 +160,7 @@ export function makeField(
 	);
 	// If there is no flex tree parent node, skip caching: this is not expected to be a hot path, but should probably be fixed at some point.
 	if (cacheKey !== undefined) {
-		getOrCreate(fieldCache, cacheKey, () => new Map<FieldKey, FlexTreeField>()).set(
+		getOrCreate(fieldCache, cacheKey, () => new Map<FieldKey, LazyField>()).set(
 			fieldKey,
 			field,
 		);
