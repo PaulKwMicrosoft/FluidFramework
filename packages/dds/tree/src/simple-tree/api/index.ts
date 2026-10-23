@@ -123,6 +123,7 @@ export { getJsonSchema } from "./getJsonSchema.js";
 export { getSimpleSchema } from "./getSimpleSchema.js";
 export {
 	checkSchemaCompatibility,
+	checkGeneratedSchemaCompatibility,
 	getSchemaIncompatibilityDetails,
 } from "./schemaCompatibilityTester.js";
 export { type StagedUpgradeStatus } from "./schemaCompatibilityTester.js";
