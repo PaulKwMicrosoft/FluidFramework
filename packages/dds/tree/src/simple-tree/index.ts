@@ -152,6 +152,7 @@ export {
 	comparePersistedSchema,
 	type ConciseTree,
 	checkSchemaCompatibility,
+	checkGeneratedSchemaCompatibility,
 	getSchemaIncompatibilityDetails,
 	type Unenforced,
 	type System_Unsafe,
@@ -335,7 +336,11 @@ export {
 	prepareForInsertion,
 	prepareForInsertionContextless,
 } from "./prepareForInsertion.js";
-export { toUnhydratedSchema, convertFieldKind } from "./toStoredSchema.js";
+export {
+	toUnhydratedSchema,
+	convertFieldKind,
+	hasStagedSchemaUpgrades,
+} from "./toStoredSchema.js";
 export {
 	numberSchema,
 	stringSchema,
