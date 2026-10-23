@@ -15,8 +15,10 @@ import {
 	type ITreeSubscriptionCursor,
 	type MapTree,
 	rootFieldKey,
+	type UpPath,
 } from "../../../core/index.js";
 import { Context } from "../../../feature-libraries/flex-tree/context.js";
+import { LazyField } from "../../../feature-libraries/flex-tree/lazyField.js";
 import { LazyTreeNode } from "../../../feature-libraries/flex-tree/lazyNode.js";
 import { withObservation } from "../../../feature-libraries/flex-tree/observer.js";
 import type { FlexTreeField, FlexTreeNode } from "../../../feature-libraries/index.js";
@@ -257,6 +259,53 @@ describe("LazyNode", () => {
 		assert.throws(() => node.getBoxed(key));
 		replacement[disposeSymbol]();
 		forest.anchors.forget(retainedAnchor);
+	});
+
+	it("anchors new fields and child nodes from the parent's anchor node", () => {
+		const sf = new SchemaFactory("parent-anchored");
+		class Item extends sf.object("Item", { value: sf.number }) {}
+		class Root extends sf.object("Root", { items: sf.array(Item) }) {}
+		const view = createIndependentTreeAlpha().viewWith(
+			new TreeViewConfiguration({ schema: Root }),
+		);
+		view.initialize({ items: [{ value: 1 }, { value: 2 }] });
+		const arrayNode = getInnerNode(view.root.items);
+		assert(arrayNode instanceof LazyTreeNode);
+		const anchors = arrayNode.context.checkout.forest.anchors;
+		const tracked: unknown[] = [];
+		const track = anchors.track.bind(anchors);
+		anchors.track = (path) => {
+			tracked.push(path);
+			return track(path);
+		};
+
+		// The field's anchor references the node's anchor node rather than a path from the root.
+		const field = arrayNode.getBoxed(EmptyKey);
+		assert.equal(tracked.length, 1);
+		assert.equal(tracked[0], arrayNode.anchorNode);
+		assert(field instanceof LazyField);
+		assert(field.anchor.parent !== undefined);
+		assert.equal(anchors.locate(field.anchor.parent), arrayNode.anchorNode);
+
+		// A child node is anchored directly under the parent's anchor node rather than from a path from the root.
+		const child = field.atIndex(0);
+		assert(child instanceof LazyTreeNode);
+		assert.equal(tracked.length, 2);
+		assert.equal((tracked[1] as UpPath).parent, arrayNode.anchorNode);
+		assert.equal(child.anchorNode.parent, arrayNode.anchorNode);
+		assert.equal(anchors.locate(child.anchor), child.anchorNode);
+		assert.equal(field.atIndex(0), child);
+		assert.equal(field.boxedAt(0), child);
+
+		// Fields and nodes keep working after edits move them.
+		view.root.items.insertAt(0, { value: 0 });
+		assert.equal(child.anchorNode.parentIndex, 1);
+		assert.equal(field.atIndex(1), child);
+		assert.equal(field.length, 3);
+		assert.equal(view.root.items[1]?.value, 1);
+
+		view.dispose();
+		assert(anchors.isEmpty());
 	});
 
 	describe("LazyNode", () => {
