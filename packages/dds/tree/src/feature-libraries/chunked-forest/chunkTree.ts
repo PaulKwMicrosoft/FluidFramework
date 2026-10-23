@@ -741,7 +741,9 @@ export function chunkRange(
 		output = newOutput;
 	}
 
-	return output;
+	// Callers commonly retain this array (for example as a field of a BasicChunk),
+	// so copy it to an array of exactly its length: arrays grown by push keep spare capacity.
+	return [...output];
 }
 
 /**
@@ -1013,7 +1015,8 @@ export function uniformChunkFromCursor(
 		}
 		topLevelLength += 1;
 	}
-	return new UniformChunk(shape.withTopLevelLength(topLevelLength), values, idCompressor);
+	// Copy the values to an array of exactly their length, without the spare capacity left by push.
+	return new UniformChunk(shape.withTopLevelLength(topLevelLength), [...values], idCompressor);
 }
 
 /**
@@ -1196,7 +1199,8 @@ class ContentChunkingWalk {
 					field + 1 < fieldEnd
 						? (this.fieldRunStarts[field + 1] ?? oob())
 						: this.runItems.length;
-				fields.set(this.fieldKeys[field] ?? oob(), this.materializeRuns(from, to, []));
+				// Like chunkRange, store the field's chunks in an array of exactly their length.
+				fields.set(this.fieldKeys[field] ?? oob(), [...this.materializeRuns(from, to, [])]);
 			}
 			this.truncate(valueStart, runStart, fieldStart);
 			return new BasicChunk(type, fields, value);
