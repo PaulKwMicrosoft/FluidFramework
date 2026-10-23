@@ -26,11 +26,8 @@ import {
 	type RecordNodeSchema,
 } from "../node-kinds/index.js";
 import type { SchemaType, SimpleNodeSchema } from "../simpleSchema.js";
-import {
-	toInitialSchema,
-	toUnhydratedSchema,
-	transformSimpleSchema,
-} from "../toStoredSchema.js";
+import { shareUnhydratedContext } from "../createContext.js";
+import { toInitialSchema, toStoredSchema, toUnhydratedSchema } from "../toStoredSchema.js";
 import { createTreeSchema, type TreeSchema } from "../treeSchema.js";
 import { walkFieldSchema } from "../walkFieldSchema.js";
 
@@ -318,8 +315,10 @@ export class TreeViewConfigurationAlpha<
 		}
 
 		// Eagerly perform these conversions to surface errors sooner.
+		// The unhydrated stored schema is cached, and used by the unhydrated context its node schemas share.
 		toInitialSchema(this.root, this.stagedUpgradePolicy);
-		transformSimpleSchema(treeSchema, toUnhydratedSchema);
+		toStoredSchema(this.root, toUnhydratedSchema);
+		shareUnhydratedContext(this);
 	}
 }
 
