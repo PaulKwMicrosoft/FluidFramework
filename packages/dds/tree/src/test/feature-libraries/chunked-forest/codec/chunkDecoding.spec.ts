@@ -541,6 +541,29 @@ describe("chunkDecoding", () => {
 			assertChunkCursorEquals(result, [{ type: brand("baz") }]);
 		});
 
+		it("marks chunks with a provisional layout unless the context preserves them", () => {
+			const shape: EncodedNodeShape = { type: "baz", value: false, fields: [] };
+			const provisional = new NodeDecoder(
+				shape,
+				new DecoderContext([], [], idDecodingContext, undefined /* incrementalDecoder */),
+			).decode([], { data: [], offset: 0 });
+			assert(provisional instanceof BasicChunk);
+			assert.equal(provisional.provisionalLayout, true);
+
+			const preserved = new NodeDecoder(
+				shape,
+				new DecoderContext(
+					[],
+					[],
+					idDecodingContext,
+					undefined /* incrementalDecoder */,
+					false,
+				),
+			).decode([], { data: [], offset: 0 });
+			assert(preserved instanceof BasicChunk);
+			assert.equal(preserved.provisionalLayout, false);
+		});
+
 		it("identifier node", () => {
 			const compressedId = testIdCompressor.generateCompressedId();
 			const stableId = testIdCompressor.decompress(compressedId);
@@ -1699,10 +1722,12 @@ describe("chunkDecoding", () => {
 			const stream = { data: [referenceId], offset: 0 };
 
 			const result = decoder.decode([], stream);
+			// Incrementally summarized chunks keep their identity in the forest, so they are not provisional.
 			const expectedResult = new BasicChunk(
 				nodeIdentifier,
 				new Map(),
 				testIdCompressor.decompress(compressedId),
+				false,
 			);
 			assert.deepStrictEqual(result, expectedResult);
 		});
