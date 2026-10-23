@@ -65,6 +65,7 @@ function cleanupTree(anchor: AnchorNode): void {
 	cached[disposeSymbol]();
 }
 
+
 /**
  * Lazy implementation of {@link FlexTreeNode}.
  */
@@ -126,7 +127,12 @@ export class LazyTreeNode extends LazyEntity<Anchor> implements HydratedFlexTree
 					const key: FieldKey = cursor.getFieldKey();
 					const pair: [FieldKey, FlexTreeField] = [
 						key,
-						makeField(this.context, this.storedSchema.getFieldSchema(key).kind, cursor),
+						makeField(
+							this.context,
+							this.storedSchema.getFieldSchema(key).kind,
+							cursor,
+							this.anchorNode,
+						),
 					];
 					return pair;
 				}).values();
@@ -136,12 +142,20 @@ export class LazyTreeNode extends LazyEntity<Anchor> implements HydratedFlexTree
 	public tryGetField(fieldKey: FieldKey): FlexTreeField | undefined {
 		currentObserver?.observeNodeField(this, fieldKey);
 
+		const cached = getCachedField(this, fieldKey);
+		if (cached !== undefined) {
+			return cached.length === 0 ? undefined : cached;
+		}
+
 		const schema = this.storedSchema.getFieldSchema(fieldKey);
 		return inCursorField(this.cursor, fieldKey, (cursor) => {
 			if (cursor.getFieldLength() === 0) {
 				return undefined;
 			}
-			return getCachedField(this, fieldKey) ?? makeField(this.context, schema.kind, cursor);
+			return (
+				getCachedField(this, fieldKey) ??
+				makeField(this.context, schema.kind, cursor, this.anchorNode)
+			);
 		});
 	}
 
@@ -156,7 +170,7 @@ export class LazyTreeNode extends LazyEntity<Anchor> implements HydratedFlexTree
 
 		const fieldSchema = this.storedSchema.getFieldSchema(key);
 		return inCursorField(this.cursor, key, (cursor) => {
-			return makeField(this.context, fieldSchema.kind, cursor);
+			return makeField(this.context, fieldSchema.kind, cursor, this.anchorNode);
 		});
 	}
 
@@ -166,6 +180,7 @@ export class LazyTreeNode extends LazyEntity<Anchor> implements HydratedFlexTree
 				this.context,
 				this.storedSchema.getFieldSchema(cursor.getFieldKey()).kind,
 				cursor,
+				this.anchorNode,
 			),
 		).values();
 	}
