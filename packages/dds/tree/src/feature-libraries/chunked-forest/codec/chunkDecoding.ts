@@ -405,6 +405,9 @@ export class IncrementalChunkDecoder implements ChunkDecoder {
 				batch.shapes,
 				this.context.idDecodingContext,
 				this.context.incrementalDecoder,
+				// The incremental summary builder tracks the chunks returned here to reuse their encoding,
+				// so they must stay in the forest as they are.
+				false,
 			);
 			const chunks = genericDecode(decoderLibrary, context, batch, anyDecoder);
 			return aggregateChunks(chunks);
@@ -504,6 +507,6 @@ export class NodeDecoder implements ChunkDecoder {
 			}
 		}
 
-		return new BasicChunk(type, fields, value);
+		return new BasicChunk(type, fields, value, this.context.provisionalLayout);
 	}
 }
