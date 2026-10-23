@@ -363,6 +363,46 @@ describe("chunkTree", () => {
 			]);
 		});
 
+		it("stores chunks and values in arrays of exactly their length", () => {
+			// Spare capacity in an array is not observable from JavaScript,
+			// so this checks the lengths of the arrays which chunks retain.
+			const chunker = makeTreeChunker(
+				new TreeStoredSchemaRepository(schema),
+				defaultSchemaPolicy,
+				defaultIncrementalEncodingPolicy,
+			);
+			const numberType: TreeNodeSchemaIdentifier = brand(numberSchema.identifier);
+			const content: JsonableTree[] = [
+				{
+					type: brand(structOptional.identifier),
+					fields: { x: [{ type: numberType, value: 1 }] },
+				},
+				{ type: brand(structOptional.identifier) },
+				{ type: numberType, value: 2 },
+				{ type: numberType, value: 3 },
+			];
+			const chunks = chunkField(cursorForJsonableTreeField(content), {
+				policy: chunker,
+				idCompressor: undefined,
+			});
+			assert.equal(chunks.length, 3);
+			for (const chunk of chunks) {
+				assert(chunk instanceof UniformChunk);
+				assert.equal(
+					chunk.values.length,
+					chunk.shape.treeShape.valuesPerTopLevelNode * chunk.topLevelLength,
+				);
+			}
+
+			const basic = chunkTree(cursorForJsonableTreeNode(content[0]), {
+				policy: basicOnlyChunkPolicy,
+				idCompressor: undefined,
+			});
+			assert(basic instanceof BasicChunk);
+			assert.equal(basic.fields.get(brand("x"))?.length, 1);
+			assertChunkCursorEquals(basic, [content[0]]);
+		});
+
 		it("creates sequence chunks", () => {
 			const policy: ChunkPolicy = {
 				sequenceChunkSplitThreshold: 2,
