@@ -28,6 +28,22 @@ import type { TreeSchema } from "./treeSchema.js";
 const contextCache: WeakMap<ImplicitFieldSchema, Context> = new WeakMap();
 
 /**
+ * The contexts created by {@link getUnhydratedContext}.
+ */
+const generatedContexts: WeakSet<Context> = new WeakSet();
+
+/**
+ * Returns true if `context` was created by {@link getUnhydratedContext}.
+ * @remarks
+ * The stored schema of such a context is generated from view schema with {@link toUnhydratedSchema}:
+ * for each of its schema classes, it holds the node schema generated from that class, with all staged types allowed and no unknown optional fields.
+ * Other unhydrated contexts, like those of cloned nodes, use the stored schema of the tree the content came from.
+ */
+export function isGeneratedUnhydratedContext(context: Context): boolean {
+	return generatedContexts.has(context);
+}
+
+/**
  * For node schemas which share the unhydrated context of a tree schema's root (see {@link shareUnhydratedContext}), that root.
  */
 const sharedContextRoots: WeakMap<ImplicitFieldSchema, ImplicitFieldSchema> = new WeakMap();
@@ -86,10 +102,12 @@ export function getUnhydratedContext(schema: ImplicitFieldSchema): Context {
 				defaultSchemaPolicy,
 				toStoredSchema(contextSchema, toUnhydratedSchema),
 			);
-			return new Context(
+			const context = new Context(
 				flexContext,
 				Context.schemaMapFromRootSchema(normalized.allowedTypesFull.evaluate()),
 			);
+			generatedContexts.add(context);
+			return context;
 		});
 	} finally {
 		getUnhydratedContextIsRunning = false;
