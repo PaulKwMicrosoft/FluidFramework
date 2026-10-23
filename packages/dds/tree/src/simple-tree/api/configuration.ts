@@ -26,6 +26,7 @@ import {
 	type RecordNodeSchema,
 } from "../node-kinds/index.js";
 import type { SchemaType, SimpleNodeSchema } from "../simpleSchema.js";
+import { shareUnhydratedContext } from "../createContext.js";
 import {
 	toInitialSchema,
 	toUnhydratedSchema,
@@ -321,6 +322,7 @@ export class TreeViewConfigurationAlpha<
 		// Eagerly perform these conversions to surface errors sooner.
 		toInitialSchema(this.root, this.stagedUpgradePolicy);
 		transformSimpleSchema(treeSchema, toUnhydratedSchema);
+		shareUnhydratedContext(this.schema);
 	}
 }
 

@@ -350,5 +350,5 @@ export {
 	nullSchema,
 } from "./leafNodeSchema.js";
 export type { LeafSchema, StringSchema } from "./leafNodeSchema.js";
-export { getUnhydratedContext } from "./createContext.js";
+export { getUnhydratedContext, getUnhydratedRootFieldSchema } from "./createContext.js";
 export { type TreeSchema, createTreeSchema } from "./treeSchema.js";

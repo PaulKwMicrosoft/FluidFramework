@@ -99,8 +99,10 @@ describe("SchematizingSimpleTreeView", () => {
 			const viewConfig = new TreeViewConfigurationAlpha({ schema: Root });
 			const firstRoot = new Root({ child: new Child({ value: 1 }) });
 			const secondRoot = new Root({ child: new Child({ value: 2 }) });
+			// The node schemas of a configuration without staged upgrades share the unhydrated context of its root.
 			const unhydrated = getKernel(firstRoot.child).context;
-			assert.notStrictEqual(unhydrated.schema, viewConfig.definitions);
+			assert(!unhydrated.flexContext.isHydrated());
+			assert.strictEqual(unhydrated.schema, viewConfig.definitions);
 			let reads = 0;
 			for (const node of [Root, Child]) {
 				const data = getTreeNodeSchemaPrivateData(node);
@@ -122,6 +124,7 @@ describe("SchematizingSimpleTreeView", () => {
 				assert(firstContext.flexContext.isHydrated());
 				assert(secondContext.flexContext.isHydrated());
 				assert.notStrictEqual(firstContext, secondContext);
+				assert.notStrictEqual(firstContext, unhydrated);
 				assert.strictEqual(firstContext.schema, viewConfig.definitions);
 				assert.strictEqual(secondContext.schema, viewConfig.definitions);
 				assert.strictEqual(getKernel(first.root.child).context, firstContext);

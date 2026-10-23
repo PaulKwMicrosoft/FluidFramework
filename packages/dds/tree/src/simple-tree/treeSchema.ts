@@ -146,6 +146,15 @@ export function getSchemaDerivedData(rootSchema: ImplicitFieldSchema): SchemaDer
 }
 
 /**
+ * Returns the {@link SchemaDerivedData} cached for `rootSchema` by {@link getSchemaDerivedData}, without analyzing schema.
+ */
+export function tryGetSchemaDerivedData(
+	rootSchema: ImplicitFieldSchema,
+): SchemaDerivedData | undefined {
+	return schemaDerivedDataCache.get(rootSchema);
+}
+
+/**
  * Completes topology and staging analysis without constructing reachable maps or contexts.
  * @param rootSchema - Schema whose lazy references are ready to be evaluated.
  * @param allowedTypes - Optional per-request callback for every allowed-type list, including lists in previously analyzed components and the root field.
