@@ -36,7 +36,14 @@ import {
 	allowUnused,
 	FieldKind,
 	NodeKind,
+	createTreeSchema,
+	encodeSchemaCompatibilitySnapshot,
+	SchemaFactoryAlpha,
 } from "../../../simple-tree/index.js";
+// eslint-disable-next-line import-x/no-internal-modules -- Count discovery rather than just comparing snapshot contents.
+import { getTreeNodeSchemaPrivateData } from "../../../simple-tree/core/index.js";
+// eslint-disable-next-line import-x/no-internal-modules -- Check that snapshots do not initialize contexts.
+import { getSchemaDerivedData } from "../../../simple-tree/treeSchema.js";
 import { testSchema } from "../../testTrees.js";
 import { testSrcPath } from "../../testSrcPath.cjs";
 import { inMemorySnapshotFileSystem } from "../../utils.js";
@@ -84,6 +91,33 @@ describe("snapshotCompatibilityChecker", () => {
 			stringSchema.identifier,
 			numberSchema.identifier,
 		]);
+	});
+
+	it("exports fresh snapshots without rediscovering a configured schema", () => {
+		const sf = new SchemaFactoryAlpha("snapshotReuse");
+		class Child extends sf.object("Child", { value: sf.stagedOptional(sf.number) }) {}
+		class Root extends sf.object("Root", { child: Child }) {}
+		const config = new TreeViewConfigurationAlpha({ schema: Root });
+		const expected = encodeSchemaCompatibilitySnapshot(createTreeSchema(Root));
+		let reads = 0;
+		for (const node of [Root, Child]) {
+			const data = getTreeNodeSchemaPrivateData(node);
+			const types = data.childAllowedTypes;
+			Object.defineProperty(data, "childAllowedTypes", {
+				get() {
+					reads++;
+					return types;
+				},
+			});
+		}
+		const first = exportCompatibilitySchemaSnapshot(config);
+		const second = exportCompatibilitySchemaSnapshot({ schema: Root });
+		assert.equal(reads, 0);
+		assert.notStrictEqual(first, second);
+		assert.equal(JSON.stringify(first), JSON.stringify(expected));
+		assert.equal(JSON.stringify(second), JSON.stringify(expected));
+		assert.equal(getSchemaDerivedData(Root).unhydratedContext, undefined);
+		assert.equal(getTreeNodeSchemaPrivateData(Child).component?.definitions, undefined);
 	});
 
 	it("parse and snapshot can roundtrip schema", () => {
