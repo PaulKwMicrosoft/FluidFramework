@@ -195,6 +195,13 @@ export class ContentShapeCache {
 	}
 
 	/**
+	 * Whether a field holding `length` children can be part of a content-derived shape.
+	 */
+	public allowsFieldLength(length: number): boolean {
+		return length <= this.limits.maxFieldLength;
+	}
+
+	/**
 	 * Whether the stored schema has a node schema for `type`.
 	 *
 	 * @remarks
