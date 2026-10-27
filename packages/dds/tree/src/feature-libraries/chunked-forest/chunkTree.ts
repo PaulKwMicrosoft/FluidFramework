@@ -38,6 +38,11 @@ import { isStableNodeIdentifier } from "../node-identifier/index.js";
 import { BasicChunk } from "./basicChunk.js";
 import type { IncrementalEncodingPolicy } from "./codec/index.js";
 import { SequenceChunk } from "./sequenceChunk.js";
+import {
+	defaultSubtreeInternerLimits,
+	SubtreeInterner,
+	type SubtreeInternerLimits,
+} from "./subtreeInterner.js";
 import { type FieldShape, TreeShape, UniformChunk } from "./uniformChunk.js";
 
 export interface Disposable {
@@ -48,11 +53,15 @@ export interface Disposable {
 }
 /**
  * Creates a ChunkPolicy which responds to schema changes.
+ *
+ * @param subtreeLimits - Limits for sharing identical small subtrees (see {@link ChunkPolicy.subtreeInterner}),
+ * or `false` to store every subtree separately.
  */
 export function makeTreeChunker(
 	schema: TreeStoredSchemaSubscription,
 	policy: SchemaPolicy,
 	shouldEncodeIncrementally: IncrementalEncodingPolicy,
+	subtreeLimits: SubtreeInternerLimits | false = defaultSubtreeInternerLimits,
 ): IChunker {
 	return new Chunker(
 		schema,
@@ -75,7 +84,22 @@ export function makeTreeChunker(
 				},
 				type,
 			),
+		subtreeLimits === false ? undefined : { shouldEncodeIncrementally, limits: subtreeLimits },
 	);
+}
+
+/**
+ * Configuration for sharing identical small subtrees. See {@link SubtreeInterner}.
+ */
+export interface SubtreeInternerOptions {
+	/**
+	 * Policy for which fields are encoded incrementally: subtrees in or containing such fields are never shared.
+	 */
+	readonly shouldEncodeIncrementally: IncrementalEncodingPolicy;
+	/**
+	 * Bounds on the subtrees shared and on the memory used to find them.
+	 */
+	readonly limits: SubtreeInternerLimits;
 }
 
 /**
@@ -119,7 +143,8 @@ export type ShapeInfo = TreeShape | Polymorphic;
  * @remarks
  * Shape information is valid only for the current contents of {@link schema}.
  * The first cache miss registers one schema-change callback.
- * When the schema changes, the callback clears the complete cache and unregisters itself.
+ * When the schema changes, the callback clears the complete cache (including the {@link subtreeInterner})
+ * and unregisters itself.
  * A later cache miss registers a new callback for the new schema version.
  */
 export class Chunker implements IChunker {
@@ -129,6 +154,13 @@ export class Chunker implements IChunker {
 	 * Cleared when `schema` changes.
 	 */
 	private readonly typeShapes: Map<TreeNodeSchemaIdentifier, ShapeInfo> = new Map();
+
+	/**
+	 * Interner sharing identical small subtrees, created on first use.
+	 * Corresponds to the version of the schema in `schema`.
+	 * Disposed when `schema` changes.
+	 */
+	private subtreeInternerInstance: SubtreeInterner | undefined;
 
 	/**
 	 * Unregisters the schema-change callback for the current cache contents.
@@ -176,6 +208,11 @@ export class Chunker implements IChunker {
 			 */
 			chunkerSchema: TreeStoredSchema,
 		) => ShapeInfo,
+		/**
+		 * When provided, identical small subtrees share one chunk.
+		 * See {@link ChunkPolicy.subtreeInterner}.
+		 */
+		private readonly subtreeInternerOptions?: SubtreeInternerOptions,
 	) {}
 
 	public clone(schema: TreeStoredSchemaSubscription): IChunker {
@@ -189,7 +226,25 @@ export class Chunker implements IChunker {
 			this.uniformChunkNodeCount,
 			this.uniformChunkNodeCountDynamicTargetMax,
 			this.tryShapeWithSchema,
+			this.subtreeInternerOptions,
 		);
+	}
+
+	public get subtreeInterner(): SubtreeInterner | undefined {
+		if (this.subtreeInternerOptions === undefined) {
+			return undefined;
+		}
+		if (this.subtreeInternerInstance === undefined) {
+			this.unregisterSchemaCallback ??= this.schema.events.on("afterSchemaChange", () =>
+				this.schemaChanged(),
+			);
+			this.subtreeInternerInstance = new SubtreeInterner(
+				this.schema,
+				this.subtreeInternerOptions.shouldEncodeIncrementally,
+				this.subtreeInternerOptions.limits,
+			);
+		}
+		return this.subtreeInternerInstance;
 	}
 
 	public shapeFromSchema(schema: TreeNodeSchemaIdentifier): ShapeInfo {
@@ -227,6 +282,8 @@ export class Chunker implements IChunker {
 
 	private schemaChanged(): void {
 		this.typeShapes.clear();
+		this.subtreeInternerInstance?.dispose();
+		this.subtreeInternerInstance = undefined;
 		if (this.unregisterSchemaCallback) {
 			this.unregisterSchemaCallback();
 			this.unregisterSchemaCallback = undefined;
@@ -509,6 +566,19 @@ export interface ChunkPolicy {
 	 * Returns information about the shapes trees of type `schema` can take.
 	 */
 	shapeFromSchema(schema: TreeNodeSchemaIdentifier): ShapeInfo;
+
+	/**
+	 * Interner which makes identical small subtrees share one chunk.
+	 *
+	 * @remarks
+	 * When provided, each node chunked into its own {@link BasicChunk} (and each node with fields chunked alone into
+	 * a {@link UniformChunk}) is replaced by an identical chunk chunked before, if there is one.
+	 * Chunks are copy on write, so this changes how content is stored in memory, not the content itself.
+	 * See {@link SubtreeInterner}.
+	 *
+	 * When undefined, every subtree is stored separately.
+	 */
+	readonly subtreeInterner?: SubtreeInterner;
 }
 
 export interface ChunkCompressor {
@@ -526,9 +596,18 @@ function newBasicChunkTree(
 	cursor: ITreeCursorSynchronous,
 	policy: ChunkCompressor,
 ): BasicChunk {
+	const type = cursor.type;
+	const interner = policy.policy.subtreeInterner;
 	return new BasicChunk(
-		cursor.type,
-		new Map(mapCursorFields(cursor, () => [cursor.getFieldKey(), chunkField(cursor, policy)])),
+		type,
+		new Map(
+			mapCursorFields(cursor, () => {
+				const key = cursor.getFieldKey();
+				const chunks = chunkField(cursor, policy);
+				interner?.internField(type, key, chunks);
+				return [key, chunks];
+			}),
+		),
 		cursor.value,
 	);
 }
