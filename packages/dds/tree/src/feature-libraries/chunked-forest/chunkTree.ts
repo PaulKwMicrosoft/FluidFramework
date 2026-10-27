@@ -44,6 +44,11 @@ import {
 	defaultContentShapeLimits,
 } from "./contentShapeCache.js";
 import { SequenceChunk } from "./sequenceChunk.js";
+import {
+	defaultSubtreeInternerLimits,
+	SubtreeInterner,
+	type SubtreeInternerLimits,
+} from "./subtreeInterner.js";
 import { type FieldShape, TreeShape, UniformChunk } from "./uniformChunk.js";
 
 export interface Disposable {
@@ -58,11 +63,15 @@ export interface Disposable {
  * @remarks
  * Besides shapes derived from the schema, the policy uses shapes derived from content
  * (see {@link ChunkPolicy.contentShapes}) with the {@link defaultContentShapeLimits}.
+ *
+ * @param subtreeLimits - Limits for sharing identical small subtrees (see {@link ChunkPolicy.subtreeInterner}),
+ * or `false` to store every subtree separately.
  */
 export function makeTreeChunker(
 	schema: TreeStoredSchemaSubscription,
 	policy: SchemaPolicy,
 	shouldEncodeIncrementally: IncrementalEncodingPolicy,
+	subtreeLimits: SubtreeInternerLimits | false = defaultSubtreeInternerLimits,
 ): IChunker {
 	return new Chunker(
 		schema,
@@ -86,7 +95,22 @@ export function makeTreeChunker(
 				type,
 			),
 		{ shouldEncodeIncrementally, limits: defaultContentShapeLimits },
+		subtreeLimits === false ? undefined : { shouldEncodeIncrementally, limits: subtreeLimits },
 	);
+}
+
+/**
+ * Configuration for sharing identical small subtrees. See {@link SubtreeInterner}.
+ */
+export interface SubtreeInternerOptions {
+	/**
+	 * Policy for which fields are encoded incrementally: subtrees in or containing such fields are never shared.
+	 */
+	readonly shouldEncodeIncrementally: IncrementalEncodingPolicy;
+	/**
+	 * Bounds on the subtrees shared and on the memory used to find them.
+	 */
+	readonly limits: SubtreeInternerLimits;
 }
 
 /**
@@ -144,8 +168,8 @@ export type ShapeInfo = TreeShape | Polymorphic;
  * @remarks
  * Shape information is valid only for the current contents of {@link schema}.
  * The first cache miss registers one schema-change callback.
- * When the schema changes, the callback clears the complete cache (including the {@link contentShapes} cache)
- * and unregisters itself.
+ * When the schema changes, the callback clears the complete cache (including the {@link contentShapes} cache
+ * and the {@link subtreeInterner}) and unregisters itself.
  * A later cache miss registers a new callback for the new schema version.
  */
 export class Chunker implements IChunker {
@@ -162,6 +186,13 @@ export class Chunker implements IChunker {
 	 * Cleared when `schema` changes.
 	 */
 	private contentShapeCache: ContentShapeCache | undefined;
+
+	/**
+	 * Interner sharing identical small subtrees, created on first use.
+	 * Corresponds to the version of the schema in `schema`.
+	 * Disposed when `schema` changes.
+	 */
+	private subtreeInternerInstance: SubtreeInterner | undefined;
 
 	/**
 	 * Unregisters the schema-change callback for the current cache contents.
@@ -214,6 +245,11 @@ export class Chunker implements IChunker {
 		 * See {@link ChunkPolicy.contentShapes}.
 		 */
 		private readonly contentShapeOptions?: ContentShapeOptions,
+		/**
+		 * When provided, identical small subtrees share one chunk.
+		 * See {@link ChunkPolicy.subtreeInterner}.
+		 */
+		private readonly subtreeInternerOptions?: SubtreeInternerOptions,
 	) {}
 
 	public clone(schema: TreeStoredSchemaSubscription): IChunker {
@@ -228,7 +264,25 @@ export class Chunker implements IChunker {
 			this.uniformChunkNodeCountDynamicTargetMax,
 			this.tryShapeWithSchema,
 			this.contentShapeOptions,
+			this.subtreeInternerOptions,
 		);
+	}
+
+	public get subtreeInterner(): SubtreeInterner | undefined {
+		if (this.subtreeInternerOptions === undefined) {
+			return undefined;
+		}
+		if (this.subtreeInternerInstance === undefined) {
+			this.unregisterSchemaCallback ??= this.schema.events.on("afterSchemaChange", () =>
+				this.schemaChanged(),
+			);
+			this.subtreeInternerInstance = new SubtreeInterner(
+				this.schema,
+				this.subtreeInternerOptions.shouldEncodeIncrementally,
+				this.subtreeInternerOptions.limits,
+			);
+		}
+		return this.subtreeInternerInstance;
 	}
 
 	public get contentShapes(): ContentShapeCache | undefined {
@@ -285,6 +339,8 @@ export class Chunker implements IChunker {
 	private schemaChanged(): void {
 		this.typeShapes.clear();
 		this.contentShapeCache = undefined;
+		this.subtreeInternerInstance?.dispose();
+		this.subtreeInternerInstance = undefined;
 		if (this.unregisterSchemaCallback) {
 			this.unregisterSchemaCallback();
 			this.unregisterSchemaCallback = undefined;
@@ -583,6 +639,19 @@ export interface ChunkPolicy {
 	 * When undefined, only shapes from {@link ChunkPolicy.shapeFromSchema} are used.
 	 */
 	readonly contentShapes?: ContentShapeCache;
+
+	/**
+	 * Interner which makes identical small subtrees share one chunk.
+	 *
+	 * @remarks
+	 * When provided, each node chunked into its own chunk (and each node with a content-derived shape in a field too
+	 * long to be part of its parent's shape) is replaced by an identical chunk chunked before, if there is one.
+	 * Chunks are copy on write, so this changes how content is stored in memory, not the content itself.
+	 * See {@link SubtreeInterner}.
+	 *
+	 * When undefined, every subtree is stored separately.
+	 */
+	readonly subtreeInterner?: SubtreeInterner;
 }
 
 export interface ChunkCompressor {
@@ -600,9 +669,18 @@ function newBasicChunkTree(
 	cursor: ITreeCursorSynchronous,
 	policy: ChunkCompressor,
 ): BasicChunk {
+	const type = cursor.type;
+	const interner = policy.policy.subtreeInterner;
 	return new BasicChunk(
-		cursor.type,
-		new Map(mapCursorFields(cursor, () => [cursor.getFieldKey(), chunkField(cursor, policy)])),
+		type,
+		new Map(
+			mapCursorFields(cursor, () => {
+				const key = cursor.getFieldKey();
+				const chunks = chunkField(cursor, policy);
+				interner?.internField(type, key, chunks);
+				return [key, chunks];
+			}),
+		),
 		cursor.value,
 	);
 }
@@ -1054,9 +1132,10 @@ function isReplaceable(chunk: TreeChunk, cache: ContentShapeCache): chunk is Bas
 
 /**
  * The result of chunking one node with content-derived shapes:
- * its shape (with its values appended to {@link ContentChunkingWalk.values}) or a chunk holding it.
+ * its shape (with its values appended to {@link ContentChunkingWalk.values}) or a chunk holding it
+ * (a new {@link BasicChunk}, or a chunk shared by {@link ChunkPolicy.subtreeInterner}).
  */
-type WalkResult = TreeShape | BasicChunk;
+type WalkResult = TreeShape | TreeChunk;
 
 /**
  * Scratch state for chunking a range with content-derived shapes. See {@link chunkRunWithContentShapes}.
@@ -1130,6 +1209,46 @@ class ContentChunkingWalk {
 		this.runItems.push(chunk);
 		this.runValueStarts.push(0);
 		this.runLengths.push(chunk.topLevelLength);
+	}
+
+	/**
+	 * Returns `result`, the result of walking a child of field `key` (holding `fieldLength` nodes)
+	 * of a node of type `parentType`, or an identical chunk shared by {@link ChunkPolicy.subtreeInterner}.
+	 *
+	 * @remarks
+	 * A child with a shape is only shared when its field is too long to be part of its parent's shape,
+	 * so sharing never keeps a parent from getting a shape.
+	 * When a shared chunk is returned for a child with a shape, the child's values,
+	 * which start at `valueStart`, are removed from {@link ContentChunkingWalk.values}.
+	 */
+	public shareChild(
+		result: WalkResult,
+		valueStart: number,
+		parentType: TreeNodeSchemaIdentifier,
+		key: FieldKey,
+		fieldLength: number,
+	): WalkResult {
+		const interner = this.compressor.policy.subtreeInterner;
+		if (interner === undefined || interner.isIncremental(parentType, key)) {
+			return result;
+		}
+		if (result instanceof TreeShape) {
+			if (this.cache.allowsFieldLength(fieldLength)) {
+				return result;
+			}
+			const shared = interner.internValues(
+				result,
+				this.values,
+				valueStart,
+				this.compressor.idCompressor,
+			);
+			if (shared === undefined) {
+				return result;
+			}
+			this.values.length = valueStart;
+			return shared;
+		}
+		return interner.intern(result);
 	}
 
 	/**
@@ -1313,7 +1432,13 @@ function walkNode(cursor: ITreeCursorSynchronous, walk: ContentChunkingWalk): Wa
 				if (existing !== undefined) {
 					if (isReplaceable(existing, walk.cache)) {
 						const provisionalValueStart = walk.values.length;
-						const provisionalResult = walkProvisionalChunk(existing, walk);
+						const provisionalResult = walk.shareChild(
+							walkProvisionalChunk(existing, walk),
+							provisionalValueStart,
+							type,
+							key,
+							fieldLength,
+						);
 						walk.appendRun(provisionalResult, provisionalValueStart, firstRunOfField);
 						fieldShape = nextFieldShape(fieldShape, provisionalResult);
 						count++;
@@ -1332,7 +1457,13 @@ function walkNode(cursor: ITreeCursorSynchronous, walk: ContentChunkingWalk): Wa
 				}
 			}
 			const childValueStart = walk.values.length;
-			const result = walkNode(cursor, walk);
+			const result = walk.shareChild(
+				walkNode(cursor, walk),
+				childValueStart,
+				type,
+				key,
+				fieldLength,
+			);
 			walk.appendRun(result, childValueStart, firstRunOfField);
 			fieldShape = nextFieldShape(fieldShape, result);
 			count++;
@@ -1379,10 +1510,20 @@ function walkProvisionalChunk(chunk: BasicChunk, walk: ContentChunkingWalk): Wal
 		walk.fieldRunStarts.push(firstRunOfField);
 		let fieldShape: TreeShape | false | undefined;
 		let count = 0;
+		let fieldLength = 0;
+		for (const child of children) {
+			fieldLength += child.topLevelLength;
+		}
 		for (const child of children) {
 			if (isReplaceable(child, walk.cache)) {
 				const childValueStart = walk.values.length;
-				const result = walkProvisionalChunk(child, walk);
+				const result = walk.shareChild(
+					walkProvisionalChunk(child, walk),
+					childValueStart,
+					type,
+					key,
+					fieldLength,
+				);
 				walk.appendRun(result, childValueStart, firstRunOfField);
 				fieldShape = nextFieldShape(fieldShape, result);
 				count++;
