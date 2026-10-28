@@ -10,21 +10,29 @@ import { UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import {
 	type AnchorEvents,
+	CursorLocationType,
+	CursorMarker,
+	cursorChunk,
 	dummyRoot,
 	EmptyKey,
 	type DeltaDetachedNodeId,
 	type DeltaMark,
 	type FieldKey,
 	type FieldKindIdentifier,
+	type FieldUpPath,
 	type ITreeCursorSynchronous,
 	type NodeData,
 	type NormalizedFieldUpPath,
+	type PathRootPrefix,
 	type SchemaPolicy,
 	type TreeNodeSchemaIdentifier,
 	type TreeNodeStoredSchema,
 	type TreeStoredSchema,
 	type TreeValue,
+	type UpPath,
 	type Value,
+	type ChunkedCursor,
+	type TreeChunk,
 } from "../../core/index.js";
 import {
 	type FlexTreeContext,
@@ -52,6 +60,8 @@ import {
 	type MapTreeNodeViewGeneric,
 	type HydratedFlexTreeNode,
 	cursorForMapTreeField,
+	cursorForChunks,
+	TextRunChunk,
 	type MinimalFieldMap,
 	currentObserver,
 } from "../../feature-libraries/index.js";
@@ -93,6 +103,168 @@ type LocationInField = FlexTreeNode["parentField"];
  * {@link deltaMarksToArrayOps}, so the value itself is arbitrary.
  */
 const syntheticDetachedNodeId: DeltaDetachedNodeId = { minor: 0 };
+
+/**
+ * Content of an {@link UnhydratedFlexTreeField} held as chunks, until something needs the field's nodes.
+ * @remarks
+ * Cursors over unhydrated content read such content through the chunks' cursors,
+ * so inserting it into a tree does not create a node object per node,
+ * and lets a chunked forest keep the chunks as they are.
+ *
+ * Reading one node of the field creates just that node (see {@link UnhydratedFlexTreeField}),
+ * which then replaces its part of the chunks in {@link ChunkedFieldContent.entries}.
+ */
+export class ChunkedFieldContent {
+	/**
+	 * The field's content, in order: chunks, and nodes created from them.
+	 * This object owns a reference to each chunk.
+	 */
+	public readonly entries: (TreeChunk | UnhydratedFlexTreeNode)[];
+
+	/**
+	 * @param chunks - The content. This object takes ownership of a reference to each chunk.
+	 * The chunks must not contain content with pending defaults (such as identifiers yet to be generated).
+	 * @param createNodes - Creates the nodes for content from a cursor over it (in fields mode at its root field).
+	 */
+	public constructor(
+		chunks: readonly TreeChunk[],
+		public readonly createNodes: (cursor: ITreeCursorSynchronous) => UnhydratedFlexTreeNode[],
+	) {
+		this.entries = [...chunks];
+	}
+}
+
+/**
+ * A chunk which reads an {@link UnhydratedFlexTreeNode} of a {@link ChunkedFieldContent}, so cursors over chunks can read it.
+ * @remarks
+ * The node remains the source of truth (it may be edited), so this chunk is never handed out to be kept:
+ * its cursor reports no chunk at the node.
+ */
+class UnhydratedNodeChunk implements TreeChunk {
+	public readonly topLevelLength = 1;
+	public constructor(private readonly node: UnhydratedFlexTreeNode) {}
+	public cursor(): ChunkedCursor {
+		return new DepthTrackingCursor(
+			cursorForMapTreeField<MapTreeNodeViewGeneric<UnhydratedFlexTreeNode>>([this.node]),
+			0,
+		);
+	}
+	public referenceAdded(): void {}
+	public referenceRemoved(): void {}
+	public isShared(): boolean {
+		return true;
+	}
+}
+
+/**
+ * A {@link ChunkedCursor} reading a cursor which starts in fields mode at its root field,
+ * tracking its depth to know when it is at the root.
+ */
+class DepthTrackingCursor implements ChunkedCursor {
+	public readonly [CursorMarker] = true;
+	public readonly pending = false;
+
+	/**
+	 * @param depth - 0 in the root field, 1 at a root node, and one more for each field or node below.
+	 */
+	public constructor(
+		private readonly inner: ITreeCursorSynchronous & { fork(): ITreeCursorSynchronous },
+		private depth: number,
+	) {}
+
+	public get [cursorChunk](): TreeChunk | undefined {
+		return this.depth <= 1
+			? undefined
+			: (this.inner as { [cursorChunk]?: TreeChunk })[cursorChunk];
+	}
+	public atChunkRoot(): boolean {
+		return this.depth <= 1;
+	}
+	public fork(): ChunkedCursor {
+		return new DepthTrackingCursor(
+			this.inner.fork() as ITreeCursorSynchronous & { fork(): ITreeCursorSynchronous },
+			this.depth,
+		);
+	}
+	public skipPendingFields(): boolean {
+		return true;
+	}
+	public get mode(): CursorLocationType {
+		return this.inner.mode;
+	}
+	public get type(): TreeNodeSchemaIdentifier {
+		return this.inner.type;
+	}
+	public get value(): Value {
+		return this.inner.value;
+	}
+	public get fieldIndex(): number {
+		return this.inner.fieldIndex;
+	}
+	public get chunkStart(): number {
+		return this.inner.chunkStart;
+	}
+	public get chunkLength(): number {
+		return this.inner.chunkLength;
+	}
+	public getFieldKey(): FieldKey {
+		return this.inner.getFieldKey();
+	}
+	public getFieldLength(): number {
+		return this.inner.getFieldLength();
+	}
+	public getPath(prefix?: PathRootPrefix): UpPath | undefined {
+		return this.inner.getPath(prefix);
+	}
+	public getFieldPath(prefix?: PathRootPrefix): FieldUpPath {
+		return this.inner.getFieldPath(prefix);
+	}
+	private moved(moved: boolean): boolean {
+		if (!moved) {
+			this.depth--;
+		}
+		return moved;
+	}
+	public enterNode(index: number): void {
+		this.inner.enterNode(index);
+		this.depth++;
+	}
+	public firstNode(): boolean {
+		const entered = this.inner.firstNode();
+		if (entered) {
+			this.depth++;
+		}
+		return entered;
+	}
+	public nextNode(): boolean {
+		return this.moved(this.inner.nextNode());
+	}
+	public seekNodes(offset: number): boolean {
+		return this.moved(this.inner.seekNodes(offset));
+	}
+	public exitNode(): void {
+		this.inner.exitNode();
+		this.depth--;
+	}
+	public enterField(key: FieldKey): void {
+		this.inner.enterField(key);
+		this.depth++;
+	}
+	public firstField(): boolean {
+		const entered = this.inner.firstField();
+		if (entered) {
+			this.depth++;
+		}
+		return entered;
+	}
+	public nextField(): boolean {
+		return this.moved(this.inner.nextField());
+	}
+	public exitField(): void {
+		this.inner.exitField();
+		this.depth--;
+	}
+}
 
 /**
  * The {@link Unhydrated} implementation of {@link FlexTreeNode}.
@@ -433,11 +605,16 @@ export class UnhydratedFlexTreeField
 		/**
 		 * The children of this field.
 		 * @remarks
-		 * This is either an array of {@link UnhydratedFlexTreeNode}s or a {@link ContextualFieldProvider} that will be used to populate the children lazily (after which it will become an array).
+		 * This is either an array of {@link UnhydratedFlexTreeNode}s,
+		 * a {@link ContextualFieldProvider} that will be used to populate the children lazily (after which it will become an array),
+		 * or {@link ChunkedFieldContent} whose nodes are created when first needed (after which it will become an array).
 		 * See {@link fillPendingDefaults}.
 		 * Note that any fields using a {@link ConstantFieldProvider} should be evaluated before constructing the UnhydratedFlexTreeField.
 		 */
-		private lazyChildren: UnhydratedFlexTreeNode[] | ContextualFieldProvider,
+		private lazyChildren:
+			| UnhydratedFlexTreeNode[]
+			| ContextualFieldProvider
+			| ChunkedFieldContent,
 	) {
 		// When this field is created (which only happens one time, because it is cached), all the children become parented for the first time.
 		// "Adopt" each child by updating its parent information to point to this field.
@@ -449,13 +626,109 @@ export class UnhydratedFlexTreeField
 	}
 
 	public borrowCursor(): ITreeCursorSynchronous {
+		const chunked = this.chunkedContentCursor();
+		if (chunked !== undefined) {
+			return chunked;
+		}
 		return cursorForMapTreeField<MapTreeNodeViewGeneric<UnhydratedFlexTreeNode>>(
 			this.children,
 		);
 	}
 
+	/**
+	 * The content of this field, if it is held as chunks (possibly with some of its nodes already created).
+	 * @remarks
+	 * Reading all of the field's nodes (for example through {@link UnhydratedFlexTreeField.children}) replaces it with nodes.
+	 */
+	public get chunkedContent(): ChunkedFieldContent | undefined {
+		return this.lazyChildren instanceof ChunkedFieldContent ? this.lazyChildren : undefined;
+	}
+
+	/**
+	 * Implements {@link MapTreeFieldViewGeneric.chunkedContentCursor}.
+	 */
+	public chunkedContentCursor(): ChunkedCursor | undefined {
+		const content = this.chunkedContent;
+		if (content === undefined) {
+			return undefined;
+		}
+		return cursorForChunks(
+			content.entries.map((entry) =>
+				entry instanceof UnhydratedFlexTreeNode ? new UnhydratedNodeChunk(entry) : entry,
+			),
+		);
+	}
+
+	/**
+	 * Makes `content` the content of this field, which must be empty and must not have been observed.
+	 * @remarks
+	 * Emits no events, so is only for initializing a field of a node no one has observed yet.
+	 */
+	public initializeWithChunks(content: ChunkedFieldContent): void {
+		assert(
+			Array.isArray(this.lazyChildren) && this.lazyChildren.length === 0,
+			"Only an empty field can be initialized with chunks",
+		);
+		this.lazyChildren = content;
+	}
+
+	/**
+	 * The child at `index`, creating only that node if the field's content is held as chunks.
+	 */
+	private childAt(index: number): UnhydratedFlexTreeNode | undefined {
+		const content = this.chunkedContent;
+		if (content === undefined) {
+			return this.children[index];
+		}
+		const { entries } = content;
+		let start = 0;
+		for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+			const entry = entries[entryIndex] ?? oob();
+			if (entry instanceof UnhydratedFlexTreeNode) {
+				if (start === index) {
+					return entry;
+				}
+				start++;
+				continue;
+			}
+			const length = entry.topLevelLength;
+			if (index >= start + length) {
+				start += length;
+				continue;
+			}
+			const within = index - start;
+			const replacement: (TreeChunk | UnhydratedFlexTreeNode)[] = [];
+			let node: UnhydratedFlexTreeNode;
+			if (entry instanceof TextRunChunk) {
+				// Create just this atom, keeping the atoms before and after it as runs.
+				if (within > 0) {
+					replacement.push(entry.slice(0, within));
+				}
+				const atom = entry.atomChunk(within);
+				node = content.createNodes(cursorForChunks([atom]))[0] ?? oob();
+				atom.referenceRemoved();
+				node.adoptBy(this, index);
+				replacement.push(node);
+				if (within + 1 < length) {
+					replacement.push(entry.slice(within + 1, length));
+				}
+			} else {
+				const nodes = content.createNodes(cursorForChunks([entry]));
+				for (const [offset, created] of nodes.entries()) {
+					created.adoptBy(this, start + offset);
+					replacement.push(created);
+				}
+				node = nodes[within] ?? oob();
+			}
+			entry.referenceRemoved();
+			entries.splice(entryIndex, 1, ...replacement);
+			return node;
+		}
+		return undefined;
+	}
+
 	private getPendingDefault(): ContextualFieldProvider | undefined {
-		return Array.isArray(this.lazyChildren) ? undefined : this.lazyChildren;
+		return typeof this.lazyChildren === "function" ? this.lazyChildren : undefined;
 	}
 
 	/**
@@ -485,10 +758,34 @@ export class UnhydratedFlexTreeField
 			const content = provider("UseGlobalContext");
 			this.lazyChildren = content;
 		}
+		const chunked = this.chunkedContent;
+		if (chunked !== undefined) {
+			const nodes: UnhydratedFlexTreeNode[] = [];
+			for (const entry of chunked.entries) {
+				if (entry instanceof UnhydratedFlexTreeNode) {
+					nodes.push(entry);
+					continue;
+				}
+				for (const created of chunked.createNodes(cursorForChunks([entry]))) {
+					created.adoptBy(this, nodes.length);
+					nodes.push(created);
+				}
+				entry.referenceRemoved();
+			}
+			this.lazyChildren = nodes;
+		}
 		return this.lazyChildren as UnhydratedFlexTreeNode[];
 	}
 
 	public get length(): number {
+		const chunked = this.chunkedContent;
+		if (chunked !== undefined) {
+			let length = 0;
+			for (const entry of chunked.entries) {
+				length += entry instanceof UnhydratedFlexTreeNode ? 1 : entry.topLevelLength;
+			}
+			return length;
+		}
 		return this.children.length;
 	}
 
@@ -501,8 +798,7 @@ export class UnhydratedFlexTreeField
 		if (i === undefined) {
 			return undefined;
 		}
-		const m = this.children[i];
-		return m;
+		return this.childAt(i);
 	}
 
 	public [Symbol.iterator](): IterableIterator<UnhydratedFlexTreeNode> {
@@ -547,7 +843,7 @@ export class UnhydratedFlexTreeField
 
 	/** Unboxes leaf nodes to their values */
 	protected unboxed(index: number): TreeValue | UnhydratedFlexTreeNode {
-		const child = this.children[index] ?? oob();
+		const child = this.childAt(index) ?? oob();
 		const value = child.value;
 		if (value !== undefined) {
 			return value;
@@ -584,12 +880,10 @@ export class UnhydratedOptionalField
 		ValueFieldEditBuilder<FlexibleNodeContent>;
 
 	public get content(): FlexTreeUnknownUnboxed | undefined {
-		const value = this.children[0];
-		if (value !== undefined) {
-			return this.unboxed(0);
+		if (this.length === 0) {
+			return undefined;
 		}
-
-		return undefined;
+		return this.unboxed(0);
 	}
 }
 
