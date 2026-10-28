@@ -400,7 +400,7 @@ export namespace FormattedText {
 				let index = start;
 				while (index < Math.min(end, this.content.length)) {
 					const run = this.content.readRun(index, end);
-					yield new TextRunView(this.content, index, run.length, run.text);
+					yield new TextRunView(this.content, index, run.length, run.text, run.formatId);
 					index += run.length;
 				}
 			}
@@ -736,18 +736,20 @@ export namespace FormattedText {
 
 			/**
 			 * @param text - The text of the run if it is a run of characters, otherwise undefined.
+			 * @param formatId - See {@link FormattedText.TextRun.formatId}.
 			 */
 			public constructor(
 				private readonly array: StringArray,
 				public readonly start: number,
 				public readonly length: number,
 				text: string | undefined,
+				public readonly formatId: object | undefined,
 			) {
 				this.#text = text;
-				this.isCharacters = text !== undefined;
+				this.#isCharacters = text !== undefined;
 			}
 
-			public readonly isCharacters: boolean;
+			readonly #isCharacters: boolean;
 
 			private get firstAtom(): StringAtom {
 				return (
@@ -766,9 +768,14 @@ export namespace FormattedText {
 			}
 
 			public get atom(): TextAtomNode | undefined {
-				return this.isCharacters ? undefined : this.firstAtom.content;
+				return this.#isCharacters ? undefined : this.firstAtom.content;
 			}
 		}
+
+		/**
+		 * Format chunks given out as {@link FormattedText.TextRun.formatId}s, each holding a reference added when it was first given out.
+		 */
+		const formatIds = new WeakSet<TreeChunk>();
 
 		/**
 		 * The character of the atom `cursor` is at, if it is a {@link FormattedText.(StringTextAtom:variable)}, otherwise undefined.
@@ -889,9 +896,13 @@ export namespace FormattedText {
 
 			/**
 			 * Reads the run starting at atom `start` (see {@link FormattedText.Members.runs}), ending at or before `end`.
-			 * @returns The run's length and, for a run of characters, its text.
+			 * @returns The run's length; for a run of characters, its text;
+			 * and the run's {@link FormattedText.TextRun.formatId}, if its first atom is stored in a {@link TextRunChunk}.
 			 */
-			public readRun(start: number, end: number): { length: number; text?: string } {
+			public readRun(
+				start: number,
+				end: number,
+			): { length: number; text?: string; formatId?: TreeChunk } {
 				return this.withBorrowedSequenceCursor((cursor) => {
 					cursor.enterNode(start);
 					if (readCharacter(cursor) === undefined) {
@@ -900,6 +911,7 @@ export namespace FormattedText {
 					}
 					const parts: string[] = [];
 					let length = 0;
+					let formatId: TreeChunk | undefined;
 					let compareFormat: ((cursor: ITreeCursorSynchronous) => boolean) | undefined;
 					// The format chunk of a run chunk read so far: every atom with this format chunk has the run's format.
 					let sharedFormat: TreeChunk | undefined;
@@ -931,6 +943,14 @@ export namespace FormattedText {
 							length++;
 							inNode = cursor.nextNode();
 						} else {
+							if (length === 0) {
+								formatId = runChunk.format;
+								if (!formatIds.has(formatId)) {
+									// Holding a reference keeps the chunk shared, so it is never edited in place and its content stays what the id stands for.
+									formatId.referenceAdded();
+									formatIds.add(formatId);
+								}
+							}
 							// Any atom whose format is this chunk has a format equal to the run's.
 							sharedFormat = runChunk.format;
 							const within = cursor.fieldIndex - cursor.chunkStart;
@@ -943,7 +963,7 @@ export namespace FormattedText {
 					if (inNode) {
 						cursor.exitNode();
 					}
-					return { length, text: parts.join("") };
+					return { length, text: parts.join(""), formatId };
 				});
 			}
 
@@ -1169,6 +1189,14 @@ export namespace FormattedText {
 		 * For a run of an atom other than a character, that atom. Undefined for a run of characters.
 		 */
 		readonly atom: TAtom | undefined;
+		/**
+		 * An object standing for the content of the run's format, when the text stores the format so this is cheap:
+		 * runs with the same `formatId` (in this or any other text) have equal formats. Undefined otherwise.
+		 * @remarks
+		 * Use it to key caches of what is derived from a format, such as its projection into another model (for example in a `WeakMap`).
+		 * Runs with equal formats may still have different ids, or none.
+		 */
+		readonly formatId: object | undefined;
 	}
 
 	/**
