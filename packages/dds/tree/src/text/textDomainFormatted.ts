@@ -31,6 +31,8 @@ import {
 	formattedAtomChunk,
 	TextRunChunk,
 	type TextRunLayout,
+	verboseTextRun,
+	type VerboseTextRun,
 } from "../feature-libraries/index.js";
 import type { ExtrinsicLocations } from "../extrinsic-locations/index.js";
 import {
@@ -43,6 +45,7 @@ import {
 	getInnerNode,
 	initializeArrayWithChunks,
 	isTreeNode,
+	KeyEncodingOptions,
 	SchemaFactory,
 	SchemaFactoryAlpha,
 	TreeArrayNode,
@@ -69,6 +72,7 @@ import type {
 	ErasedSchemaSubclassable,
 	ErasedNode,
 	SchemaFactoryBeta,
+	VerboseTree,
 } from "../simple-tree/index.js";
 import {
 	brand,
@@ -561,6 +565,39 @@ export namespace FormattedText {
 				return node;
 			}
 
+			public static verboseFromRuns(
+				runs: Iterable<TextRunInsertable<VerboseTree, VerboseTree>>,
+			): VerboseTree {
+				const layout = getRunLayout();
+				const items: VerboseTree[] = [];
+				for (const run of runs) {
+					if ("text" in run) {
+						if (run.text.length > 0) {
+							const textRun: VerboseTextRun = { text: run.text, layout };
+							items.push({
+								type: layout.atomType,
+								fields: { [formatKey]: run.format ?? defaultFormatVerbose() },
+								[verboseTextRun]: textRun,
+							} as VerboseTree);
+						}
+					} else {
+						for (const atom of run.atoms) {
+							items.push({
+								type: layout.atomType,
+								fields: {
+									[EmptyKey]: atom,
+									[formatKey]: run.format ?? defaultFormatVerbose(),
+								},
+							});
+						}
+					}
+				}
+				return {
+					type: TextNode.identifier,
+					fields: { [EmptyKey]: { type: StringArray.identifier, fields: items } },
+				};
+			}
+
 			public runs(
 				start?: number,
 				end?: number,
@@ -828,6 +865,17 @@ export namespace FormattedText {
 		}
 
 		let runLayout: TextRunLayout | undefined;
+
+		let defaultFormatVerboseCache: VerboseTree | undefined;
+		/**
+		 * The default format, in the verbose form with stored keys.
+		 */
+		function defaultFormatVerbose(): VerboseTree {
+			defaultFormatVerboseCache ??= TreeAlpha.exportVerbose(defaultFormat as TreeNode, {
+				keys: KeyEncodingOptions.allStoredKeys,
+			});
+			return defaultFormatVerboseCache;
+		}
 		/**
 		 * The layout of the atoms of this schema, for {@link TextRunChunk}s.
 		 */
@@ -1441,6 +1489,18 @@ export namespace FormattedText {
 				>
 			>,
 		): TTree;
+
+		/**
+		 * Plain content, in the {@link VerboseTree} form with stored keys, for a node of `this` schema holding the atoms of `runs`:
+		 * the content {@link FormattedText.Statics.fromRuns} builds, for inserting into a tree with {@link (TreeAlpha:interface).insertVerbose}.
+		 * @remarks
+		 * Each run of text is one marked node standing for its atoms, which insertVerbose stores as a run in a chunked forest.
+		 * Other ways of reading verbose content (such as importVerbose) do not understand such nodes.
+		 * Formats and atoms are given in the same verbose form; the content is not copied, so it may be shared.
+		 * @privateRemarks
+		 * Prototype: a stable API would give runs a first-class place in the verbose form.
+		 */
+		verboseFromRuns(runs: Iterable<TextRunInsertable<VerboseTree, VerboseTree>>): VerboseTree;
 	}
 
 	/**
