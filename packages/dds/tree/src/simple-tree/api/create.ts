@@ -8,22 +8,34 @@ import { UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import {
 	CursorLocationType,
+	EmptyKey,
 	forbiddenFieldKindIdentifier,
 	mapCursorField,
 	mapCursorFields,
 	type ITreeCursorSynchronous,
 	type SchemaAndPolicy,
+	type TreeChunk,
+	type FieldKey,
 	type TreeFieldStoredSchema,
+	tryGetChunk,
 } from "../../core/index.js";
 import {
+	basicChunkTree,
+	defaultChunkPolicy,
 	defaultSchemaPolicy,
 	isFieldInSchema,
+	TextRunChunk,
 	throwOutOfSchema,
 } from "../../feature-libraries/index.js";
 import {
+	ChunkedFieldContent,
 	type Context,
+	getInnerNode,
+	getKernel,
 	getOrCreateNodeFromInnerNode,
+	type TreeNode,
 	type Unhydrated,
+	type UnhydratedFlexTreeField,
 	UnhydratedFlexTreeNode,
 	createField,
 } from "../core/index.js";
@@ -112,13 +124,21 @@ export function unhydratedFlexTreeFromCursor(
 					`Field ${JSON.stringify(cursor.getFieldKey())} is not defined in the schema ${JSON.stringify(identifier)}.`,
 				);
 			}
+			const key = cursor.getFieldKey();
+			const chunks = copyFieldWithTextRuns(cursor);
 			return [
-				cursor.getFieldKey(),
+				key,
 				createField(
 					context.flexContext,
 					fieldSchema.kind,
-					cursor.getFieldKey(),
-					mapCursorField(cursor, () => unhydratedFlexTreeFromCursor(context, cursor)),
+					key,
+					chunks === undefined
+						? mapCursorField(cursor, () => unhydratedFlexTreeFromCursor(context, cursor))
+						: new ChunkedFieldContent(chunks, (fieldCursor) =>
+								mapCursorField(fieldCursor, () =>
+									unhydratedFlexTreeFromCursor(context, fieldCursor),
+								),
+							),
 				),
 			];
 		}),
@@ -128,4 +148,116 @@ export function unhydratedFlexTreeFromCursor(
 		fields,
 		context,
 	);
+}
+
+/**
+ * If the field `cursor` is in (in fields mode) holds a {@link TextRunChunk}, returns chunks holding a copy of the field,
+ * with the field's text runs kept as runs, each with a reference owned by the caller. Otherwise returns undefined.
+ * Leaves the cursor in the field.
+ */
+function copyFieldWithTextRuns(cursor: ITreeCursorSynchronous): TreeChunk[] | undefined {
+	let hasTextRun = false;
+	for (let inField = cursor.firstNode(); inField; inField = cursor.nextNode()) {
+		if (tryGetChunk(cursor) instanceof TextRunChunk) {
+			hasTextRun = true;
+			cursor.exitNode();
+			break;
+		}
+	}
+	if (!hasTextRun) {
+		return undefined;
+	}
+	const chunks: TreeChunk[] = [];
+	let inField = cursor.firstNode();
+	while (inField) {
+		const chunk = tryGetChunk(cursor);
+		if (chunk instanceof TextRunChunk) {
+			const within = cursor.fieldIndex - cursor.chunkStart;
+			const count = cursor.chunkLength - within;
+			if (within === 0) {
+				chunk.referenceAdded();
+				chunks.push(chunk);
+			} else {
+				chunks.push(chunk.slice(within, within + count));
+			}
+			inField = cursor.seekNodes(count);
+		} else {
+			chunks.push(basicChunkTree(cursor, chunkCopyPolicy));
+			inField = cursor.nextNode();
+		}
+	}
+	return chunks;
+}
+
+/**
+ * Policy for copying content into chunks outside of a forest.
+ */
+const chunkCopyPolicy = { policy: defaultChunkPolicy, idCompressor: undefined };
+
+/**
+ * Makes `chunks` the content of the array node `array`, which must be unhydrated, empty, and not yet observed.
+ * @remarks
+ * The array holds its content as these chunks (see {@link ChunkedFieldContent}) until something reads its nodes.
+ * Takes ownership of one reference to each chunk.
+ * The chunks must be in schema for the array and must not contain content with pending defaults.
+ */
+export function initializeArrayWithChunks(
+	array: TreeNode,
+	chunks: readonly TreeChunk[],
+): void {
+	const inner = getKernel(array).getInnerNodeIfUnhydrated();
+	assert(inner !== undefined, "Only an unhydrated array can be initialized with chunks");
+	const context = inner.simpleContext;
+	inner
+		.getBoxed(EmptyKey)
+		.initializeWithChunks(
+			new ChunkedFieldContent(chunks, (cursor) =>
+				mapCursorField(cursor, () => unhydratedFlexTreeFromCursor(context, cursor)),
+			),
+		);
+}
+
+/**
+ * Returns a function which creates copies of `node`'s content (as it is now), each an unhydrated node of `node`'s schema.
+ * @remarks
+ * The content is copied into chunks once. Each copy is one node object whose fields hold those chunks by reference
+ * (see {@link ChunkedFieldContent}): nodes below it are created only when read,
+ * and inserting a copy into a tree inserts the chunks as they are.
+ * Copies are independent: editing one does not affect the others.
+ * The content must not contain fields with pending defaults (such as identifiers yet to be generated).
+ */
+export function createCopier<T extends TreeNode>(node: T): () => T {
+	const kernel = getKernel(node);
+	const context = getUnhydratedContext(kernel.schema);
+	const cursor = getInnerNode(node).borrowCursor();
+	const chunk = basicChunkTree(cursor, chunkCopyPolicy);
+	const storedSchema =
+		context.flexContext.schema.nodeSchema.get(chunk.type) ?? unknownTypeError(chunk.type);
+	return () => {
+		const fields = new Map<FieldKey, UnhydratedFlexTreeField>();
+		for (const [key, chunks] of chunk.fields) {
+			for (const child of chunks) {
+				child.referenceAdded();
+			}
+			fields.set(
+				key,
+				createField(
+					context.flexContext,
+					storedSchema.getFieldSchema(key).kind,
+					key,
+					new ChunkedFieldContent(chunks, (fieldCursor) =>
+						mapCursorField(fieldCursor, () =>
+							unhydratedFlexTreeFromCursor(context, fieldCursor),
+						),
+					),
+				),
+			);
+		}
+		const copy = new UnhydratedFlexTreeNode(
+			{ type: chunk.type, value: chunk.value },
+			fields,
+			context,
+		);
+		return getOrCreateNodeFromInnerNode(copy) as T;
+	};
 }
