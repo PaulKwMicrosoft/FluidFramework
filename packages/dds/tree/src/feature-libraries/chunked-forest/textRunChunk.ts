@@ -405,3 +405,19 @@ class TextRunCursor extends SynchronousCursor implements ChunkedCursor {
 		return this.nested === undefined ? this.chunk.topLevelLength : this.nested.chunkLength;
 	}
 }
+
+/**
+ * Key of the property marking a node of plain (verbose) content as a text run: see {@link VerboseTextRun}.
+ */
+export const verboseTextRun: unique symbol = Symbol("verboseTextRun");
+
+/**
+ * What a node of plain content marked with {@link verboseTextRun} stands for: one atom per Unicode code point of
+ * `text`, laid out as `layout` describes, each with the node's {@link TextRunLayout.formatKey} field as its format.
+ * @remarks
+ * Chunking such content gives a {@link TextRunChunk}.
+ */
+export interface VerboseTextRun {
+	readonly text: string;
+	readonly layout: TextRunLayout;
+}

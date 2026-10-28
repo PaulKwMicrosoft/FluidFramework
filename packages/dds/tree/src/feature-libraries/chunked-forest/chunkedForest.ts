@@ -695,6 +695,14 @@ export function buildChunkedForest(
 }
 
 /**
+ * Whether `forest` keeps the chunks inserted into it (it is a {@link ChunkedForest}),
+ * so content can be chunked for it with {@link chunkFieldFromAdapter}.
+ */
+export function forestKeepsChunks(forest: IForestSubscription): boolean {
+	return forest instanceof ChunkedForest;
+}
+
+/**
  * Chunks the content of `detachedField` under `root`, read through `adapter`, for insertion into `forest`.
  *
  * @remarks

@@ -23,6 +23,8 @@ import {
 	stackTreeFieldCursor,
 	stackTreeNodeCursor,
 	type CursorAdapter,
+	verboseTextRun,
+	type VerboseTextRun,
 } from "../../feature-libraries/index.js";
 import { brand } from "../../util/index.js";
 import type { Context, TreeLeafValue, TreeNodeSchema } from "../core/index.js";
@@ -210,6 +212,10 @@ export function verboseTreeAdapter(
 		value: (node: VerboseTree) => {
 			return isTreeValue(node) ? node : undefined;
 		},
+		textRun: (node: VerboseTree): VerboseTextRun | undefined =>
+			typeof node === "object" && node !== null && !isFluidHandle(node)
+				? (node as { readonly [verboseTextRun]?: VerboseTextRun })[verboseTextRun]
+				: undefined,
 		type: (node: VerboseTree) => {
 			switch (typeof node) {
 				case "number": {
