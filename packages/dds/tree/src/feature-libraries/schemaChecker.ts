@@ -5,6 +5,7 @@
 
 import {
 	appendDebugMessage,
+	debugAssert,
 	unreachableCase,
 	fail,
 } from "@fluidframework/core-utils/internal";
@@ -15,17 +16,26 @@ import type {
 import { tagSchemaArtifacts, UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import {
+	type ChunkedCursor,
+	CursorLocationType,
 	type TreeFieldStoredSchema,
 	LeafNodeStoredSchema,
 	ObjectNodeStoredSchema,
 	MapNodeStoredSchema,
 	Multiplicity,
 	type SchemaAndPolicy,
+	type TreeChunk,
 	ValueSchema,
+	tryGetChunk,
 } from "../core/index.js";
-import { iterableHasSome, mapIterable } from "../util/index.js";
+import { getOrCreate, iterableHasSome, mapIterable } from "../util/index.js";
 
-import type { MapTreeFieldViewGeneric, MinimalMapTreeNodeView } from "./mapTreeCursor.js";
+import { TextRunChunk } from "./chunked-forest/index.js";
+import {
+	mapTreeFromCursor,
+	type MapTreeFieldViewGeneric,
+	type MinimalMapTreeNodeView,
+} from "./mapTreeCursor.js";
 import { allowsValue } from "./valueUtilities.js";
 
 export enum SchemaValidationError {
@@ -319,6 +329,11 @@ export function isFieldInSchema<T extends NotUndefined>(
 		}
 	}
 
+	const chunked = childNodes.chunkedContentCursor?.();
+	if (chunked !== undefined) {
+		return isChunkedFieldContentInSchema(chunked, schema, schemaAndPolicy, onError);
+	}
+
 	let index = 0;
 	for (const node of childNodes) {
 		// Validate the type declared by the node is allowed in this field
@@ -350,6 +365,80 @@ export function isFieldInSchema<T extends NotUndefined>(
 		index += 1;
 	}
 
+	return undefined;
+}
+
+/**
+ * Chunks known to be in schema, by the stored schema they were checked against.
+ * Only shared chunks are recorded: they can not change (see {@link TreeChunk}).
+ */
+const validatedChunks = new WeakMap<object, WeakSet<TreeChunk>>();
+
+/**
+ * {@link isFieldInSchema} for the nodes of field content held as chunks, read through `cursor` (in fields mode at the field).
+ * @remarks
+ * The field's kind and length must already have been checked.
+ * Each atom of a {@link TextRunChunk} differs from the others only in the value of its character leaf,
+ * so only the first atom of each run is checked.
+ */
+function isChunkedFieldContentInSchema<T extends NotUndefined>(
+	cursor: ChunkedCursor,
+	schema: TreeFieldStoredSchema,
+	schemaAndPolicy: SchemaAndPolicy,
+	onError: (details: SchemaValidationErrorDetails) => T,
+): T | undefined {
+	let index = 0;
+	let inField = cursor.firstNode();
+	while (inField) {
+		const type = cursor.type;
+		if (schema.types !== undefined && !schema.types.has(type)) {
+			return prependPath(
+				onError,
+				index,
+			)(
+				schemaValidationError(
+					SchemaValidationError.Field_NodeTypeNotAllowed,
+					tagSchemaArtifacts({
+						nodeType: type,
+						allowedTypes: JSON.stringify([...schema.types].sort()),
+					}),
+				),
+			);
+		}
+		const chunk = tryGetChunk(cursor);
+		const atChunkStart = chunk !== undefined && cursor.chunkStart === cursor.fieldIndex;
+		const known =
+			atChunkStart &&
+			chunk.isShared() &&
+			validatedChunks.get(schemaAndPolicy.schema)?.has(chunk);
+		if (known !== true) {
+			const nodeInSchemaResult = isNodeInSchema(
+				mapTreeFromCursor(cursor),
+				schemaAndPolicy,
+				prependPath(onError, index),
+			);
+			if (nodeInSchemaResult !== undefined) {
+				return nodeInSchemaResult;
+			}
+			// A shared chunk can not change, so it need only be checked once against a schema.
+			if (
+				atChunkStart &&
+				chunk.isShared() &&
+				(chunk instanceof TextRunChunk || chunk.topLevelLength === 1)
+			) {
+				getOrCreate(validatedChunks, schemaAndPolicy.schema, () => new WeakSet()).add(chunk);
+			}
+		}
+		const skip =
+			chunk instanceof TextRunChunk
+				? cursor.chunkStart + cursor.chunkLength - cursor.fieldIndex
+				: 1;
+		index += skip;
+		inField = cursor.seekNodes(skip);
+	}
+	debugAssert(
+		() => cursor.mode === CursorLocationType.Fields || "cursor should be back in the field",
+	);
 	return undefined;
 }
 

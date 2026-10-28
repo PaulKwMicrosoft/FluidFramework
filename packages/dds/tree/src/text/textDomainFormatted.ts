@@ -18,13 +18,26 @@ import {
 	forEachNodeSubsequence,
 	type FieldKey,
 	type ITreeCursorSynchronous,
+	type TreeChunk,
+	type TreeNodeSchemaIdentifier,
 	type TreeValue,
+	tryGetChunk,
 } from "../core/index.js";
-import { currentObserver, buildNodeComparator } from "../feature-libraries/index.js";
+import {
+	basicChunkTree,
+	currentObserver,
+	buildNodeComparator,
+	defaultChunkPolicy,
+	formattedAtomChunk,
+	TextRunChunk,
+	type TextRunLayout,
+} from "../feature-libraries/index.js";
 import { TreeAlpha, Tree as TreeStatic, TreeBeta } from "../shared-tree/index.js";
 import {
 	createArrayInsertionAnchor,
 	getInnerNode,
+	initializeArrayWithChunks,
+	isTreeNode,
 	SchemaFactory,
 	SchemaFactoryAlpha,
 	TreeArrayNode,
@@ -332,6 +345,65 @@ export namespace FormattedText {
 			public charactersWithFormatting(): readonly StringAtom[] {
 				return this.content;
 			}
+
+			public static fromRuns(
+				runs: Iterable<
+					TextRunInsertable<InsertableTreeFieldFromImplicitField<FormatSchema>, TextAtomNode>
+				>,
+			): TextNode {
+				const runList = [...runs];
+				const chunks = chunksFromRuns(runList);
+				if (chunks === undefined) {
+					// Formats which are not nodes (leaf formats) are built atom by atom.
+					return new this({
+						content: runList.flatMap((run) => [
+							...stringAtomsFromTextAtoms(
+								"text" in run ? stringTextAtomsFromString(run.text) : run.atoms,
+								getFormatNode(run.format),
+							),
+						]),
+					});
+				}
+				// Use `this` rather than `TextNode` so the more derived schema class is constructed when using this as a static on a subclass.
+				const node = new this({ content: [] });
+				if (chunks.length > 0) {
+					initializeArrayWithChunks(node.content, chunks);
+				}
+				return node;
+			}
+
+			public runs(
+				start?: number,
+				end?: number,
+			): IterableIterator<
+				TextRun<
+					TreeNodeFromImplicitAllowedTypes<FormatSchema>,
+					TreeNodeFromImplicitAllowedTypes<TextAtomSchemas<ExtraAtomsSchema>>
+				>
+			> {
+				const runsStart = start ?? 0;
+				validateIndex(runsStart, this.content, "FormattedText.runs", true);
+				const runsEnd = Math.min(this.content.length, end ?? this.content.length);
+				validateIndexRange(runsStart, runsEnd, this.content, "FormattedText.runs");
+				return this.#runsFrom(runsStart, runsEnd);
+			}
+
+			*#runsFrom(
+				start: number,
+				end: number,
+			): IterableIterator<
+				TextRun<
+					TreeNodeFromImplicitAllowedTypes<FormatSchema>,
+					TreeNodeFromImplicitAllowedTypes<TextAtomSchemas<ExtraAtomsSchema>>
+				>
+			> {
+				let index = start;
+				while (index < Math.min(end, this.content.length)) {
+					const run = this.content.readRun(index, end);
+					yield new TextRunView(this.content, index, run.length, run.text);
+					index += run.length;
+				}
+			}
 			public insertWithFormattingAt(
 				index: number,
 				additionalCharacters: Iterable<InsertableTypedNode<typeof StringAtom>>,
@@ -561,6 +633,178 @@ export namespace FormattedText {
 			return stringAtomsFromTextAtoms(textAtoms, format);
 		}
 
+		let runLayout: TextRunLayout | undefined;
+		/**
+		 * The layout of the atoms of this schema, for {@link TextRunChunk}s.
+		 */
+		function getRunLayout(): TextRunLayout {
+			runLayout ??= {
+				atomType: brand<TreeNodeSchemaIdentifier>(StringAtom.identifier),
+				contentKey: EmptyKey,
+				characterType: brand<TreeNodeSchemaIdentifier>(StringTextAtom.identifier),
+				characterKey: EmptyKey,
+				leafType: brand<TreeNodeSchemaIdentifier>(SchemaFactory.string.identifier),
+				formatKey,
+			};
+			return runLayout;
+		}
+
+		/**
+		 * Chunks content for insertion: chunks are copied from, so the content is not consumed.
+		 */
+		const chunkCompressor = { policy: defaultChunkPolicy, idCompressor: undefined };
+
+		/**
+		 * Chunks holding copies of format nodes given to {@link FormattedText.Statics.fromRuns}, so runs given the same format node share one copy.
+		 * Each holds one reference to its chunk. An entry is dropped when its node changes.
+		 */
+		const formatChunks = new WeakMap<TreeNode, TreeChunk>();
+
+		/**
+		 * A chunk, with a reference owned by the caller, holding a copy of `format`, or of the default format if `format` is undefined.
+		 * Undefined if the format is not a node (a leaf format).
+		 */
+		function chunkFormat(
+			format: InsertableTreeFieldFromImplicitField<FormatSchema> | undefined,
+		): TreeChunk | undefined {
+			const node: unknown = isTreeNode(format) ? format : getFormatNode(format);
+			if (!isTreeNode(node)) {
+				return undefined;
+			}
+			let chunk = formatChunks.get(node);
+			if (chunk === undefined) {
+				chunk = basicChunkTree(getInnerNode(node).borrowCursor(), chunkCompressor);
+				formatChunks.set(node, chunk);
+				TreeBeta.on(node, "treeChanged", () => {
+					formatChunks.get(node)?.referenceRemoved();
+					formatChunks.delete(node);
+				});
+			}
+			chunk.referenceAdded();
+			return chunk;
+		}
+
+		/**
+		 * The chunks holding the atoms of `runs`, each with a reference owned by the caller.
+		 * Undefined if a run's format is not a node (a leaf format).
+		 */
+		function chunksFromRuns(
+			runs: readonly TextRunInsertable<
+				InsertableTreeFieldFromImplicitField<FormatSchema>,
+				TextAtomNode
+			>[],
+		): TreeChunk[] | undefined {
+			const layout = getRunLayout();
+			const chunks: TreeChunk[] = [];
+			for (const run of runs) {
+				const format = chunkFormat(run.format);
+				if (format === undefined) {
+					for (const chunk of chunks) {
+						chunk.referenceRemoved();
+					}
+					return undefined;
+				}
+				if ("text" in run) {
+					if (run.text.length === 0) {
+						format.referenceRemoved();
+					} else {
+						chunks.push(new TextRunChunk(layout, run.text, format));
+					}
+				} else {
+					for (const atom of run.atoms) {
+						const content = basicChunkTree(
+							getInnerNode(atom as TreeNode).borrowCursor(),
+							chunkCompressor,
+						);
+						format.referenceAdded();
+						chunks.push(formattedAtomChunk(layout, content, format));
+					}
+					format.referenceRemoved();
+				}
+			}
+			return chunks;
+		}
+
+		/**
+		 * Implementation of {@link FormattedText.TextRun}.
+		 */
+		class TextRunView
+			implements TextRun<TreeNodeFromImplicitAllowedTypes<FormatSchema>, TextAtomNode>
+		{
+			#format: TreeNodeFromImplicitAllowedTypes<FormatSchema> | undefined;
+			#text: string | undefined;
+
+			/**
+			 * @param text - The text of the run if it is a run of characters, otherwise undefined.
+			 */
+			public constructor(
+				private readonly array: StringArray,
+				public readonly start: number,
+				public readonly length: number,
+				text: string | undefined,
+			) {
+				this.#text = text;
+				this.isCharacters = text !== undefined;
+			}
+
+			public readonly isCharacters: boolean;
+
+			private get firstAtom(): StringAtom {
+				return (
+					this.array[this.start] ?? fail("A text run's first atom is no longer in the text")
+				);
+			}
+
+			public get text(): string {
+				this.#text ??= this.firstAtom.content.content;
+				return this.#text;
+			}
+
+			public get format(): TreeNodeFromImplicitAllowedTypes<FormatSchema> {
+				this.#format ??= this.firstAtom.format;
+				return this.#format;
+			}
+
+			public get atom(): TextAtomNode | undefined {
+				return this.isCharacters ? undefined : this.firstAtom.content;
+			}
+		}
+
+		/**
+		 * The character of the atom `cursor` is at, if it is a {@link FormattedText.(StringTextAtom:variable)}, otherwise undefined.
+		 * Leaves the cursor where it was.
+		 */
+		function readCharacter(cursor: ITreeCursorSynchronous): string | undefined {
+			cursor.enterField(EmptyKey);
+			cursor.enterNode(0);
+			let character: string | undefined;
+			if (cursor.type === StringTextAtom.identifier) {
+				cursor.enterField(EmptyKey);
+				cursor.enterNode(0);
+				character = cursor.value as string;
+				cursor.exitNode();
+				cursor.exitField();
+			}
+			cursor.exitNode();
+			cursor.exitField();
+			return character;
+		}
+
+		/**
+		 * Builds a function which returns whether the format the cursor it is given is at equals the format of the atom `cursor` is at.
+		 * Leaves the cursor where it was.
+		 */
+		function buildFormatComparator(
+			cursor: ITreeCursorSynchronous,
+		): (other: ITreeCursorSynchronous) => boolean {
+			cursor.enterField(formatKey);
+			cursor.enterNode(0);
+			const comparator = buildNodeComparator(cursor);
+			cursor.exitNode();
+			cursor.exitField();
+			return (other) => comparator(other) === true;
+		}
+
 		class StringArray extends sf.array("StringArray", [() => StringAtom]) {
 			public withBorrowedSequenceCursor<T>(f: (cursor: ITreeCursorSynchronous) => T): T {
 				const innerNode = getInnerNode(this);
@@ -641,6 +885,66 @@ export namespace FormattedText {
 			public getString(startIndex: number, endIndex: number = this.length): string {
 				validateIndexRange(startIndex, endIndex, this, "FormattedText.getString");
 				return this.getCharactersSubarray(startIndex, endIndex).join("");
+			}
+
+			/**
+			 * Reads the run starting at atom `start` (see {@link FormattedText.Members.runs}), ending at or before `end`.
+			 * @returns The run's length and, for a run of characters, its text.
+			 */
+			public readRun(start: number, end: number): { length: number; text?: string } {
+				return this.withBorrowedSequenceCursor((cursor) => {
+					cursor.enterNode(start);
+					if (readCharacter(cursor) === undefined) {
+						cursor.exitNode();
+						return { length: 1 };
+					}
+					const parts: string[] = [];
+					let length = 0;
+					let compareFormat: ((cursor: ITreeCursorSynchronous) => boolean) | undefined;
+					// The format chunk of a run chunk read so far: every atom with this format chunk has the run's format.
+					let sharedFormat: TreeChunk | undefined;
+					let inNode = true;
+					while (inNode && start + length < end) {
+						const chunk = tryGetChunk(cursor);
+						const runChunk = chunk instanceof TextRunChunk ? chunk : undefined;
+						let character: string | undefined;
+						if (runChunk === undefined) {
+							character = readCharacter(cursor);
+							if (character === undefined) {
+								break;
+							}
+						}
+						if (compareFormat === undefined) {
+							compareFormat = buildFormatComparator(cursor);
+						} else if (runChunk === undefined || runChunk.format !== sharedFormat) {
+							cursor.enterField(formatKey);
+							cursor.enterNode(0);
+							const matches = compareFormat(cursor);
+							cursor.exitNode();
+							cursor.exitField();
+							if (!matches) {
+								break;
+							}
+						}
+						if (runChunk === undefined) {
+							parts.push(character ?? fail("character was read above"));
+							length++;
+							inNode = cursor.nextNode();
+						} else {
+							// Any atom whose format is this chunk has a format equal to the run's.
+							sharedFormat = runChunk.format;
+							const within = cursor.fieldIndex - cursor.chunkStart;
+							const count = Math.min(cursor.chunkLength - within, end - (start + length));
+							parts.push(runChunk.textOf(within, within + count));
+							length += count;
+							inNode = cursor.seekNodes(count);
+						}
+					}
+					if (inNode) {
+						cursor.exitNode();
+					}
+					return { length, text: parts.join("") };
+				});
 			}
 
 			public getUniformRun(startIndex: number, endIndex: number = this.length): number {
@@ -732,7 +1036,7 @@ export namespace FormattedText {
 		 */
 		const Tree = eraseSchemaDetailsSubclassable<
 			Members<FormatSchema, ExtraAtomsSchema>,
-			Statics<Tree, FormatSchema>
+			Statics<Tree, FormatSchema, ExtraAtomsSchema>
 		>()(TextNode);
 		type Tree = ErasedNode<
 			Members<FormatSchema, ExtraAtomsSchema>,
@@ -820,11 +1124,65 @@ export namespace FormattedText {
 	>;
 
 	/**
+	 * Insertable content for {@link FormattedText.Statics.fromRuns}: a stretch of text, or of atoms, with one format.
+	 * @remarks
+	 * - `text`: one {@link FormattedText.(StringTextAtom:variable)} per character of the text, split as {@link FormattedText.Statics.fromString} splits it.
+	 *
+	 * - `atoms`: these atoms, which are copied.
+	 *
+	 * `format` is the format of every atom of the run: it is copied, and defaults to the default format from {@link FormattedText.createSchema}.
+	 * @input
+	 * @alpha
+	 */
+	export type TextRunInsertable<TFormat, TAtom> =
+		| { readonly text: string; readonly format?: TFormat }
+		| { readonly atoms: Iterable<TAtom>; readonly format?: TFormat };
+
+	/**
+	 * A run of a formatted text, as {@link FormattedText.Members.runs} reads it:
+	 * a maximal stretch of characters ({@link FormattedText.(StringTextAtom:variable)}s) with equal formats,
+	 * or a single atom of another kind.
+	 * @sealed
+	 * @alpha
+	 */
+	export interface TextRun<TFormat, TAtom> {
+		/**
+		 * The index of the run's first atom.
+		 */
+		readonly start: number;
+		/**
+		 * The number of atoms in the run.
+		 */
+		readonly length: number;
+		/**
+		 * The content of the run's atoms (see {@link FormattedText.TextAtom.content}), concatenated.
+		 */
+		readonly text: string;
+		/**
+		 * The format of the run's atoms: the format node of its first atom.
+		 * @remarks
+		 * Reading this creates the node objects for that atom and its format, if they do not already exist.
+		 * Like reading an atom by index, this reads the text as it is when this property is first read.
+		 */
+		readonly format: TFormat;
+		/**
+		 * For a run of an atom other than a character, that atom. Undefined for a run of characters.
+		 */
+		readonly atom: TAtom | undefined;
+	}
+
+	/**
 	 * Statics for formatted text nodes.
 	 * @sealed
 	 * @alpha
 	 */
-	export interface Statics<TTree, FormatSchema extends ImplicitAllowedTypes> {
+	export interface Statics<
+		TTree,
+		FormatSchema extends ImplicitAllowedTypes,
+		ExtraAtomsSchema extends readonly LazyItem<
+			TreeNodeSchema<string, NodeKind, TextAtom & TreeNode>
+		>[] = [],
+	> {
 		/**
 		 * Construct a node of `this` schema from a string, where each character (as defined by iterating over the string) becomes a single character in the text node.
 		 * @remarks This combines pairs of utf-16 surrogate code units into single characters as appropriate.
@@ -832,6 +1190,27 @@ export namespace FormattedText {
 		fromString(
 			value: string,
 			format?: InsertableTreeFieldFromImplicitField<FormatSchema>,
+		): TTree;
+
+		/**
+		 * Construct a node of `this` schema holding the atoms of `runs`, in order.
+		 * @remarks
+		 * The result has the same content as constructing it with {@link FormattedText.Statics.fromString} and {@link FormattedText.Members.insertWithFormattingAt},
+		 * one atom at a time, with a copy of the run's format for each atom.
+		 * It differs only in how the content is stored until it is read: each run is stored once, with one copy of its format,
+		 * and inserting the node into a tree inserts the runs as they are.
+		 * Collaboration (edits, merges and the content of ops and summaries) is per atom, exactly as for content built atom by atom.
+		 *
+		 * Takes time and memory proportional to the number of runs plus the size of their formats and text,
+		 * rather than the number of atoms times the size of a format.
+		 */
+		fromRuns(
+			runs: Iterable<
+				TextRunInsertable<
+					InsertableTreeFieldFromImplicitField<FormatSchema>,
+					TreeNodeFromImplicitAllowedTypes<TextAtomSchemas<ExtraAtomsSchema>>
+				>
+			>,
 		): TTree;
 	}
 
@@ -976,6 +1355,27 @@ export namespace FormattedText {
 		getString(startIndex: number, endIndex?: number): string;
 
 		/**
+		 * Reads the text as runs: maximal stretches of characters with equal formats, and each other atom on its own.
+		 * @param start - The index of the first atom to read. Defaults to 0.
+		 * @param end - The index (exclusive) at which to stop. Defaults to the end of the text.
+		 * @remarks
+		 * Runs are read lazily, as the iterator advances: an edit during iteration affects the runs read after it.
+		 * The atoms of a run are not given node objects: only its {@link FormattedText.TextRun.format} (and {@link FormattedText.TextRun.atom}) create them when read.
+		 *
+		 * Takes time proportional to the number of runs for text built with {@link FormattedText.Statics.fromRuns} and not since edited per atom,
+		 * and otherwise proportional to the number of atoms (comparing formats like {@link FormattedText.Members.getUniformRun}).
+		 */
+		runs(
+			start?: number,
+			end?: number,
+		): IterableIterator<
+			TextRun<
+				TreeNodeFromImplicitAllowedTypes<FormatSchema>,
+				TreeNodeFromImplicitAllowedTypes<TextAtomSchemas<ExtraAtomsSchema>>
+			>
+		>;
+
+		/**
 		 * Subscribe to all content changes on this text node, including both shallow
 		 * changes (inserts/removes) and deep changes (formatting updates on existing characters).
 		 * @param callback - Called after each change with a sequence of {@link PlainText.TextOp}s describing what changed,
@@ -1048,7 +1448,8 @@ export namespace FormattedText {
 			Members<FormatSchema, ExtraAtomsSchema>,
 			FormattedTextSchemaIdentifier<TUserScope>
 		>,
-		FormatSchema
+		FormatSchema,
+		ExtraAtomsSchema
 	> &
 		ErasedSchemaSubclassable<
 			Members<FormatSchema, ExtraAtomsSchema>,

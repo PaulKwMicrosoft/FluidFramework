@@ -56,6 +56,7 @@ import {
 	coalesceUniformChunks,
 	splitFieldAtIndex,
 } from "./chunkTree.js";
+import { TextRunChunk } from "./textRunChunk.js";
 
 function makeRoot(): BasicChunk {
 	return new BasicChunk(aboveRootPlaceholder, new Map());
@@ -118,6 +119,20 @@ export function ensureExclusiveBasicChunk(
 	if (chunk instanceof BasicChunk) {
 		basicChunk = chunk;
 		finalIndexOfChunk = indexOfChunk;
+	} else if (chunk instanceof TextRunChunk) {
+		// Split the run around the atom, keeping the atoms before and after it as runs.
+		const pieces: TreeChunk[] = [];
+		if (indexWithinChunk > 0) {
+			pieces.push(chunk.slice(0, indexWithinChunk));
+		}
+		basicChunk = chunk.atomChunk(indexWithinChunk);
+		pieces.push(basicChunk);
+		if (indexWithinChunk + 1 < chunk.topLevelLength) {
+			pieces.push(chunk.slice(indexWithinChunk + 1, chunk.topLevelLength));
+		}
+		chunks.splice(indexOfChunk, 1, ...pieces);
+		chunk.referenceRemoved();
+		finalIndexOfChunk = indexOfChunk + (indexWithinChunk > 0 ? 1 : 0);
 	} else {
 		// TODO:Perf: support in place editing of other chunk formats when possible:
 		// 1. Support updating values in uniform chunks.
