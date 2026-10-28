@@ -16,8 +16,8 @@ import type {
 import { tagSchemaArtifacts, UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import {
-	type ChunkedCursor,
 	CursorLocationType,
+	type ITreeCursorSynchronous,
 	type TreeFieldStoredSchema,
 	LeafNodeStoredSchema,
 	ObjectNodeStoredSchema,
@@ -31,11 +31,7 @@ import {
 import { getOrCreate, iterableHasSome, mapIterable } from "../util/index.js";
 
 import { TextRunChunk } from "./chunked-forest/index.js";
-import {
-	mapTreeFromCursor,
-	type MapTreeFieldViewGeneric,
-	type MinimalMapTreeNodeView,
-} from "./mapTreeCursor.js";
+import type { MapTreeFieldViewGeneric, MinimalMapTreeNodeView } from "./mapTreeCursor.js";
 import { allowsValue } from "./valueUtilities.js";
 
 export enum SchemaValidationError {
@@ -382,7 +378,7 @@ const validatedChunks = new WeakMap<object, WeakSet<TreeChunk>>();
  * so only the first atom of each run is checked.
  */
 function isChunkedFieldContentInSchema<T extends NotUndefined>(
-	cursor: ChunkedCursor,
+	cursor: ITreeCursorSynchronous,
 	schema: TreeFieldStoredSchema,
 	schemaAndPolicy: SchemaAndPolicy,
 	onError: (details: SchemaValidationErrorDetails) => T,
@@ -412,8 +408,8 @@ function isChunkedFieldContentInSchema<T extends NotUndefined>(
 			chunk.isShared() &&
 			validatedChunks.get(schemaAndPolicy.schema)?.has(chunk);
 		if (known !== true) {
-			const nodeInSchemaResult = isNodeInSchema(
-				mapTreeFromCursor(cursor),
+			const nodeInSchemaResult = isCursorNodeInSchema(
+				cursor,
 				schemaAndPolicy,
 				prependPath(onError, index),
 			);
@@ -440,6 +436,149 @@ function isChunkedFieldContentInSchema<T extends NotUndefined>(
 		() => cursor.mode === CursorLocationType.Fields || "cursor should be back in the field",
 	);
 	return undefined;
+}
+
+/**
+ * {@link isNodeInSchema} for the node `cursor` is at, read through the cursor (which is left where it was).
+ * @remarks
+ * Fields are checked with {@link isChunkedFieldContentInSchema}, so chunks shared with content checked before are not checked again.
+ */
+function isCursorNodeInSchema<T extends NotUndefined>(
+	cursor: ITreeCursorSynchronous,
+	schemaAndPolicy: SchemaAndPolicy,
+	onError: (details: SchemaValidationErrorDetails) => T,
+): T | undefined {
+	const type = cursor.type;
+	const schema = schemaAndPolicy.schema.nodeSchema.get(type);
+	if (schema === undefined) {
+		return onError(
+			schemaValidationError(
+				SchemaValidationError.Node_MissingSchema,
+				tagSchemaArtifacts({ nodeType: type }),
+			),
+		);
+	}
+	const value = cursor.value;
+	if (schema instanceof LeafNodeStoredSchema) {
+		if (cursor.firstField()) {
+			const unexpectedFields: string[] = [];
+			do {
+				unexpectedFields.push(cursor.getFieldKey());
+			} while (cursor.nextField());
+			return onError(
+				schemaValidationError(SchemaValidationError.LeafNode_FieldsNotAllowed, {
+					...tagSchemaArtifacts({
+						nodeType: type,
+						unexpectedFields: JSON.stringify(unexpectedFields.sort()),
+					}),
+				}),
+			);
+		}
+		if (!allowsValue(schema.leafValue, value)) {
+			return onError(
+				schemaValidationError(SchemaValidationError.LeafNode_InvalidValue, {
+					...tagSchemaArtifacts({
+						nodeType: type,
+						expectedValueType: ValueSchema[schema.leafValue],
+					}),
+					actualValueType: getValueType(value),
+				}),
+			);
+		}
+		return undefined;
+	}
+	if (value !== undefined) {
+		return onError(
+			schemaValidationError(SchemaValidationError.NonLeafNode_ValueNotAllowed, {
+				...tagSchemaArtifacts({ nodeType: type }),
+				actualValueType: getValueType(value),
+			}),
+		);
+	}
+	const checkedKeys = new Set<string>();
+	const unexpectedFields: string[] = [];
+	for (let inFields = cursor.firstField(); inFields; inFields = cursor.nextField()) {
+		const key = cursor.getFieldKey();
+		const fieldSchema =
+			schema instanceof ObjectNodeStoredSchema
+				? schema.objectNodeFields.get(key)
+				: schema instanceof MapNodeStoredSchema
+					? schema.mapFields
+					: fail("Unknown TreeNodeStoredSchema type");
+		if (fieldSchema === undefined) {
+			unexpectedFields.push(key);
+			continue;
+		}
+		checkedKeys.add(key);
+		const result = isCursorFieldInSchema(
+			cursor,
+			fieldSchema,
+			schemaAndPolicy,
+			prependPath(onError, key),
+		);
+		if (result !== undefined) {
+			cursor.exitField();
+			return result;
+		}
+	}
+	if (unexpectedFields.length > 0) {
+		return onError(
+			schemaValidationError(SchemaValidationError.ObjectNode_FieldNotInSchema, {
+				...tagSchemaArtifacts({
+					nodeType: type,
+					unexpectedFields: JSON.stringify(unexpectedFields.sort()),
+				}),
+			}),
+		);
+	}
+	if (schema instanceof ObjectNodeStoredSchema) {
+		// Fields absent from the node must allow being empty.
+		for (const [key, fieldSchema] of schema.objectNodeFields) {
+			if (!checkedKeys.has(key)) {
+				const result = isFieldInSchema(
+					[],
+					fieldSchema,
+					schemaAndPolicy,
+					prependPath(onError, key),
+				);
+				if (result !== undefined) {
+					return result;
+				}
+			}
+		}
+	}
+	return undefined;
+}
+
+/**
+ * {@link isFieldInSchema} for the field `cursor` is in, read through the cursor (which is left in the field).
+ */
+function isCursorFieldInSchema<T extends NotUndefined>(
+	cursor: ITreeCursorSynchronous,
+	schema: TreeFieldStoredSchema,
+	schemaAndPolicy: SchemaAndPolicy,
+	onError: (details: SchemaValidationErrorDetails) => T,
+): T | undefined {
+	const kind = schemaAndPolicy.policy.fieldKinds.get(schema.kind);
+	if (kind === undefined) {
+		return onError(
+			schemaValidationError(
+				SchemaValidationError.Field_KindNotInSchemaPolicy,
+				tagSchemaArtifacts({ fieldKind: schema.kind }),
+			),
+		);
+	}
+	const length = cursor.getFieldLength();
+	const multiplicityCheck = compliesWithMultiplicity(length, kind.multiplicity);
+	if (multiplicityCheck !== undefined) {
+		return onError(
+			schemaValidationError(multiplicityCheck, {
+				...tagSchemaArtifacts({ fieldKind: schema.kind }),
+				childCount: length,
+			}),
+		);
+	}
+	return isChunkedFieldContentInSchema(cursor, schema, schemaAndPolicy, onError);
 }
 
 /**

@@ -217,35 +217,54 @@ export function initializeArrayWithChunks(
 export function createCopier<T extends TreeNode>(node: T): () => T {
 	const kernel = getKernel(node);
 	const context = getUnhydratedContext(kernel.schema);
-	const cursor = getInnerNode(node).borrowCursor();
-	const chunk = basicChunkTree(cursor, chunkCopyPolicy);
+	const chunk = basicChunkTree(getInnerNode(node).borrowCursor(), chunkCopyPolicy);
+	return () => getOrCreateNodeFromInnerNode(copyFromChunk(context, chunk)) as T;
+}
+
+/**
+ * Creates an unhydrated node in `context` holding a copy of the content of `chunk`, a single node:
+ * the node's fields hold `chunk`'s field chunks by reference (see {@link ChunkedFieldContent}),
+ * and nodes below it are created only when read.
+ * @remarks
+ * The content is not checked against the schema: it must already be in `context`'s schema,
+ * and must not contain fields with pending defaults.
+ */
+export function copyFromChunk(
+	context: Context,
+	chunk: ReturnType<typeof basicChunkTree>,
+): UnhydratedFlexTreeNode {
 	const storedSchema =
 		context.flexContext.schema.nodeSchema.get(chunk.type) ?? unknownTypeError(chunk.type);
-	return () => {
-		const fields = new Map<FieldKey, UnhydratedFlexTreeField>();
-		for (const [key, chunks] of chunk.fields) {
-			for (const child of chunks) {
-				child.referenceAdded();
-			}
-			fields.set(
+	const fields = new Map<FieldKey, UnhydratedFlexTreeField>();
+	for (const [key, chunks] of chunk.fields) {
+		for (const child of chunks) {
+			child.referenceAdded();
+		}
+		fields.set(
+			key,
+			createField(
+				context.flexContext,
+				storedSchema.getFieldSchema(key).kind,
 				key,
-				createField(
-					context.flexContext,
-					storedSchema.getFieldSchema(key).kind,
-					key,
-					new ChunkedFieldContent(chunks, (fieldCursor) =>
-						mapCursorField(fieldCursor, () =>
-							unhydratedFlexTreeFromCursor(context, fieldCursor),
-						),
+				new ChunkedFieldContent(chunks, (fieldCursor) =>
+					mapCursorField(fieldCursor, () =>
+						unhydratedFlexTreeFromCursor(context, fieldCursor),
 					),
 				),
-			);
-		}
-		const copy = new UnhydratedFlexTreeNode(
-			{ type: chunk.type, value: chunk.value },
-			fields,
-			context,
+			),
 		);
-		return getOrCreateNodeFromInnerNode(copy) as T;
-	};
+	}
+	return new UnhydratedFlexTreeNode({ type: chunk.type, value: chunk.value }, fields, context);
+}
+/**
+ * Creates an unhydrated copy of the node `cursor` is at (in nodes mode), a node in a tree whose stored schema `context` uses,
+ * sharing the tree's chunks by reference (see {@link copyFromChunk}).
+ * @remarks
+ * Content read from a tree is in that tree's stored schema, so it is not checked again.
+ */
+export function copyNodeByReference(
+	context: Context,
+	cursor: ITreeCursorSynchronous,
+): UnhydratedFlexTreeNode {
+	return copyFromChunk(context, basicChunkTree(cursor, chunkCopyPolicy));
 }
