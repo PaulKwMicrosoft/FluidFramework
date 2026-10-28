@@ -6,6 +6,7 @@
 import { assert } from "@fluidframework/core-utils/internal";
 
 import {
+	type ChunkedCursor,
 	CursorLocationType,
 	type DetachedField,
 	type ExclusiveMapTree,
@@ -63,6 +64,13 @@ export interface MinimalFieldMap<TField> {
 export interface MapTreeFieldViewGeneric<TNode> {
 	readonly [Symbol.iterator]: () => Iterator<TNode>;
 	readonly length: number;
+	/**
+	 * If this field holds its content as chunks rather than as nodes, returns a cursor over them, in fields mode at its root field.
+	 * @remarks
+	 * Cursors over a tree containing this field ({@link cursorForMapTreeNode}, {@link cursorForMapTreeField})
+	 * read such content through this cursor, without iterating the field.
+	 */
+	readonly chunkedContentCursor?: () => ChunkedCursor | undefined;
 }
 
 /**
@@ -151,6 +159,8 @@ const adapter: CursorAdapter<MinimalMapTreeNodeView> = {
 		// TODO: this copy could be avoided by using Array.at instead of indexing in `Field`, but that requires ES2022.
 		return [...field] as readonly MinimalMapTreeNodeView[];
 	},
+	chunkedFieldCursor: (node, key): ChunkedCursor | undefined =>
+		node.fields.get(key)?.chunkedContentCursor?.(),
 };
 
 /**
