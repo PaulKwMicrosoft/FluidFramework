@@ -245,7 +245,17 @@ export function isKnownInStoredSchema(
 			return false;
 		}
 		for (const field of node.allFieldsLazy.values()) {
-			pending.push(...field.children);
+			const chunked = field.chunkedContent;
+			if (chunked === undefined) {
+				pending.push(...field.children);
+			} else {
+				// Content still held as chunks was copied from content in schema: only the nodes created from it can have been edited.
+				for (const entry of chunked.entries) {
+					if (entry instanceof UnhydratedFlexTreeNode) {
+						pending.push(entry);
+					}
+				}
+			}
 		}
 	}
 	return true;
