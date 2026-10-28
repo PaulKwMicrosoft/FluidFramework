@@ -45,7 +45,7 @@ import {
 	defaultContentShapeLimits,
 } from "./contentShapeCache.js";
 import { SequenceChunk } from "./sequenceChunk.js";
-import { TextRunChunk } from "./textRunChunk.js";
+import { TextRunChunk, type VerboseTextRun } from "./textRunChunk.js";
 import {
 	defaultSubtreeInternerLimits,
 	SubtreeInterner,
@@ -855,11 +855,21 @@ export function chunkFieldFromAdapter<TNode>(
 	while (index < nodes.length) {
 		// Not `?? oob()`: a node can be `null` (a null leaf).
 		const node = nodes[index] as TNode;
+		const textRun = adapter.textRun?.(node);
+		if (textRun !== undefined) {
+			output.push(textRunChunkFromAdapter(node, textRun, adapter, chunkCompressor));
+			index++;
+			continue;
+		}
 		const type = adapter.type(node);
 		const shape = policy.shapeFromSchema(type);
 		if (contentShapes !== undefined && !(shape instanceof TreeShape)) {
 			const walk = new ContentChunkingWalk(contentShapes, chunkCompressor);
-			for (; index < nodes.length; index++) {
+			for (
+				;
+				index < nodes.length && adapter.textRun?.(nodes[index] as TNode) === undefined;
+				index++
+			) {
 				const valueStart = walk.values.length;
 				const result = walkNodeFromAdapter(nodes[index] as TNode, adapter, walk);
 				walk.appendRun(result, valueStart, 0);
@@ -879,7 +889,8 @@ export function chunkFieldFromAdapter<TNode>(
 			} while (
 				topLevelLength < maxTopLevelLength &&
 				index < nodes.length &&
-				adapter.type(nodes[index] as TNode) === type
+				adapter.type(nodes[index] as TNode) === type &&
+				adapter.textRun?.(nodes[index] as TNode) === undefined
 			);
 			output.push(
 				new UniformChunk(shape.withTopLevelLength(topLevelLength), [...values], idCompressor),
@@ -891,6 +902,33 @@ export function chunkFieldFromAdapter<TNode>(
 	}
 	// Copied to an array of exactly its length, as chunkRange does.
 	return [...groupIntoSequenceChunks(output, policy)];
+}
+
+/**
+ * The {@link TextRunChunk} for `node`, a node of content read through `adapter` which stands for `textRun`.
+ * @remarks
+ * The run's format is chunked as the content of the atoms' format field,
+ * so it is shared with identical formats as {@link ChunkPolicy.subtreeInterner} shares them.
+ */
+function textRunChunkFromAdapter<TNode>(
+	node: TNode,
+	textRun: VerboseTextRun,
+	adapter: CursorAdapter<TNode>,
+	chunkCompressor: ChunkCompressor,
+): TextRunChunk {
+	const { layout } = textRun;
+	const formatChunks = chunkFieldFromAdapter(
+		adapter.getFieldFromNode(node, layout.formatKey),
+		adapter,
+		chunkCompressor,
+	);
+	chunkCompressor.policy.subtreeInterner?.internField(
+		layout.atomType,
+		layout.formatKey,
+		formatChunks,
+	);
+	assert(formatChunks.length === 1, "A text run must have one format");
+	return new TextRunChunk(layout, textRun.text, formatChunks[0] ?? oob());
 }
 
 /**
@@ -1637,6 +1675,12 @@ function walkNodeFromAdapter<TNode>(
 		walk.fieldRunStarts.push(firstRunOfField);
 		let fieldShape: TreeShape | false | undefined;
 		for (const child of children) {
+			const textRun = adapter.textRun?.(child);
+			if (textRun !== undefined) {
+				walk.appendChunk(textRunChunkFromAdapter(child, textRun, adapter, walk.compressor));
+				fieldShape = false;
+				continue;
+			}
 			const childValueStart = walk.values.length;
 			const result = walk.shareChild(
 				walkNodeFromAdapter(child, adapter, walk),

@@ -28,6 +28,9 @@ import {
 import {
 	allowsValue,
 	chunkFieldForForest,
+	forestKeepsChunks,
+	verboseTextRun,
+	type VerboseTextRun,
 	combineChunks,
 	compliesWithMultiplicity,
 	FieldKinds,
@@ -168,9 +171,56 @@ function chunkVerboseContent(
 ): TreeChunk[] {
 	const root: VerboseTreeNode = {
 		type: aboveRootPlaceholder,
-		fields: content as VerboseTree[],
+		// Forests which do not keep chunks read the content through a cursor, which does not understand text runs.
+		fields: (forestKeepsChunks(forest)
+			? content
+			: content.map(expandTextRuns)) as VerboseTree[],
 	};
 	return chunkFieldForForest(forest, storedKeyAdapter, root, keyAsDetachedField(EmptyKey));
+}
+
+/**
+ * 	ree with each node standing for a run of text atoms (see {@link VerboseTextRun}) replaced by the atoms it stands for.
+ */
+function expandTextRuns(tree: VerboseTree): VerboseTree {
+	if (!isVerboseTreeNode(tree)) {
+		return tree;
+	}
+	const { fields } = tree;
+	if (Array.isArray(fields)) {
+		const expanded: VerboseTree[] = [];
+		for (const child of fields as VerboseTree[]) {
+			const textRun = storedKeyAdapter.textRun?.(child);
+			if (textRun === undefined) {
+				expanded.push(expandTextRuns(child));
+				continue;
+			}
+			const { layout } = textRun;
+			const format = expandTextRuns(
+				getChildren(child as VerboseTreeNode, layout.formatKey)[0] as VerboseTree,
+			);
+			for (const character of textRun.text) {
+				const atomFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
+				const characterFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
+				defineField(characterFields, layout.characterKey, character);
+				defineField(atomFields, layout.contentKey, {
+					type: layout.characterType,
+					fields: characterFields,
+				});
+				defineField(atomFields, layout.formatKey, format);
+				expanded.push({ type: layout.atomType, fields: atomFields });
+			}
+		}
+		return { type: tree.type, fields: expanded };
+	}
+	const expandedFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
+	for (const key of Object.keys(fields)) {
+		const child = fields[key];
+		if (child !== undefined) {
+			defineField(expandedFields, key, expandTextRuns(child));
+		}
+	}
+	return { type: tree.type, fields: expandedFields };
 }
 
 function isVerboseTreeNode(node: VerboseTree): node is VerboseTreeNode {
@@ -286,7 +336,11 @@ class VerboseContentChecker {
 					allowedTypes: JSON.stringify([...types].sort()),
 				});
 			}
-			const checked = this.checkNode(child, type);
+			const textRun = storedKeyAdapter.textRun?.(child);
+			const checked =
+				textRun === undefined
+					? this.checkNode(child, type)
+					: this.checkTextRun(child as VerboseTreeNode, type, textRun);
 			this.path.pop();
 			if (checked !== child) {
 				result ??= [...children];
@@ -294,6 +348,63 @@ class VerboseContentChecker {
 			}
 		}
 		return result ?? children;
+	}
+
+	/**
+	 * Checks a node standing for a run of text atoms (see {@link VerboseTextRun}):
+	 * the atoms' content field must allow the run's characters, and the node's only field, the format, must be in schema.
+	 */
+	private checkTextRun(
+		node: VerboseTreeNode,
+		type: string,
+		textRun: VerboseTextRun,
+	): VerboseTree {
+		const { layout } = textRun;
+		const schema = this.schemaAndPolicy.schema.nodeSchema.get(brand(type));
+		const characterSchema = this.schemaAndPolicy.schema.nodeSchema.get(layout.characterType);
+		if (
+			!(schema instanceof ObjectNodeStoredSchema) ||
+			schema.objectNodeFields.get(layout.contentKey)?.types?.has(layout.characterType) !==
+				true ||
+			!(characterSchema instanceof ObjectNodeStoredSchema) ||
+			characterSchema.objectNodeFields
+				.get(layout.characterKey)
+				?.types?.has(layout.leafType) !== true
+		) {
+			this.fail(SchemaValidationError.Field_NodeTypeNotAllowed, {
+				nodeType: layout.characterType,
+				allowedTypes: JSON.stringify([type]),
+			});
+		}
+		if (textRun.text.length === 0) {
+			throw new UsageError("A text run must not be empty.");
+		}
+		const formatSchema =
+			schema.objectNodeFields.get(layout.formatKey) ?? fail("format field checked above");
+		if (countNonEmptyFields(node) !== 1) {
+			this.fail(SchemaValidationError.ObjectNode_FieldNotInSchema, {
+				nodeType: type,
+				unexpectedFields: JSON.stringify(
+					getNonEmptyFieldKeys(node)
+						.filter((key) => key !== layout.formatKey)
+						.sort(),
+				),
+			});
+		}
+		this.path.push(layout.formatKey);
+		const children = getChildren(node, layout.formatKey);
+		const checked = this.checkField(children, formatSchema);
+		this.path.pop();
+		if (checked === children) {
+			return node;
+		}
+		const fields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
+		defineField(fields, layout.formatKey, checked[0] as VerboseTree);
+		return {
+			type: node.type,
+			fields,
+			[verboseTextRun]: textRun,
+		} as unknown as VerboseTreeNode;
 	}
 
 	private checkNode(node: VerboseTree, type: string): VerboseTree {
