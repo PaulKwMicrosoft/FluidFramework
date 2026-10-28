@@ -93,7 +93,7 @@ export {
 	type TreeNodeApi,
 	tryGetSchema,
 } from "./treeNodeApi.js";
-export { createFromCursor } from "./create.js";
+export { createCopier, createFromCursor, initializeArrayWithChunks } from "./create.js";
 export {
 	type DirtyTreeStatus,
 	trackDirtyNodes,

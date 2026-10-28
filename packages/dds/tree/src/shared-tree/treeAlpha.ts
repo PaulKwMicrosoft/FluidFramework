@@ -46,6 +46,7 @@ import {
 	TreeNode,
 	type Unhydrated,
 	tryGetSchema,
+	createCopier,
 	createFromCursor,
 	FieldKind,
 	normalizeFieldSchema,
@@ -319,6 +320,21 @@ export interface TreeAlpha {
 		data: VerboseTree | undefined,
 		options?: TreeParsingOptions,
 	): Unhydrated<TreeFieldFromImplicitField<TSchema>>;
+
+	/**
+	 * Returns a function which creates copies of 
+ode's content, as it is when this is called.
+	 * @remarks
+	 * Each copy is an unhydrated node, like one {@link (TreeBeta:interface).clone} returns, and copies are independent of each other and of 
+ode.
+	 * Unlike cloning, the content is copied once, and each copy holds that copy by reference:
+	 * creating a copy creates one node object, nodes below it are only created when read,
+	 * and inserting a copy into a tree inserts the shared content without copying it again.
+	 * Use this to insert the same content in many places, such as one format used by many runs or paragraphs.
+	 *
+	 * The content must not contain identifiers which have not been generated yet.
+	 */
+	copier<T extends TreeNode>(node: T): () => Unhydrated<T>;
 
 	/**
 	 * Copy a snapshot of the current version of a TreeNode into a JSON compatible plain old JavaScript Object (except for {@link @fluidframework/core-interfaces#IFluidHandle|IFluidHandles}).
@@ -887,6 +903,10 @@ export const TreeAlpha: TreeAlpha = {
 			cursor,
 			getUnhydratedContext(schema).flexContext.schema.rootFieldSchema,
 		);
+	},
+
+	copier<T extends TreeNode>(node: T): () => Unhydrated<T> {
+		return createCopier(node);
 	},
 
 	exportVerbose(node: TreeNode | TreeLeafValue, options?: TreeEncodingOptions): VerboseTree {

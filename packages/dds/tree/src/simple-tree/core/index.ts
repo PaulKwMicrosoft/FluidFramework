@@ -97,6 +97,7 @@ export {
 	UnhydratedFlexTreeNode,
 	UnhydratedSequenceField,
 	UnhydratedContext,
+	ChunkedFieldContent,
 	createField,
 } from "./unhydratedFlexTree.js";
 export type {
