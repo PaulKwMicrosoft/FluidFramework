@@ -36,7 +36,7 @@ import {
 	type ImplicitAllowedTypes,
 	SimpleContextSlot,
 	type TreeNode,
-	type UnhydratedFlexTreeNode,
+	UnhydratedFlexTreeNode,
 } from "./core/index.js";
 import { isGeneratedUnhydratedContext } from "./createContext.js";
 import type { ImplicitFieldSchema } from "./fieldSchema.js";
@@ -341,6 +341,20 @@ function walkMapTree(
 		}
 
 		for (const [key, field] of node.allFieldsLazy) {
+			const chunked = field.chunkedContent;
+			if (chunked !== undefined) {
+				// Content still held as chunks contains no TreeNodes and no pending defaults: only visit the nodes created from it.
+				let index = 0;
+				for (const entry of chunked.entries) {
+					if (entry instanceof UnhydratedFlexTreeNode) {
+						nexts.push([{ parent: p, parentField: key, parentIndex: index }, entry]);
+						index++;
+					} else {
+						index += entry.topLevelLength;
+					}
+				}
+				continue;
+			}
 			field.fillPendingDefaults(context);
 			for (const [i, child] of field.children.entries()) {
 				nexts.push([

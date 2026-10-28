@@ -45,6 +45,7 @@ import {
 	defaultContentShapeLimits,
 } from "./contentShapeCache.js";
 import { SequenceChunk } from "./sequenceChunk.js";
+import { TextRunChunk } from "./textRunChunk.js";
 import {
 	defaultSubtreeInternerLimits,
 	SubtreeInterner,
@@ -979,6 +980,11 @@ export function splitFieldAtIndex(
 
 		// nodeIndex falls within this chunk, so split the chunk.
 		// This does not move the chunkIndex forward: the next iteration might need to split again at the same index.
+		if (chunk instanceof TextRunChunk) {
+			chunks.splice(chunkIndex, 1, chunk.slice(0, remaining), chunk.slice(remaining, total));
+			chunk.referenceRemoved();
+			continue;
+		}
 		//
 		// For chunks above the bisect threshold, cut at the midpoint and let the loop descend
 		// into whichever half holds nodeIndex. The other half is left untouched.
