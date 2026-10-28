@@ -13,7 +13,10 @@ export {
 	chunkFieldSingle,
 	chunkField,
 	combineChunks,
+	basicChunkTree,
 } from "./chunkTree.js";
+export { cursorForChunks } from "./basicChunk.js";
+export { TextRunChunk, type TextRunLayout, formattedAtomChunk } from "./textRunChunk.js";
 export { buildChunkedForest, chunkFieldForForest } from "./chunkedForest.js";
 export {
 	FieldBatchFormatVersion,

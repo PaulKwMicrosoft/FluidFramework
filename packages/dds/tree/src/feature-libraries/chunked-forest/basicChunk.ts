@@ -89,6 +89,15 @@ export class BasicChunk extends ReferenceCountedBase implements TreeChunk {
 export type SiblingsOrKey = readonly TreeChunk[] | readonly FieldKey[];
 
 /**
+ * Creates a cursor, in fields mode at its root field, over a field made of `chunks`.
+ * @remarks
+ * Like {@link TreeChunk.cursor}, the cursor does not own references to the chunks.
+ */
+export function cursorForChunks(chunks: readonly TreeChunk[]): ChunkedCursor {
+	return new BasicChunkCursor(chunks, [], [], [], [], [dummyRoot], 0, 0, 0, undefined);
+}
+
+/**
  * Cursor over basic chunks.
  *
  * @remarks This implementation is similar to StackCursor, however it is distinct because:
