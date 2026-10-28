@@ -18,9 +18,12 @@ import { ForestTypeReference, TreeAlpha, type ForestType } from "../../shared-tr
 // eslint-disable-next-line import-x/no-internal-modules -- Building forest types for the test
 import { toForestType } from "../../shared-tree/forestType.js";
 import {
+	KeyEncodingOptions,
 	SchemaFactory,
 	SchemaFactoryBeta,
 	TreeViewConfiguration,
+	type TreeNode,
+	type VerboseTree,
 } from "../../simple-tree/index.js";
 import { FormattedText } from "../../text/index.js";
 import { configuredSharedTree } from "../../treeFactory.js";
@@ -398,5 +401,94 @@ describe("FormattedText built as runs", () => {
 			first.reformat(15, 18, { ...plain, bold: true });
 			second.formatRange(20, 24, { italic: true });
 		});
+	});
+});
+
+class Paragraphs extends sf.array("Paragraphs", Text) {}
+const paragraphsConfig = new TreeViewConfiguration({ schema: Paragraphs });
+
+/**
+ * The initial text of {@link buildInitial} as plain content for insertVerbose, with its text runs as runs.
+ */
+function verboseInitial(): VerboseTree {
+	const verbose = (node: TreeNode): VerboseTree =>
+		TreeAlpha.exportVerbose(node, { keys: KeyEncodingOptions.allStoredKeys });
+	return Text.verboseFromRuns([
+		{ text: "Hello world, ", format: verbose(red()) },
+		{ text: "hello shared text.", format: verbose(red()) },
+		{ atoms: [verbose(new LineBreak({}))], format: verbose(new Format({ ...plain })) },
+		{ text: "Bye." },
+	]);
+}
+
+describe("FormattedText runs in plain content", () => {
+	/**
+	 * One client inserts the initial text into an empty list of paragraphs (as a node built atom by atom, or as plain
+	 * content with runs), then the other edits it while the first one does, and both synchronize.
+	 */
+	async function run(
+		forest: ForestType,
+		insert: "atoms" | "verbose",
+	): Promise<{ ops: string[]; content: string[]; summary: string; textRunChunks: number }> {
+		const provider = new TestTreeProviderLite(
+			2,
+			configuredSharedTree({
+				jsonValidator: FormatValidatorBasic,
+				minVersionForCollab: FluidClientVersion.v2_80,
+				forest,
+			}).getFactory(),
+		);
+		const ops: string[] = [];
+		const synchronize = (): void => {
+			for (
+				let message = provider.peekNextMessage();
+				message !== undefined;
+				message = provider.peekNextMessage()
+			) {
+				ops.push(JSON.stringify(message.contents));
+				provider.synchronizeMessages({ count: 1 });
+			}
+		};
+		const first = provider.trees[0].viewWith(paragraphsConfig);
+		first.initialize(new Paragraphs([]));
+		synchronize();
+		if (insert === "atoms") {
+			first.root.insertAt(0, buildInitial("atoms"));
+		} else {
+			TreeAlpha.insertVerbose(first.root, 0, [verboseInitial()]);
+		}
+		synchronize();
+		const textRunChunks = countTextRunChunks(provider.trees[0]);
+		const second = provider.trees[1].viewWith(paragraphsConfig);
+		const [firstText] = first.root;
+		const [secondText] = second.root;
+		assert(firstText !== undefined && secondText !== undefined);
+		firstText.insertAt(20, "XY", red());
+		secondText.reformat(13, 31, { ...plain, size: 30, italic: true });
+		synchronize();
+		const content = [first, second].map((view) =>
+			canonicalJson(JSON.stringify(TreeAlpha.exportVerbose(view.root))),
+		);
+		const { summary } = await (
+			provider.trees[0] as unknown as { summarize(): Promise<{ summary: unknown }> }
+		).summarize();
+		return { ops, content, summary: JSON.stringify(summary), textRunChunks };
+	}
+
+	it("inserting plain content with runs matches inserting nodes built atom by atom", async () => {
+		let reference: { ops: string[]; content: string[] } | undefined;
+		for (const [forestName, forest] of forests) {
+			const atoms = await run(forest, "atoms");
+			const verbose = await run(forest, "verbose");
+			reference ??= atoms;
+			assert.equal(verbose.content[0], verbose.content[1], `${forestName}: clients converge`);
+			assert.deepEqual(verbose.ops, reference.ops, `${forestName}: ops`);
+			assert.deepEqual(atoms.ops, reference.ops, `${forestName}: ops built as atoms`);
+			assert.deepEqual(verbose.content, reference.content, `${forestName}: content`);
+			assert.equal(verbose.summary, atoms.summary, `${forestName}: summary`);
+			if (forest !== ForestTypeReference) {
+				assert(verbose.textRunChunks > 0, `${forestName}: plain content keeps its runs`);
+			}
+		}
 	});
 });

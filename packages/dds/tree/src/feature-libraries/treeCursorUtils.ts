@@ -24,6 +24,8 @@ import {
 	rootField,
 } from "../core/index.js";
 
+import type { VerboseTextRun } from "./chunked-forest/textRunChunk.js";
+
 /**
  * {@link ITreeCursorSynchronous} that can return the underlying node objects.
  */
@@ -108,6 +110,13 @@ export interface CursorAdapter<TNode> {
 	 * without {@link CursorAdapter.getFieldFromNode}.
 	 */
 	chunkedFieldCursor?(node: TNode, key: FieldKey): ChunkedCursor | undefined;
+	/**
+	 * If `node` stands for a run of text atoms (see {@link VerboseTextRun}), returns the run.
+	 * @remarks
+	 * Only {@link chunkFieldFromAdapter} understands such nodes: cursors from {@link stackTreeNodeCursor} and {@link stackTreeFieldCursor}
+	 * read them as single nodes, so content with them must not be read through such cursors.
+	 */
+	textRun?(node: TNode): VerboseTextRun | undefined;
 }
 
 type SiblingsOrKey<TNode> = Field<TNode> | readonly FieldKey[];

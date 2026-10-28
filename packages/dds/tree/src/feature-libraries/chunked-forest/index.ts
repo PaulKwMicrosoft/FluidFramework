@@ -16,8 +16,18 @@ export {
 	basicChunkTree,
 } from "./chunkTree.js";
 export { cursorForChunks } from "./basicChunk.js";
-export { TextRunChunk, type TextRunLayout, formattedAtomChunk } from "./textRunChunk.js";
-export { buildChunkedForest, chunkFieldForForest } from "./chunkedForest.js";
+export {
+	TextRunChunk,
+	type TextRunLayout,
+	formattedAtomChunk,
+	verboseTextRun,
+	type VerboseTextRun,
+} from "./textRunChunk.js";
+export {
+	buildChunkedForest,
+	chunkFieldForForest,
+	forestKeepsChunks,
+} from "./chunkedForest.js";
 export {
 	FieldBatchFormatVersion,
 	type FieldBatch,
