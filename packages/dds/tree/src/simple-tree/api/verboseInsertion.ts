@@ -395,6 +395,7 @@ class VerboseContentChecker {
 		const children = getChildren(node, layout.formatKey);
 		const checked = this.checkField(children, formatSchema);
 		this.path.pop();
+		this.checkTextRunAtoms(type, textRun, children[0]);
 		if (checked === children) {
 			return node;
 		}
@@ -405,6 +406,31 @@ class VerboseContentChecker {
 			fields,
 			[verboseTextRun]: textRun,
 		} as unknown as VerboseTreeNode;
+	}
+
+	/**
+	 * Checks each atom a text run stands for as a node of type `type`, as if the atoms were inserted one by one,
+	 * so every inserted node is checked, including each atom's copy of the run's format.
+	 */
+	private checkTextRunAtoms(
+		type: string,
+		textRun: VerboseTextRun,
+		format: VerboseTree | undefined,
+	): void {
+		const { layout } = textRun;
+		for (const character of textRun.text) {
+			const characterFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
+			defineField(characterFields, layout.characterKey, character);
+			const atomFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
+			defineField(atomFields, layout.contentKey, {
+				type: layout.characterType,
+				fields: characterFields,
+			});
+			if (format !== undefined) {
+				defineField(atomFields, layout.formatKey, format);
+			}
+			this.checkNode({ type: layout.atomType, fields: atomFields }, type);
+		}
 	}
 
 	private checkNode(node: VerboseTree, type: string): VerboseTree {
