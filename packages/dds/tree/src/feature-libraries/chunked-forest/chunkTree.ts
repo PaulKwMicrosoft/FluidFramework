@@ -48,6 +48,7 @@ import { SequenceChunk } from "./sequenceChunk.js";
 import { TextRunChunk, type VerboseTextRun } from "./textRunChunk.js";
 import {
 	defaultSubtreeInternerLimits,
+	type SharedFieldPolicy,
 	SubtreeInterner,
 	type SubtreeInternerLimits,
 } from "./subtreeInterner.js";
@@ -68,12 +69,14 @@ export interface Disposable {
  *
  * @param subtreeLimits - Limits for sharing identical small subtrees (see {@link ChunkPolicy.subtreeInterner}),
  * or `false` to store every subtree separately.
+ * @param sharedFields - Which fields' children may be shared (see {@link SubtreeInternerOptions.sharedFields}).
  */
 export function makeTreeChunker(
 	schema: TreeStoredSchemaSubscription,
 	policy: SchemaPolicy,
 	shouldEncodeIncrementally: IncrementalEncodingPolicy,
 	subtreeLimits: SubtreeInternerLimits | false = defaultSubtreeInternerLimits,
+	sharedFields?: SharedFieldPolicy,
 ): IChunker {
 	return new Chunker(
 		schema,
@@ -97,7 +100,9 @@ export function makeTreeChunker(
 				type,
 			),
 		{ shouldEncodeIncrementally, limits: defaultContentShapeLimits },
-		subtreeLimits === false ? undefined : { shouldEncodeIncrementally, limits: subtreeLimits },
+		subtreeLimits === false
+			? undefined
+			: { shouldEncodeIncrementally, limits: subtreeLimits, sharedFields },
 	);
 }
 
@@ -113,6 +118,10 @@ export interface SubtreeInternerOptions {
 	 * Bounds on the subtrees shared and on the memory used to find them.
 	 */
 	readonly limits: SubtreeInternerLimits;
+	/**
+	 * Which fields' children may be shared. When undefined, any field which is not encoded incrementally.
+	 */
+	readonly sharedFields?: SharedFieldPolicy;
 }
 
 /**
@@ -282,6 +291,7 @@ export class Chunker implements IChunker {
 				this.schema,
 				this.subtreeInternerOptions.shouldEncodeIncrementally,
 				this.subtreeInternerOptions.limits,
+				this.subtreeInternerOptions.sharedFields,
 			);
 		}
 		return this.subtreeInternerInstance;
@@ -1389,7 +1399,7 @@ class ContentChunkingWalk {
 		fieldLength: number,
 	): WalkResult {
 		const interner = this.compressor.policy.subtreeInterner;
-		if (interner === undefined || interner.isIncremental(parentType, key)) {
+		if (interner === undefined || !interner.sharesField(parentType, key)) {
 			return result;
 		}
 		if (result instanceof TreeShape) {

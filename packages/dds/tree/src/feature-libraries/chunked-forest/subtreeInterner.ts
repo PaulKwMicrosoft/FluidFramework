@@ -16,6 +16,7 @@ import {
 	type TreeValue,
 	type Value,
 } from "../../core/index.js";
+import { getOrCreate } from "../../util/index.js";
 
 import { BasicChunk } from "./basicChunk.js";
 import type { IncrementalEncodingPolicy } from "./codec/index.js";
@@ -78,6 +79,21 @@ interface Entry {
 }
 
 /**
+ * Which fields' children a {@link SubtreeInterner} may share, by the type of the node holding the field and the field's key.
+ *
+ * @remarks
+ * Only the top of a shared subtree must be in such a field: the content below it is compared and shared as a whole.
+ */
+export type SharedFieldPolicy = (type: TreeNodeSchemaIdentifier, key: FieldKey) => boolean;
+
+/**
+ * {@link SharedFieldPolicy} sharing only the formats of formatted text atoms:
+ * the `format` fields of the formatted text domain's node types.
+ */
+export const textFormatFieldsOnly: SharedFieldPolicy = (type, key) =>
+	key === "format" && type.startsWith("com.fluidframework.text.formatted");
+
+/**
  * Shares one immutable chunk between identical small subtrees as content is chunked.
  *
  * @remarks
@@ -136,6 +152,12 @@ export class SubtreeInterner {
 		new Map();
 
 	/**
+	 * Whether each field (by node type, then key) can hold shared subtrees.
+	 */
+	private readonly sharingFields: Map<TreeNodeSchemaIdentifier, Map<FieldKey, boolean>> =
+		new Map();
+
+	/**
 	 * Table size at which chunks only the table references are next released.
 	 */
 	private releaseAt = minReleaseSize;
@@ -155,7 +177,28 @@ export class SubtreeInterner {
 		 */
 		private readonly shouldEncodeIncrementally: IncrementalEncodingPolicy,
 		public readonly limits: SubtreeInternerLimits,
+		/**
+		 * Which fields' children are shared. When undefined, any field which is not encoded incrementally.
+		 */
+		private readonly sharedFields?: SharedFieldPolicy,
 	) {}
+
+	/**
+	 * Whether the children of field `key` of nodes of type `type` can be shared:
+	 * the field is allowed by the {@link SharedFieldPolicy} and is not {@link SubtreeInterner.isIncremental}.
+	 */
+	public sharesField(type: TreeNodeSchemaIdentifier, key: FieldKey): boolean {
+		if (this.sharedFields === undefined) {
+			return !this.isIncremental(type, key);
+		}
+		const fields = getOrCreate(this.sharingFields, type, () => new Map<FieldKey, boolean>());
+		let result = fields.get(key);
+		if (result === undefined) {
+			result = this.sharedFields(type, key) && !this.isIncremental(type, key);
+			fields.set(key, result);
+		}
+		return result;
+	}
 
 	/**
 	 * Replaces each chunk of one node in `chunks`, the content of field `key` of a node of type `parentType`,
@@ -169,7 +212,7 @@ export class SubtreeInterner {
 		key: FieldKey,
 		chunks: TreeChunk[],
 	): void {
-		if (this.isIncremental(parentType, key)) {
+		if (!this.sharesField(parentType, key)) {
 			return;
 		}
 		for (let index = 0; index < chunks.length; index++) {
@@ -248,7 +291,8 @@ export class SubtreeInterner {
 				candidate instanceof UniformChunk &&
 				candidate.topLevelLength === 1 &&
 				candidate.shape.treeShape === shape &&
-				candidate.idCompressor === (shape.mayContainCompressedIds ? idCompressor : undefined) &&
+				candidate.idCompressor ===
+					(shape.mayContainCompressedIds ? idCompressor : undefined) &&
 				valuesEqual(candidate.values, 0, values, start, shape.valuesPerTopLevelNode),
 		);
 		if (existing !== undefined) {

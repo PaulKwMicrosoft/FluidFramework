@@ -63,6 +63,7 @@ export {
 	createIndependentTreeView,
 	type CreateIndependentTreeAlphaOptions,
 	ForestTypeOptimized,
+	ForestTypeOptimizedSharingTextFormats,
 	ForestTypeExpensiveDebug,
 	ForestTypeReference,
 	minimize,

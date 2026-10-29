@@ -15,6 +15,7 @@ export {
 	combineChunks,
 	basicChunkTree,
 } from "./chunkTree.js";
+export { type SharedFieldPolicy, textFormatFieldsOnly } from "./subtreeInterner.js";
 export { cursorForChunks } from "./basicChunk.js";
 export {
 	TextRunChunk,
