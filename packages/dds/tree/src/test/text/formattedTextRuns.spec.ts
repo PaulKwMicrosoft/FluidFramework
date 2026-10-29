@@ -5,6 +5,8 @@
 
 import { strict as assert } from "node:assert";
 
+import { validateUsageError } from "@fluidframework/test-runtime-utils/internal";
+
 import { FluidClientVersion } from "../../codec/index.js";
 import { FormatValidatorBasic } from "../../external-utilities/index.js";
 import {
@@ -14,12 +16,20 @@ import {
 	TextRunChunk,
 	type TreeChunk,
 } from "../../feature-libraries/index.js";
-import { ForestTypeReference, TreeAlpha, type ForestType } from "../../shared-tree/index.js";
+import {
+	createIndependentTreeAlpha,
+	ForestTypeOptimized,
+	ForestTypeReference,
+	TreeAlpha,
+	TreeBeta,
+	type ForestType,
+} from "../../shared-tree/index.js";
 // eslint-disable-next-line import-x/no-internal-modules -- Building forest types for the test
 import { toForestType } from "../../shared-tree/forestType.js";
 import {
 	KeyEncodingOptions,
 	SchemaFactory,
+	SchemaFactoryAlpha,
 	SchemaFactoryBeta,
 	TreeViewConfiguration,
 	type TreeNode,
@@ -490,5 +500,95 @@ describe("FormattedText runs in plain content", () => {
 				assert(verbose.textRunChunks > 0, `${forestName}: plain content keeps its runs`);
 			}
 		}
+	});
+});
+
+describe("FormattedText runs out of schema", () => {
+	const verbose = (node: TreeNode): VerboseTree =>
+		TreeAlpha.exportVerbose(node, { keys: KeyEncodingOptions.allStoredKeys });
+
+	it("rejects plain content with a run whose format is out of schema", () => {
+		const view = createIndependentTreeAlpha({ forest: ForestTypeOptimized }).viewWith(
+			paragraphsConfig,
+		);
+		view.initialize(new Paragraphs([]));
+		const badFormat = verbose(new Format({ ...plain })) as { fields: Record<string, unknown> };
+		badFormat.fields.size = "large";
+		const content = Text.verboseFromRuns([
+			{ text: "Hello ", format: verbose(red()) },
+			{ text: "world", format: badFormat as VerboseTree },
+		]);
+		assert.throws(
+			() => TreeAlpha.insertVerbose(view.root, 0, [content]),
+			validateUsageError(/schema/i),
+		);
+		assert.equal(view.root.length, 0);
+	});
+
+	describe("held as chunks", () => {
+		const oldFactory = new SchemaFactoryAlpha("test.formattedTextRuns.outOfSchema");
+		class OldFormat extends oldFactory.object("Format", {
+			size: SchemaFactory.number,
+			note: SchemaFactory.optional(SchemaFactory.string),
+		}) {}
+		class OldText extends FormattedText.createSchema(oldFactory, OldFormat, [], {
+			size: 12,
+		}) {}
+		class OldTexts extends oldFactory.array("Texts", OldText) {}
+
+		const newFactory = new SchemaFactoryAlpha("test.formattedTextRuns.outOfSchema");
+		class NewFormat extends newFactory.objectAlpha(
+			"Format",
+			{ size: SchemaFactory.number },
+			{ allowUnknownOptionalFields: true },
+		) {}
+		class NewText extends FormattedText.createSchema(newFactory, NewFormat, [], {
+			size: 12,
+		}) {}
+		class NewTexts extends newFactory.array("Texts", NewText) {}
+
+		/**
+		 * A view with schema `NewTexts` of a tree whose stored schema is `OldTexts`, holding one text inserted as runs
+		 * whose formats have a field `NewFormat` does not know.
+		 */
+		function viewOfOldTexts(content: readonly VerboseTree[]) {
+			const tree = createIndependentTreeAlpha({ forest: ForestTypeOptimized });
+			const oldView = tree.viewWith(new TreeViewConfiguration({ schema: OldTexts }));
+			oldView.initialize(new OldTexts([]));
+			TreeAlpha.insertVerbose(oldView.root, 0, content);
+			oldView.dispose();
+			const view = tree.viewWith(new TreeViewConfiguration({ schema: NewTexts }));
+			assert.equal(view.compatibility.canView, true);
+			return view;
+		}
+
+		const textWithNotes = (): VerboseTree =>
+			OldText.verboseFromRuns([
+				{ text: "noted ", format: verbose(new OldFormat({ size: 12, note: "a" })) },
+				{ text: "text", format: verbose(new OldFormat({ size: 14, note: "b" })) },
+			]);
+
+		it("rejects copies of runs whose format is out of the destination's stored schema", () => {
+			const source = viewOfOldTexts([textWithNotes()]);
+			const text = source.root[0] ?? assert.fail();
+			const destination = createIndependentTreeAlpha({ forest: ForestTypeOptimized }).viewWith(
+				new TreeViewConfiguration({ schema: NewTexts }),
+			);
+			destination.initialize(new NewTexts([]));
+			assert.throws(
+				() => destination.root.insertAtEnd(TreeBeta.clone<typeof NewText>(text)),
+				validateUsageError(/schema/i),
+			);
+			assert.throws(
+				() => destination.root.insertAtEnd(TreeAlpha.copier(text)()),
+				validateUsageError(/schema/i),
+			);
+			assert.equal(destination.root.length, 0);
+
+			const accepting = viewOfOldTexts([]);
+			accepting.root.insertAtEnd(TreeBeta.clone<typeof NewText>(text));
+			accepting.root.insertAtEnd(TreeAlpha.copier(text)());
+			assert.equal(accepting.root.length, 2);
+		});
 	});
 });

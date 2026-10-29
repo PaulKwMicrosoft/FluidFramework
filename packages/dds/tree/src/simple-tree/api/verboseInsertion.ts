@@ -376,6 +376,9 @@ class VerboseContentChecker {
 				allowedTypes: JSON.stringify([type]),
 			});
 		}
+		if (typeof textRun.text !== "string") {
+			throw new UsageError("The text of a text run must be a string.");
+		}
 		if (textRun.text.length === 0) {
 			throw new UsageError("A text run must not be empty.");
 		}
@@ -395,7 +398,7 @@ class VerboseContentChecker {
 		const children = getChildren(node, layout.formatKey);
 		const checked = this.checkField(children, formatSchema);
 		this.path.pop();
-		this.checkTextRunAtoms(type, textRun, children[0]);
+		this.checkFirstTextRunAtom(type, textRun, children[0]);
 		if (checked === children) {
 			return node;
 		}
@@ -409,16 +412,19 @@ class VerboseContentChecker {
 	}
 
 	/**
-	 * Checks each atom a text run stands for as a node of type `type`, as if the atoms were inserted one by one,
-	 * so every inserted node is checked, including each atom's copy of the run's format.
+	 * Checks the first atom a text run stands for as a node of type `type`, as if it were inserted on its own.
+	 * @remarks
+	 * The run's atoms differ only in their character, a string by construction, and each holds a copy of the same
+	 * format, so each of them is in schema exactly when the first one is.
 	 */
-	private checkTextRunAtoms(
+	private checkFirstTextRunAtom(
 		type: string,
 		textRun: VerboseTextRun,
 		format: VerboseTree | undefined,
 	): void {
 		const { layout } = textRun;
-		for (const character of textRun.text) {
+		const [character] = textRun.text;
+		if (character !== undefined) {
 			const characterFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
 			defineField(characterFields, layout.characterKey, character);
 			const atomFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
