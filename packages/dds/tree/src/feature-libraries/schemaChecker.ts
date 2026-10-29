@@ -24,13 +24,10 @@ import {
 	MapNodeStoredSchema,
 	Multiplicity,
 	type SchemaAndPolicy,
-	type TreeChunk,
 	ValueSchema,
-	tryGetChunk,
 } from "../core/index.js";
-import { getOrCreate, iterableHasSome, mapIterable } from "../util/index.js";
+import { iterableHasSome, mapIterable } from "../util/index.js";
 
-import { TextRunChunk } from "./chunked-forest/index.js";
 import type { MapTreeFieldViewGeneric, MinimalMapTreeNodeView } from "./mapTreeCursor.js";
 import { allowsValue } from "./valueUtilities.js";
 
@@ -365,17 +362,10 @@ export function isFieldInSchema<T extends NotUndefined>(
 }
 
 /**
- * Chunks known to be in schema, by the stored schema they were checked against.
- * Only shared chunks are recorded: they can not change (see {@link TreeChunk}).
- */
-const validatedChunks = new WeakMap<object, WeakSet<TreeChunk>>();
-
-/**
  * {@link isFieldInSchema} for the nodes of field content held as chunks, read through `cursor` (in fields mode at the field).
  * @remarks
  * The field's kind and length must already have been checked.
- * Each atom of a {@link TextRunChunk} differs from the others only in the value of its character leaf,
- * so only the first atom of each run is checked.
+ * Every node is checked, including each copy of content shared by several chunks and each atom of a text run.
  */
 function isChunkedFieldContentInSchema<T extends NotUndefined>(
 	cursor: ITreeCursorSynchronous,
@@ -401,36 +391,16 @@ function isChunkedFieldContentInSchema<T extends NotUndefined>(
 				),
 			);
 		}
-		const chunk = tryGetChunk(cursor);
-		const atChunkStart = chunk !== undefined && cursor.chunkStart === cursor.fieldIndex;
-		const known =
-			atChunkStart &&
-			chunk.isShared() &&
-			validatedChunks.get(schemaAndPolicy.schema)?.has(chunk);
-		if (known !== true) {
-			const nodeInSchemaResult = isCursorNodeInSchema(
-				cursor,
-				schemaAndPolicy,
-				prependPath(onError, index),
-			);
-			if (nodeInSchemaResult !== undefined) {
-				return nodeInSchemaResult;
-			}
-			// A shared chunk can not change, so it need only be checked once against a schema.
-			if (
-				atChunkStart &&
-				chunk.isShared() &&
-				(chunk instanceof TextRunChunk || chunk.topLevelLength === 1)
-			) {
-				getOrCreate(validatedChunks, schemaAndPolicy.schema, () => new WeakSet()).add(chunk);
-			}
+		const nodeInSchemaResult = isCursorNodeInSchema(
+			cursor,
+			schemaAndPolicy,
+			prependPath(onError, index),
+		);
+		if (nodeInSchemaResult !== undefined) {
+			return nodeInSchemaResult;
 		}
-		const skip =
-			chunk instanceof TextRunChunk
-				? cursor.chunkStart + cursor.chunkLength - cursor.fieldIndex
-				: 1;
-		index += skip;
-		inField = cursor.seekNodes(skip);
+		index += 1;
+		inField = cursor.nextNode();
 	}
 	debugAssert(
 		() => cursor.mode === CursorLocationType.Fields || "cursor should be back in the field",
@@ -441,7 +411,7 @@ function isChunkedFieldContentInSchema<T extends NotUndefined>(
 /**
  * {@link isNodeInSchema} for the node `cursor` is at, read through the cursor (which is left where it was).
  * @remarks
- * Fields are checked with {@link isChunkedFieldContentInSchema}, so chunks shared with content checked before are not checked again.
+ * Fields are checked with {@link isChunkedFieldContentInSchema}.
  */
 function isCursorNodeInSchema<T extends NotUndefined>(
 	cursor: ITreeCursorSynchronous,
