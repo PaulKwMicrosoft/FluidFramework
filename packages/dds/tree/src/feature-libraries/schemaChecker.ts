@@ -25,9 +25,11 @@ import {
 	Multiplicity,
 	type SchemaAndPolicy,
 	ValueSchema,
+	tryGetChunk,
 } from "../core/index.js";
 import { iterableHasSome, mapIterable } from "../util/index.js";
 
+import { TextRunChunk } from "./chunked-forest/index.js";
 import type { MapTreeFieldViewGeneric, MinimalMapTreeNodeView } from "./mapTreeCursor.js";
 import { allowsValue } from "./valueUtilities.js";
 
@@ -365,7 +367,8 @@ export function isFieldInSchema<T extends NotUndefined>(
  * {@link isFieldInSchema} for the nodes of field content held as chunks, read through `cursor` (in fields mode at the field).
  * @remarks
  * The field's kind and length must already have been checked.
- * Every node is checked, including each copy of content shared by several chunks and each atom of a text run.
+ * Every node is checked, including each copy of content shared by several chunks,
+ * except that a text run's atoms are checked through the first of them in the field (see {@link TextRunChunk}).
  */
 function isChunkedFieldContentInSchema<T extends NotUndefined>(
 	cursor: ITreeCursorSynchronous,
@@ -399,6 +402,20 @@ function isChunkedFieldContentInSchema<T extends NotUndefined>(
 		if (nodeInSchemaResult !== undefined) {
 			return nodeInSchemaResult;
 		}
+		const chunk = tryGetChunk(cursor);
+		if (chunk instanceof TextRunChunk) {
+			// The atoms of a text run differ only in the string value of their character leaf, and share one format
+			// chunk, so each of the run's remaining atoms in this field is in schema exactly when the one checked is.
+			const remaining = cursor.chunkStart + cursor.chunkLength - cursor.fieldIndex - 1;
+			debugAssert(
+				() =>
+					textRunAtomsInSchema(cursor, remaining, schemaAndPolicy) ||
+					"every atom of a text run should be in schema when its first atom is",
+			);
+			index += 1 + remaining;
+			inField = cursor.seekNodes(1 + remaining);
+			continue;
+		}
 		index += 1;
 		inField = cursor.nextNode();
 	}
@@ -406,6 +423,30 @@ function isChunkedFieldContentInSchema<T extends NotUndefined>(
 		() => cursor.mode === CursorLocationType.Fields || "cursor should be back in the field",
 	);
 	return undefined;
+}
+
+/**
+ * Whether the `count` nodes after the node `cursor` is at (atoms of the same text run) are in schema.
+ * Reads them through `cursor`, which is moved back to where it was.
+ */
+function textRunAtomsInSchema(
+	cursor: ITreeCursorSynchronous,
+	count: number,
+	schemaAndPolicy: SchemaAndPolicy,
+): boolean {
+	let moved = 0;
+	try {
+		while (moved < count) {
+			cursor.nextNode();
+			moved++;
+			if (isCursorNodeInSchema(cursor, schemaAndPolicy, () => true) !== undefined) {
+				return false;
+			}
+		}
+		return true;
+	} finally {
+		cursor.seekNodes(-moved);
+	}
 }
 
 /**
