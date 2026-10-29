@@ -118,6 +118,7 @@ export {
 	type FieldBatchCodec,
 	FieldBatchFormatVersion,
 	makeTreeChunker,
+	textFormatFieldsOnly,
 	fieldBatchCodecBuilder,
 	FieldBatchDecodingContext,
 	type FieldBatchEncodingContext,

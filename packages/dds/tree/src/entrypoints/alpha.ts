@@ -181,6 +181,7 @@ export {
 	// #endregion
  
 	// #region @alpha APIs
+	ForestTypeOptimizedSharingTextFormats, 
 	AllowedTypesFullUnsafe, 
 	ArrayNodeCustomizableSchema, 
 	ArrayNodeCustomizableSchemaAlpha, 

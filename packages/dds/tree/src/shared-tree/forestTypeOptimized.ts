@@ -7,6 +7,7 @@ import {
 	buildChunkedForest,
 	defaultSchemaPolicy,
 	makeTreeChunker,
+	textFormatFieldsOnly,
 } from "../feature-libraries/index.js";
 
 import { toForestType } from "./forestType.js";
@@ -22,6 +23,30 @@ export const ForestTypeOptimized = toForestType(
 	(breaker, schema, idCompressor, shouldEncodeIncrementally) =>
 		buildChunkedForest(
 			makeTreeChunker(schema, defaultSchemaPolicy, shouldEncodeIncrementally),
+			undefined,
+			idCompressor,
+			breaker,
+		),
+);
+
+/**
+ * {@link ForestTypeOptimized}, sharing storage only between identical formats of formatted text atoms.
+ * @remarks
+ * Other identical subtrees are stored separately.
+ * This is a prototype for measuring how much of the memory the optimized forest saves by sharing identical subtrees
+ * comes from text formats.
+ * @alpha
+ */
+export const ForestTypeOptimizedSharingTextFormats = toForestType(
+	(breaker, schema, idCompressor, shouldEncodeIncrementally) =>
+		buildChunkedForest(
+			makeTreeChunker(
+				schema,
+				defaultSchemaPolicy,
+				shouldEncodeIncrementally,
+				undefined,
+				textFormatFieldsOnly,
+			),
 			undefined,
 			idCompressor,
 			breaker,
