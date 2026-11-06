@@ -25,6 +25,7 @@ import {
 } from "../../../util/index.js";
 import type { NodeSchemaOptionsAlpha, System_Unsafe } from "../../api/index.js";
 import {
+	kernelSlot,
 	CompatibilityLevel,
 	type WithType,
 	schemaIdentifierBrand,
@@ -917,6 +918,9 @@ function createArrayNodeProxy(
 	// requirements without use of Array[Symbol.species], which is potentially on a path to deprecation.
 	const proxy: TreeArrayNode = new Proxy<TreeArrayNode>(proxyTarget as TreeArrayNode, {
 		get: (target, key, receiver) => {
+			if (key === kernelSlot) {
+				return Reflect.get(target, key);
+			}
 			const field = getSequenceField(receiver);
 			const maybeIndex = asIndexWithinBounds(key, field);
 
@@ -996,7 +1000,7 @@ function createArrayNodeProxy(
 			);
 
 			if (allowAdditionalProperties) {
-				keys.push(...Reflect.ownKeys(target));
+				keys.push(...Reflect.ownKeys(target).filter((key) => key !== kernelSlot));
 			} else {
 				keys.push("length");
 			}
@@ -1028,6 +1032,9 @@ function createArrayNodeProxy(
 			return Reflect.getOwnPropertyDescriptor(dispatchTarget, key);
 		},
 		defineProperty(target, key, attributes) {
+			if (key === kernelSlot) {
+				return Reflect.defineProperty(target, key, attributes);
+			}
 			const maybeIndex = asIndex(key);
 			if (maybeIndex !== undefined) {
 				throw new UsageError("Shadowing of array indices is not permitted.");

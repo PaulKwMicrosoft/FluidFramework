@@ -16,6 +16,7 @@ import {
 import { type JsonCompatibleReadOnlyObject, brand } from "../../../util/index.js";
 import type { NodeSchemaOptionsAlpha } from "../../api/index.js";
 import {
+	kernelSlot,
 	type TreeNodeSchema,
 	NodeKind,
 	schemaIdentifierBrand,
@@ -74,6 +75,9 @@ function createRecordNodeProxy(
 		get: (target, key, receiver): unknown => {
 			if (typeof key === "symbol") {
 				switch (key) {
+					case kernelSlot: {
+						return Reflect.get(target, key);
+					}
 					// POJO mode records don't have TreeNode's build in members on their targets, so special case them:
 					case typeSchemaSymbol: {
 						return schema;
@@ -171,6 +175,9 @@ function createRecordNodeProxy(
 			};
 		},
 		defineProperty(target, key, attributes) {
+			if (key === kernelSlot) {
+				return Reflect.defineProperty(target, key, attributes);
+			}
 			throw new UsageError("Shadowing properties of record nodes is not permitted.");
 		},
 		deleteProperty(target, key) {

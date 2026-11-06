@@ -52,6 +52,8 @@ import {
 	type TreeNodeSchemaPrivateData,
 	type TreeNodeSchemaClass,
 	type AllowedTypesFull,
+	kernelSlot,
+	type TreeNodeKernel,
 } from "../../core/index.js";
 import {
 	getTreeNodeSchemaInitializedData,
@@ -328,6 +330,9 @@ class ObjectProxyHandler implements ProxyHandler<TreeNode> {
 	}
 
 	public get(target: TreeNode, propertyKey: string | symbol, proxy: TreeNode): unknown {
+		if (propertyKey === kernelSlot) {
+			return Reflect.get(target, propertyKey);
+		}
 		const fieldInfo = this.flexKeyMap.get(propertyKey);
 		if (fieldInfo !== undefined) {
 			const flexNode = getInnerNode(proxy);
@@ -392,7 +397,7 @@ class ObjectProxyHandler implements ProxyHandler<TreeNode> {
 	public ownKeys(target: TreeNode): (string | symbol)[] {
 		return [
 			...this.flexKeyMap.keys(),
-			...(this.allowAdditionalProperties ? Reflect.ownKeys(target) : []),
+			...(this.allowAdditionalProperties ? ownKeysOfTarget(target) : []),
 		];
 	}
 
@@ -408,10 +413,8 @@ class ObjectProxyHandler implements ProxyHandler<TreeNode> {
 				: undefined;
 		}
 
-		// For some reason, the getOwnPropertyDescriptor is not passed in the receiver, so use a weak map.
-		// If a refactoring is done to associated flex tree data with the target not the proxy, this extra map could be removed,
-		// and the design would be more compatible with proxyless nodes.
-		const proxy = targetToProxy.get(target) ?? fail(0xadd /* missing proxy */);
+		// getOwnPropertyDescriptor is not passed the receiver, so find the proxy from the kernel its target holds.
+		const proxy = proxyOfTarget(target) ?? fail(0xadd /* missing proxy */);
 		const field = getInnerNode(proxy).tryGetField(fieldInfo.storedKey);
 
 		const p: PropertyDescriptor = {
@@ -728,7 +731,6 @@ abstract class CustomObjectNodeBase<
 			fail("Object node proxy handler should be created in oneTimeSetup");
 		const proxyTarget = handler.allowAdditionalProperties ? instance : {};
 		const proxy = new Proxy(proxyTarget as TreeNode, handler);
-		targetToProxy.set(proxyTarget, proxy);
 		return proxy as TreeNodeValid<T2>;
 	}
 
@@ -916,7 +918,19 @@ export function singletonObjectSchema<TName extends string, TValue extends strin
 
 const emptyInfo: Record<string, never> = Object.freeze({});
 
-const targetToProxy: WeakMap<object, TreeNode> = new WeakMap();
+/**
+ * The proxy (node) whose target is 	arget, once its kernel is attached: the proxy forwards the kernel slot to its target.
+ */
+function proxyOfTarget(target: object): TreeNode | undefined {
+	return (target as { [kernelSlot]?: TreeNodeKernel })[kernelSlot]?.node;
+}
+
+/**
+ * The own keys of a proxy target, without the {@link kernelSlot} it holds for the proxy.
+ */
+function ownKeysOfTarget(target: object): (string | symbol)[] {
+	return Reflect.ownKeys(target).filter((key) => key !== kernelSlot);
+}
 
 /**
  * Ensures that the set of property keys in the schema is unique.
@@ -1072,7 +1086,7 @@ function applyFieldChange(
 	const proxy =
 		from.kind === "proxy"
 			? from.node
-			: (targetToProxy.get(from.node) ?? fail(0xc95 /* missing proxy */));
+			: (proxyOfTarget(from.node) ?? fail(0xc95 /* missing proxy */));
 	const inner = getInnerNode(proxy);
 	const storedSchema = inner.context.schema.nodeSchema.get(brand(schema.identifier));
 	assert(

@@ -39,10 +39,31 @@ import type { TreeNodeSchema } from "./treeNodeSchema.js";
 import type { InternalTreeNode, Unhydrated } from "./types.js";
 import { UnhydratedFlexTreeNode } from "./unhydratedFlexTree.js";
 
-const treeNodeToKernel = new WeakMap<TreeNode, TreeNodeKernel>();
+/**
+ * Key of the slot holding a {@link TreeNode}'s {@link TreeNodeKernel}, on the node or, for nodes implemented as proxies, on the proxy's target.
+ * @remarks
+ * Each kind of node whose node is a proxy forwards reads and definitions of this key to its target, and hides the key from enumeration.
+ *
+ * The kernel is kept on the node rather than in a module-level `WeakMap` from node to kernel:
+ * such a map's backing table keeps the size it reached at its peak number of live nodes, even after those nodes are collected.
+ */
+export const kernelSlot: unique symbol = Symbol("TreeNodeKernel");
+
+/**
+ * The kernel of `candidate` if it is a {@link TreeNode}.
+ * @remarks
+ * Checks that the kernel is for `candidate` itself, so objects which inherit from a node are not mistaken for it.
+ */
+function tryGetKernel(candidate: unknown): TreeNodeKernel | undefined {
+	if (typeof candidate !== "object" || candidate === null) {
+		return undefined;
+	}
+	const kernel = (candidate as { [kernelSlot]?: unknown })[kernelSlot];
+	return kernel instanceof TreeNodeKernel && kernel.node === candidate ? kernel : undefined;
+}
 
 export function getKernel(node: TreeNode): TreeNodeKernel {
-	const kernel = treeNodeToKernel.get(node);
+	const kernel = tryGetKernel(node);
 	assert(kernel !== undefined, 0x9b1 /* Expected tree node to have kernel */);
 	return kernel;
 }
@@ -62,7 +83,7 @@ export function getKernel(node: TreeNode): TreeNodeKernel {
  * @returns true if the given 'candidate' is a hydrated TreeNode.
  */
 export function isTreeNode(candidate: unknown): candidate is TreeNode | Unhydrated<TreeNode> {
-	return treeNodeToKernel.has(candidate as TreeNode);
+	return tryGetKernel(candidate) !== undefined;
 }
 
 /**
@@ -73,7 +94,7 @@ export function isTreeNode(candidate: unknown): candidate is TreeNode | Unhydrat
  * Does not give schema for a {@link TreeLeafValue}.
  */
 export function tryGetTreeNodeSchema(value: unknown): undefined | TreeNodeSchema {
-	const kernel = treeNodeToKernel.get(value as TreeNode);
+	const kernel = tryGetKernel(value);
 	return kernel?.schema;
 }
 
@@ -165,8 +186,14 @@ export class TreeNodeKernel {
 	) {
 		splitInnerNodeType(innerNode);
 
-		assert(!treeNodeToKernel.has(node), 0xa1a /* only one kernel per node can be made */);
-		treeNodeToKernel.set(node, this);
+		assert(tryGetKernel(node) === undefined, 0xa1a /* only one kernel per node can be made */);
+		const attached = Reflect.defineProperty(node, kernelSlot, {
+			value: this,
+			enumerable: false,
+			writable: false,
+			configurable: true,
+		});
+		assert(attached && tryGetKernel(node) === this, "Node must hold its kernel");
 
 		if (innerNode instanceof UnhydratedFlexTreeNode) {
 			// Unhydrated case
