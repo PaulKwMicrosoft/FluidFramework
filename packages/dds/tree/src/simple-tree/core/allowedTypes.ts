@@ -174,6 +174,65 @@ type AllowedTypesFullInternalEvaluated = AllowedTypesFullInternal<
 >;
 
 /**
+ * Proxy handler for {@link AnnotatedAllowedTypesInternal}.
+ * @remarks
+ * Shared by all instances, since it has no per-instance state.
+ */
+const annotatedAllowedTypesProxyHandler: ProxyHandler<AnnotatedAllowedTypesInternal> = {
+	set: () => {
+		throw new UsageError("AnnotatedAllowedTypes is immutable");
+	},
+
+	get: (target, property, receiver) => {
+		// Hide common array editing methods.
+		if (property === "push" || property === "pop") {
+			return undefined;
+		}
+
+		// Forward array lookup and array methods to the unannotated types array.
+		if (property in target.unannotatedTypes) {
+			return Reflect.get(target.unannotatedTypes, property);
+		}
+		// Forward anything else to target.
+		return Reflect.get(target, property) as unknown;
+	},
+
+	has: (target, property) => {
+		if (property in target.unannotatedTypes) {
+			return true;
+		}
+		// Forward anything else to target.
+		return property in target;
+	},
+
+	ownKeys: (target) => {
+		const targetKeys = Reflect.ownKeys(target);
+		const unannotatedTypesKeys = Reflect.ownKeys(target.unannotatedTypes);
+		return [...unannotatedTypesKeys, ...targetKeys];
+	},
+
+	getOwnPropertyDescriptor: (target, property) => {
+		if (Object.prototype.hasOwnProperty.call(target.unannotatedTypes, property)) {
+			const inner = Object.getOwnPropertyDescriptor(target.unannotatedTypes, property);
+			return {
+				...inner,
+				// Since these properties are not on the target, make them non-configurable to confirm with proxy invariants.
+				configurable: true,
+				writable: false,
+			};
+		} else {
+			const inner = Object.getOwnPropertyDescriptor(target, property);
+			return {
+				...inner,
+				writable: false,
+				// Allow only array entries to be enumerable.
+				enumerable: false,
+			};
+		}
+	},
+};
+
+/**
  * The implementation of {@link AnnotatedAllowedTypes}. Also implements {@link AllowedTypesFull}.
  * @remarks
  * Due to TypeScript limitations, this class cannot directly state it implements {@link AllowedTypesFull}.
@@ -289,59 +348,7 @@ export class AnnotatedAllowedTypesInternal<
 	private static proxy<const T extends readonly AnnotatedAllowedType[]>(
 		result: AnnotatedAllowedTypesInternal<T>,
 	): AnnotatedAllowedTypesInternal<T> & AllowedTypesFull<T> {
-		const proxy = new Proxy(result, {
-			set: () => {
-				throw new UsageError("AnnotatedAllowedTypes is immutable");
-			},
-
-			get: (target, property, receiver) => {
-				// Hide common array editing methods.
-				if (property === "push" || property === "pop") {
-					return undefined;
-				}
-
-				// Forward array lookup and array methods to the unannotated types array.
-				if (property in target.unannotatedTypes) {
-					return Reflect.get(target.unannotatedTypes, property);
-				}
-				// Forward anything else to target.
-				return Reflect.get(target, property) as unknown;
-			},
-
-			has: (target, property) => {
-				if (property in target.unannotatedTypes) {
-					return true;
-				}
-				// Forward anything else to target.
-				return property in target;
-			},
-
-			ownKeys: (target) => {
-				const targetKeys = Reflect.ownKeys(target);
-				const unannotatedTypesKeys = Reflect.ownKeys(target.unannotatedTypes);
-				return [...unannotatedTypesKeys, ...targetKeys];
-			},
-
-			getOwnPropertyDescriptor: (target, property) => {
-				if (Object.prototype.hasOwnProperty.call(target.unannotatedTypes, property)) {
-					const inner = Object.getOwnPropertyDescriptor(target.unannotatedTypes, property);
-					return {
-						...inner,
-						// Since these properties are not on the target, make them non-configurable to confirm with proxy invariants.
-						configurable: true,
-						writable: false,
-					};
-				} else {
-					const inner = Object.getOwnPropertyDescriptor(target, property);
-					return {
-						...inner,
-						writable: false,
-						// Allow only array entries to be enumerable.
-						enumerable: false,
-					};
-				}
-			},
-		});
+		const proxy = new Proxy(result, annotatedAllowedTypesProxyHandler);
 		return proxy as typeof result & UnannotateAllowedTypesList<T>;
 	}
 
