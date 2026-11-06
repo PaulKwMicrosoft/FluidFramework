@@ -762,7 +762,11 @@ export namespace FormattedText {
 					(atom) => {
 						const formatNode = atom.format;
 						const atomFormatSchema = TreeStatic.schema(formatNode);
-						const operation = getOrCreate(perSchemaOperation, atomFormatSchema, buildOperation);
+						const operation = getOrCreate(
+							perSchemaOperation,
+							atomFormatSchema,
+							buildOperation,
+						);
 						// buildOperation rejects leaf schema, so this cast is safe.
 						operation(formatNode as TreeNode);
 					},
@@ -794,7 +798,9 @@ export namespace FormattedText {
 				start: number | undefined,
 				end: number | undefined,
 				method: string,
-				runFormat: (format: TreeNodeFromImplicitAllowedTypes<FormatSchema>) => TreeNode | undefined,
+				runFormat: (
+					format: TreeNodeFromImplicitAllowedTypes<FormatSchema>,
+				) => TreeNode | undefined,
 				edit: (atom: StringAtom) => void,
 			): void {
 				const formatStart = start ?? 0;
@@ -824,13 +830,11 @@ export namespace FormattedText {
 			#formatRuns(
 				formatStart: number,
 				formatEnd: number,
-				runFormat: (format: TreeNodeFromImplicitAllowedTypes<FormatSchema>) => TreeNode | undefined,
+				runFormat: (
+					format: TreeNodeFromImplicitAllowedTypes<FormatSchema>,
+				) => TreeNode | undefined,
 			): boolean {
-				if (
-					includeRanges ||
-					formatEnd - formatStart < 2 ||
-					!isInBaseContentTree(this)
-				) {
+				if (includeRanges || formatEnd - formatStart < 2 || !isInBaseContentTree(this)) {
 					return false;
 				}
 				const layout = getRunLayout();

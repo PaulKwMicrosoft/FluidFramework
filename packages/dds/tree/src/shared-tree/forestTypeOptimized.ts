@@ -71,7 +71,13 @@ export const ForestTypeOptimizedSharingTextFormats = forestTypeOptimizedSharingF
 function forestTypeSharing(policy: SharedFieldPolicy): ForestType {
 	return toForestType((breaker, schema, idCompressor, shouldEncodeIncrementally) =>
 		buildChunkedForest(
-			makeTreeChunker(schema, defaultSchemaPolicy, shouldEncodeIncrementally, undefined, policy),
+			makeTreeChunker(
+				schema,
+				defaultSchemaPolicy,
+				shouldEncodeIncrementally,
+				undefined,
+				policy,
+			),
 			undefined,
 			idCompressor,
 			breaker,

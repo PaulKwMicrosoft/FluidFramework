@@ -48,8 +48,7 @@ const plain = { size: 12, font: "Arial", language: "en-US", kerning: 0, baseline
 
 class Text extends FormattedText.createSchema(sf, Format, [], { ...plain }) {}
 
-const red = (): Format =>
-	new Format({ ...plain, color: new Color({ r: 255, g: 0, b: 0 }) });
+const red = (): Format => new Format({ ...plain, color: new Color({ r: 255, g: 0, b: 0 }) });
 const config = new TreeViewConfiguration({ schema: Text });
 
 /**
@@ -234,7 +233,10 @@ describe("FormattedText with shared format subtrees", () => {
 			second.formatRange(4, 14, { bold: true });
 		});
 		const atoms = formats(reference?.content[0] ?? "");
-		assert.equal(atoms.map((atom) => atom.char).join(""), "Hello woXYZrld, hello shared text.");
+		assert.equal(
+			atoms.map((atom) => atom.char).join(""),
+			"Hello woXYZrld, hello shared text.",
+		);
 		for (const [index, atom] of atoms.entries()) {
 			const inserted = index >= 8 && index < 11;
 			const formatted = index >= 4 && index < 17 && !inserted;

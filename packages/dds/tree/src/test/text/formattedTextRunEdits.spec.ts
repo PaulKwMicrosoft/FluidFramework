@@ -68,7 +68,8 @@ function describe2(text: Text): string {
 
 function runs(text: Text): string[] {
 	return [...text.runs()].map(
-		(run) => `${JSON.stringify(run.text)}:${JSON.stringify(Object.entries(run.format).sort())}`,
+		(run) =>
+			`${JSON.stringify(run.text)}:${JSON.stringify(Object.entries(run.format).sort())}`,
 	);
 }
 
@@ -76,8 +77,14 @@ describe("FormattedText run edits", () => {
 	const edits: readonly (readonly [string, (text: Text) => void])[] = [
 		["formatRange inside a run", (text) => text.formatRange(2, 8, { bold: false })],
 		["formatRange across runs", (text) => text.formatRange(5, 30, { size: 30 })],
-		["formatRange whole text", (text) => text.formatRange(undefined, undefined, { bold: true })],
-		["formatRange clearing a property", (text) => text.formatRange(0, 20, { bold: undefined })],
+		[
+			"formatRange whole text",
+			(text) => text.formatRange(undefined, undefined, { bold: true }),
+		],
+		[
+			"formatRange clearing a property",
+			(text) => text.formatRange(0, 20, { bold: undefined }),
+		],
 		["reformat across runs", (text) => text.reformat(3, 29, { ...plain, size: 9 })],
 		["reformat to default", (text) => text.reformat(0, 31)],
 		["formatRange of one atom", (text) => text.formatRange(4, 5, { bold: false })],
@@ -115,11 +122,14 @@ describe("FormattedText run edits", () => {
 			{ atoms: [new LineBreak({})], format: { ...plain } },
 			{ text: "cd", format: { ...plain } },
 		]);
-		const perAtom = view(false, Text.fromRuns([
-			{ text: "ab", format: { ...plain } },
-			{ atoms: [new LineBreak({})], format: { ...plain } },
-			{ text: "cd", format: { ...plain } },
-		]));
+		const perAtom = view(
+			false,
+			Text.fromRuns([
+				{ text: "ab", format: { ...plain } },
+				{ atoms: [new LineBreak({})], format: { ...plain } },
+				{ text: "cd", format: { ...plain } },
+			]),
+		);
 		const asRuns = view(true, initial);
 		perAtom.formatRange(0, 5, { bold: true });
 		asRuns.formatRange(0, 5, { bold: true });

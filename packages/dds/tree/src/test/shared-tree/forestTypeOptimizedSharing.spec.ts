@@ -12,10 +12,7 @@ import {
 	ForestTypeOptimizedSharingTextFormats,
 	forestTypeOptimizedSharingFields,
 } from "../../shared-tree/index.js";
-import {
-	SchemaFactoryAlpha,
-	TreeViewConfigurationAlpha,
-} from "../../simple-tree/index.js";
+import { SchemaFactoryAlpha, TreeViewConfigurationAlpha } from "../../simple-tree/index.js";
 
 const sf = new SchemaFactoryAlpha("test.forestTypeOptimizedSharing");
 class Properties extends sf.object("Properties", {
