@@ -13,6 +13,7 @@ import { UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import {
 	EmptyKey,
+	LazyNodeStoredSchemaMap,
 	LeafNodeStoredSchema,
 	MapNodeStoredSchema,
 	ObjectNodeStoredSchema,
@@ -56,7 +57,7 @@ import type {
 	SimpleRecordNodeSchema,
 	SimpleTreeSchema,
 } from "./simpleSchema.js";
-import { createTreeSchema } from "./treeSchema.js";
+import { createTreeSchema, type TreeSchema } from "./treeSchema.js";
 
 // TODO: this file, src/simple-tree/api/storedSchema.ts and src/simple-tree/core/toStored.ts should be refactored to group the logic more logically.
 // The content of src/simple-tree/api/storedSchema.ts should probably removed from the API surface, replaced by simple schema snapshotting APIs.
@@ -192,6 +193,13 @@ function allowedTypesHaveStagedUpgrades(
 /**
  * Converts a {@link ImplicitFieldSchema} into a {@link TreeStoredSchema}.
  *
+ * @param treeSchema - The {@link TreeSchema} of `root`, if the caller has it, which saves walking `root` again.
+ *
+ * @remarks
+ * The result is cached per `root`.
+ * For a schema without staged upgrades (see {@link hasStagedSchemaUpgrades}), all policies share one result,
+ * whose node schemas are each derived the first time they are looked up (see {@link LazyNodeStoredSchemaMap}).
+ *
  * @privateRemarks
  * TODO:#38722 When runtime schema upgrades are implemented, this will need to be updated to check if
  * a staged allowed type has been upgraded and if so, include it in the conversion.
@@ -205,13 +213,61 @@ function allowedTypesHaveStagedUpgrades(
 export function toStoredSchema(
 	root: ImplicitFieldSchema,
 	options: StagedSchemaUpgradePolicy,
+	treeSchema?: TreeSchema,
 ): TreeStoredSchema {
+	let generated = storedSchemaWithoutStagedUpgrades.get(root);
+	let schema = treeSchema;
+	if (generated === undefined) {
+		schema ??= createTreeSchema(normalizeFieldSchema(root));
+		generated = hasStagedSchemaUpgrades(schema) ? false : lazyStoredSchema(schema);
+		storedSchemaWithoutStagedUpgrades.set(root, generated);
+	}
+	if (generated !== false) {
+		return generated;
+	}
 	const cache = getOrCreate(viewToStoredCache, options, () => new WeakMap());
 	return getOrCreate(cache, root, () => {
-		const treeSchema = createTreeSchema(normalizeFieldSchema(root));
-		const simpleSchema = transformSimpleSchema(treeSchema, options);
+		const simpleSchema = transformSimpleSchema(
+			schema ?? createTreeSchema(normalizeFieldSchema(root)),
+			options,
+		);
 		return simpleStoredSchemaToStoredSchema(simpleSchema);
 	});
+}
+
+/**
+ * For each root given to {@link toStoredSchema}, the stored schema it generates if its schema has no staged upgrades,
+ * or false if it has staged upgrades.
+ * @remarks
+ * Every {@link StagedSchemaUpgradePolicy} generates the same stored schema from a schema without staged upgrades,
+ * so one is shared by all of them.
+ */
+const storedSchemaWithoutStagedUpgrades = new WeakMap<
+	ImplicitFieldSchema,
+	TreeStoredSchema | false
+>();
+
+/**
+ * The stored schema {@link toStoredSchema} generates from a schema without staged upgrades (see {@link hasStagedSchemaUpgrades}),
+ * with each node schema derived the first time it is looked up.
+ * @remarks
+ * Without staged upgrades, every node schema in `schema.definitions` is reachable whatever the policy,
+ * so the node schemas are those of `schema.definitions`, in its order, as {@link transformSimpleSchema} would give.
+ */
+function lazyStoredSchema(schema: TreeSchema): TreeStoredSchema {
+	const policy = StagedSchemaUpgradePolicy.restrictive;
+	const definitions = schema.definitions;
+	return {
+		rootFieldSchema: toStoredFieldSchema(schema.root, policy),
+		nodeSchema: LazyNodeStoredSchemaMap.create(definitions, (identifier) =>
+			getStoredSchema(
+				transformSimpleNodeSchema(
+					definitions.get(identifier) ?? fail("Lazy stored schema has no view schema"),
+					policy,
+				),
+			),
+		),
+	};
 }
 
 /**

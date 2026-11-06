@@ -160,6 +160,8 @@ export {
 	storedSchemaDecodeDispatcher,
 	type SchemaAndPolicy,
 	Multiplicity,
+	LazyNodeStoredSchemaMap,
+	type NodeSchemaIdentifiers,
 	type SchemaPolicy,
 	SchemaFormatVersion,
 } from "./schema-stored/index.js";

@@ -9,6 +9,7 @@ import { validateUsageError } from "@fluidframework/test-runtime-utils/internal"
 
 import {
 	EmptyKey,
+	LazyNodeStoredSchemaMap,
 	ObjectNodeStoredSchema,
 	type TreeNodeSchemaIdentifier,
 	type TreeStoredSchema,
@@ -39,9 +40,14 @@ import {
 	simpleStoredSchemaToStoredSchema,
 	toStoredSchema,
 	transformSimpleNodeSchema,
+	transformSimpleSchema,
 	filterAllowedTypes,
 	// eslint-disable-next-line import-x/no-internal-modules
 } from "../../simple-tree/toStoredSchema.js";
+// eslint-disable-next-line import-x/no-internal-modules
+import { createTreeSchema } from "../../simple-tree/treeSchema.js";
+// eslint-disable-next-line import-x/no-internal-modules
+import { normalizeFieldSchema } from "../../simple-tree/fieldSchema.js";
 import { brand } from "../../util/index.js";
 import {
 	getStagedSchemaUpgrades,
@@ -67,6 +73,14 @@ function getObjectNodeSchema(
 
 function typeSet(...identifiers: string[]): Set<TreeNodeSchemaIdentifier> {
 	return new Set(identifiers.map((identifier) => brand<TreeNodeSchemaIdentifier>(identifier)));
+}
+
+/**
+ * The content of a stored schema, with its node schemas in a `Map`, for comparison with `deepEqual`
+ * (whatever collection holds them, for example a {@link LazyNodeStoredSchemaMap}).
+ */
+function comparable(schema: TreeStoredSchema): TreeStoredSchema {
+	return { rootFieldSchema: schema.rootFieldSchema, nodeSchema: new Map(schema.nodeSchema) };
 }
 
 describe("toStoredSchema", () => {
@@ -99,6 +113,62 @@ describe("toStoredSchema", () => {
 			assert.equal(schema.number, schema2.number);
 		});
 
+		it("derives each node schema on first lookup when there are no staged upgrades", () => {
+			const schema = new SchemaFactory("com.example");
+			class Leaf extends schema.object("Leaf", { x: schema.number }) {}
+			class Unused extends schema.object("Unused", { y: schema.string }) {}
+			class Root extends schema.object("Root", {
+				leaf: schema.optional(Leaf),
+				unused: schema.optional(Unused),
+			}) {}
+
+			const restrictive = toStoredSchema(Root, StagedSchemaUpgradePolicy.restrictive);
+			const nodeSchema = restrictive.nodeSchema;
+			assert(nodeSchema instanceof LazyNodeStoredSchemaMap);
+			assert.equal(nodeSchema.derivedCount, 0);
+			assert.equal(nodeSchema.size, 5);
+			assert(nodeSchema.has(brand(Unused.identifier)));
+			assert.equal(nodeSchema.derivedCount, 0);
+
+			const leaf = nodeSchema.get(brand(Leaf.identifier));
+			assert(leaf instanceof ObjectNodeStoredSchema);
+			assert.equal(nodeSchema.derivedCount, 1);
+			assert.equal(nodeSchema.get(brand(Leaf.identifier)), leaf);
+			assert.equal(nodeSchema.get(brand("com.example.Missing")), undefined);
+			assert.equal(nodeSchema.derivedCount, 1);
+
+			// Without staged upgrades every policy generates the same stored schema, so one is shared.
+			assert.equal(toStoredSchema(Root, StagedSchemaUpgradePolicy.permissive), restrictive);
+
+			// Iterating derives the rest, matching the eager conversion.
+			const eager = simpleStoredSchemaToStoredSchema(
+				transformSimpleSchema(
+					createTreeSchema(normalizeFieldSchema(Root)),
+					StagedSchemaUpgradePolicy.restrictive,
+				),
+			);
+			assert.deepEqual(comparable(restrictive), comparable(eager));
+			assert.deepEqual([...nodeSchema.keys()], [...eager.nodeSchema.keys()]);
+			assert.equal(nodeSchema.derivedCount, 5);
+			assert.equal(nodeSchema.get(brand(Leaf.identifier)), leaf);
+		});
+
+		it("derives staged schema eagerly, per policy", () => {
+			const schema = new SchemaFactoryAlpha("com.example");
+			class Root extends schema.objectAlpha("Root", {
+				x: SchemaFactoryAlpha.optional(
+					SchemaFactoryAlpha.types([
+						SchemaFactoryAlpha.number,
+						SchemaFactoryAlpha.staged(SchemaFactoryAlpha.string),
+					]),
+				),
+			}) {}
+			const restrictive = toStoredSchema(Root, StagedSchemaUpgradePolicy.restrictive);
+			const permissive = toStoredSchema(Root, StagedSchemaUpgradePolicy.permissive);
+			assert(!(restrictive.nodeSchema instanceof LazyNodeStoredSchemaMap));
+			assert.notDeepEqual(comparable(restrictive), comparable(permissive));
+		});
+
 		describe("test documents", () => {
 			for (const testCase of testDocuments) {
 				describe(testCase.name, () => {
@@ -115,7 +185,7 @@ describe("toStoredSchema", () => {
 								testCase.schema,
 								StagedSchemaUpgradePolicy.restrictive,
 							);
-							assert.notDeepEqual(restrictive, testCase.schemaData);
+							assert.notDeepEqual(comparable(restrictive), comparable(testCase.schemaData));
 						});
 					} else {
 						// Ensure that the stored schema captured in these test documents matches what we would generate from the view schema.
@@ -125,7 +195,7 @@ describe("toStoredSchema", () => {
 								testCase.schema,
 								StagedSchemaUpgradePolicy.restrictive,
 							);
-							assert.deepEqual(restrictive, testCase.schemaData);
+							assert.deepEqual(comparable(restrictive), comparable(testCase.schemaData));
 						});
 					}
 
@@ -143,9 +213,9 @@ describe("toStoredSchema", () => {
 						// The permissive case, used for unhydrated trees, includes all staged schema features.
 						// They should be equal if and only if there are no staged schema features.
 						if (getStagedSchemaUpgrades(testCase.schema).size > 0) {
-							assert.notDeepEqual(restrictive, permissive);
+							assert.notDeepEqual(comparable(restrictive), comparable(permissive));
 						} else {
-							assert.deepEqual(restrictive, permissive);
+							assert.deepEqual(comparable(restrictive), comparable(permissive));
 						}
 
 						const tree = mapTreeFieldFromCursor(
@@ -199,8 +269,8 @@ describe("toStoredSchema", () => {
 						const restrictive2 = simpleStoredSchemaToStoredSchema(simpleFromRestrictive);
 						const permissive2 = simpleStoredSchemaToStoredSchema(simpleFromPermissive);
 
-						assert.deepEqual(restrictive2, restrictive);
-						assert.deepEqual(permissive2, permissive);
+						assert.deepEqual(comparable(restrictive2), comparable(restrictive));
+						assert.deepEqual(comparable(permissive2), comparable(permissive));
 
 						// To further ensure toStoredSchema works with the other schema transforming APIs,
 						// validate it with generateSchemaFromSimpleSchema to round trip through view schema.
@@ -221,8 +291,8 @@ describe("toStoredSchema", () => {
 							},
 						);
 
-						assert.deepEqual(restrictive3, restrictive);
-						assert.deepEqual(permissive3, permissive);
+						assert.deepEqual(comparable(restrictive3), comparable(restrictive));
+						assert.deepEqual(comparable(permissive3), comparable(permissive));
 					});
 				});
 			}

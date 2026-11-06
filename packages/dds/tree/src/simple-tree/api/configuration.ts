@@ -320,9 +320,10 @@ export class TreeViewConfigurationAlpha<
 		}
 
 		// Eagerly perform these conversions to surface errors sooner.
+		// Without staged upgrades, they share one stored schema, whose node schemas are derived as they are looked up.
 		// The unhydrated stored schema is cached, and used by the unhydrated context its node schemas share.
+		toStoredSchema(this.root, toUnhydratedSchema, treeSchema);
 		toInitialSchema(this.root, this.stagedUpgradePolicy);
-		toStoredSchema(this.root, toUnhydratedSchema);
 		shareUnhydratedContext(this);
 	}
 }

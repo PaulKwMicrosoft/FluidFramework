@@ -33,6 +33,10 @@ export {
 	type SchemaEvents,
 } from "./storedSchemaRepository.js";
 export { Multiplicity } from "./multiplicity.js";
+export {
+	LazyNodeStoredSchemaMap,
+	type NodeSchemaIdentifiers,
+} from "./lazyNodeStoredSchema.js";
 
 export type { TreeNodeSchemaIdentifier, FieldKey, FieldKindIdentifier } from "./formatV1.js";
 

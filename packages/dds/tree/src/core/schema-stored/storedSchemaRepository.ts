@@ -4,12 +4,14 @@
  */
 
 import { createEmitter } from "@fluid-internal/client-utils";
+import { assert } from "@fluidframework/core-utils/internal";
 import type { Listenable } from "@fluidframework/core-interfaces/internal";
 import { BTree } from "@tylerbu/sorted-btree-es6";
 
 import { compareStrings } from "../../util/index.js";
 
 import type { TreeNodeSchemaIdentifier } from "./formatV1.js";
+import { LazyNodeStoredSchemaMap } from "./lazyNodeStoredSchema.js";
 import {
 	type StoredSchemaCollection,
 	type TreeFieldStoredSchema,
@@ -61,14 +63,20 @@ export interface MutableTreeStoredSchema extends TreeStoredSchemaSubscription {
  * Mutable TreeStoredSchema repository.
  */
 export class TreeStoredSchemaRepository implements MutableTreeStoredSchema {
-	protected nodeSchemaData: BTree<TreeNodeSchemaIdentifier, TreeNodeStoredSchema>;
+	/**
+	 * The node schema, when they are held in a {@link LazyNodeStoredSchemaMap}: see {@link TreeStoredSchemaRepository.nodeSchemaData}.
+	 */
+	private lazyNodeSchema: LazyNodeStoredSchemaMap | undefined;
+	private nodeSchemaTree: BTree<TreeNodeSchemaIdentifier, TreeNodeStoredSchema> | undefined;
 	protected rootFieldSchemaData: TreeFieldStoredSchema;
 	protected readonly _events = createEmitter<SchemaEvents>();
 	public readonly events: Listenable<SchemaEvents> = this._events;
 
 	/**
 	 * Copies in the provided schema. If `data` is an TreeStoredSchemaRepository, it will be cheap-cloned.
-	 * Otherwise, it will be deep-cloned.
+	 * Otherwise, it will be deep-cloned,
+	 * except that node schema held in a {@link LazyNodeStoredSchemaMap} (which is immutable) are shared,
+	 * so they are only derived when looked up.
 	 *
 	 * We might not want to store schema in maps long term, as we might want a way to reserve a
 	 * large space of schema IDs within a schema.
@@ -82,24 +90,45 @@ export class TreeStoredSchemaRepository implements MutableTreeStoredSchema {
 	public constructor(data?: TreeStoredSchema) {
 		if (data === undefined) {
 			this.rootFieldSchemaData = storedEmptyFieldSchema;
-			this.nodeSchemaData = new BTree<TreeNodeSchemaIdentifier, TreeNodeStoredSchema>(
+			this.nodeSchemaTree = new BTree<TreeNodeSchemaIdentifier, TreeNodeStoredSchema>(
 				[],
 				compareStrings,
 			);
 		} else {
+			this.rootFieldSchemaData = data.rootFieldSchema;
 			if (data instanceof TreeStoredSchemaRepository) {
-				this.rootFieldSchemaData = data.rootFieldSchema;
-				this.nodeSchemaData = data.nodeSchemaData.clone();
+				this.lazyNodeSchema = data.lazyNodeSchema;
+				this.nodeSchemaTree = data.nodeSchemaTree?.clone();
+			} else if (data.nodeSchema instanceof LazyNodeStoredSchemaMap) {
+				this.lazyNodeSchema = data.nodeSchema.withSortedIteration();
 			} else {
-				this.rootFieldSchemaData = data.rootFieldSchema;
-				this.nodeSchemaData = cloneNodeSchemaData(data.nodeSchema);
+				this.nodeSchemaTree = cloneNodeSchemaData(data.nodeSchema);
 			}
 		}
 	}
 
+	/**
+	 * The node schema, as a mutable tree.
+	 * @remarks
+	 * If the node schema are held in a {@link LazyNodeStoredSchemaMap}, this derives all of them and copies them into a tree.
+	 */
+	protected get nodeSchemaData(): BTree<TreeNodeSchemaIdentifier, TreeNodeStoredSchema> {
+		if (this.nodeSchemaTree === undefined) {
+			assert(this.lazyNodeSchema !== undefined, "Repository has no node schema");
+			this.nodeSchemaTree = cloneNodeSchemaData(this.lazyNodeSchema);
+			this.lazyNodeSchema = undefined;
+		}
+		return this.nodeSchemaTree;
+	}
+
+	protected set nodeSchemaData(value: BTree<TreeNodeSchemaIdentifier, TreeNodeStoredSchema>) {
+		this.nodeSchemaTree = value;
+		this.lazyNodeSchema = undefined;
+	}
+
 	public get nodeSchema(): ReadonlyMap<TreeNodeSchemaIdentifier, TreeNodeStoredSchema> {
 		// Btree implements iterator, but not in a type-safe way
-		return this.nodeSchemaData as unknown as ReadonlyMap<
+		return (this.lazyNodeSchema ?? this.nodeSchemaData) as unknown as ReadonlyMap<
 			TreeNodeSchemaIdentifier,
 			TreeNodeStoredSchema
 		>;
@@ -114,7 +143,8 @@ export class TreeStoredSchemaRepository implements MutableTreeStoredSchema {
 		const clone = new TreeStoredSchemaRepository(newSchema);
 		// In the future, we could use btree's delta functionality to do a more efficient update
 		this.rootFieldSchemaData = clone.rootFieldSchemaData;
-		this.nodeSchemaData = clone.nodeSchemaData;
+		this.lazyNodeSchema = clone.lazyNodeSchema;
+		this.nodeSchemaTree = clone.nodeSchemaTree;
 		this._events.emit("afterSchemaChange", newSchema);
 	}
 
