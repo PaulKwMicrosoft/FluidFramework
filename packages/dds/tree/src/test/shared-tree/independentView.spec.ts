@@ -48,6 +48,22 @@ import {
 import { ajvValidator } from "../codec/index.js";
 import { createTestUndoRedoStacks, testIdCompressor } from "../utils.js";
 
+/**
+ * The number of commits the main branch of `checkout` retains (excluding the root sentinel).
+ * @remarks
+ * `getCommitCount` counts trimmed commits too, so this walks the commits instead.
+ */
+function retainedCommitCount(checkout: TreeCheckout): number {
+	let count = -1;
+	for (
+		let commit: { parent?: unknown } | undefined = checkout.mainBranch.getHead();
+		commit !== undefined;
+		commit = commit.parent as { parent?: unknown } | undefined
+	) {
+		count++;
+	}
+	return count;
+}
 describe("independentView", () => {
 	it("createIndependentTreeViewAlpha", () => {
 		const config = new TreeViewConfiguration({ schema: SchemaFactory.number });
@@ -445,21 +461,21 @@ describe("independentView", () => {
 		it("does not limit revertibles or trim history by default", () => {
 			const { checkout, view } = createView(undefined, ["a", "b", "c", "d"]);
 			const { revertibles } = collectRevertibles(view);
-			const commitsBefore = checkout.mainBranch.getCommitCount();
+			const commitsBefore = retainedCommitCount(checkout);
 			for (let i = 0; i < 4; i++) {
 				view.root.removeAt(0);
 			}
-			assert.equal(checkout.mainBranch.getCommitCount(), commitsBefore + 4);
+			assert.equal(retainedCommitCount(checkout), commitsBefore + 4);
 			assert.equal(checkout.getRemovedRoots().length, 4);
 			assert(revertibles.every((r) => r.status === RevertibleStatus.Valid));
 		});
 
 		it("retains only the latest commit when there are no revertibles", () => {
 			const { checkout, view } = createView(3, ["a", "b", "c", "d"]);
-			assert.equal(checkout.mainBranch.getCommitCount(), 1);
+			assert.equal(retainedCommitCount(checkout), 1);
 			for (let i = 0; i < 4; i++) {
 				view.root.removeAt(0);
-				assert.equal(checkout.mainBranch.getCommitCount(), 1);
+				assert.equal(retainedCommitCount(checkout), 1);
 				// Only the content removed by the latest commit is retained.
 				assert.equal(checkout.getRemovedRoots().length, 1);
 			}
@@ -473,8 +489,9 @@ describe("independentView", () => {
 			for (let i = 0; i < 4; i++) {
 				view.root.removeAt(0);
 				const expectedCommits = Math.min(i + 1, 2);
-				assert.equal(checkout.mainBranch.getCommitCount(), expectedCommits);
-				assert.equal(history.length, expectedCommits);
+				assert.equal(retainedCommitCount(checkout), expectedCommits);
+				// The history's length counts trimmed commits too.
+				assert.equal(history.length, i + 1);
 				assert.equal(checkout.getRemovedRoots().length, expectedCommits);
 			}
 			assert.equal(revertibles.length, 4);
@@ -489,19 +506,19 @@ describe("independentView", () => {
 			const { revertibles } = collectRevertibles(view);
 			view.root.insertAtEnd("A");
 			view.root.insertAtEnd("B");
-			assert.equal(checkout.mainBranch.getCommitCount(), 2);
+			assert.equal(retainedCommitCount(checkout), 2);
 			for (const revertible of revertibles) {
 				revertible.dispose();
 			}
 			// History is trimmed when the next commit is applied.
-			assert.equal(checkout.mainBranch.getCommitCount(), 2);
+			assert.equal(retainedCommitCount(checkout), 2);
 			view.runTransaction(() => {
 				view.root.insertAtEnd("C");
 				view.root.insertAtEnd("D");
-				assert.equal(checkout.mainBranch.getCommitCount(), 2);
+				assert.equal(retainedCommitCount(checkout), 2);
 			});
 			assert.equal(revertibles.length, 3);
-			assert.equal(checkout.mainBranch.getCommitCount(), 1);
+			assert.equal(retainedCommitCount(checkout), 1);
 			revertibles[2].revert();
 			assert.deepEqual([...view.root], ["A", "B"]);
 		});
@@ -509,16 +526,16 @@ describe("independentView", () => {
 		it("does not trim history while the view has forks", () => {
 			const { checkout, view } = createView(1);
 			view.root.insertAtEnd("A");
-			assert.equal(checkout.mainBranch.getCommitCount(), 1);
+			assert.equal(retainedCommitCount(checkout), 1);
 			const fork = view.fork();
 			view.root.insertAtEnd("B");
 			view.root.insertAtEnd("C");
-			assert.equal(checkout.mainBranch.getCommitCount(), 3);
+			assert.equal(retainedCommitCount(checkout), 3);
 			fork.root.insertAtEnd("F");
 			view.merge(fork);
 			assert.deepEqual([...view.root], ["A", "F", "B", "C"]);
 			view.root.insertAtEnd("D");
-			assert.equal(checkout.mainBranch.getCommitCount(), 1);
+			assert.equal(retainedCommitCount(checkout), 1);
 			assert.deepEqual([...view.root], ["A", "F", "B", "C", "D"]);
 		});
 
