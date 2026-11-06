@@ -27,12 +27,19 @@ import type { Context } from "./context.js";
 import {
 	FlexTreeEntityKind,
 	type FlexTreeField,
+	type FlexTreeUnknownUnboxed,
 	type HydratedFlexTreeNode,
 	flexTreeMarker,
 	flexTreeSlot,
+	notLeafContent,
 } from "./flexTreeTypes.js";
 import { LazyEntity } from "./lazyEntity.js";
-import { disposeCachedFields, getCachedField, makeField } from "./lazyField.js";
+import {
+	disposeCachedFields,
+	getCachedField,
+	makeField,
+	unboxedFlexNode,
+} from "./lazyField.js";
 import { currentObserver } from "./observer.js";
 
 /**
@@ -172,6 +179,31 @@ export class LazyTreeNode extends LazyEntity<Anchor> implements HydratedFlexTree
 				makeField(this.context, schema.kind, cursor, this.anchorNode)
 			);
 		});
+	}
+
+	public tryGetSingleContent(
+		key: FieldKey,
+	): FlexTreeUnknownUnboxed | undefined | typeof notLeafContent {
+		currentObserver?.observeNodeField(this, key);
+
+		if (getCachedField(this, key) !== undefined) {
+			return notLeafContent;
+		}
+		const cursor = this.cursor;
+		cursor.enterField(key);
+		let result: FlexTreeUnknownUnboxed | undefined | typeof notLeafContent;
+		const length = cursor.getFieldLength();
+		if (length === 0) {
+			result = undefined;
+		} else if (length === 1) {
+			cursor.enterNode(0);
+			result = unboxedFlexNode(this.context, cursor, { parent: this.anchor, fieldKey: key });
+			cursor.exitNode();
+		} else {
+			result = notLeafContent;
+		}
+		cursor.exitField();
+		return result;
 	}
 
 	public getBoxed(key: FieldKey): FlexTreeField {

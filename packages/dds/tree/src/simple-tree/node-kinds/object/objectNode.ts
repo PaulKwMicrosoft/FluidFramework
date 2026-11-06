@@ -14,7 +14,9 @@ import {
 } from "../../../core/index.js";
 import {
 	FieldKinds,
+	isFlexTreeNode,
 	isTreeValue,
+	notLeafContent,
 	type FlexTreeField,
 	type FlexTreeNode,
 	type FlexTreeOptionalField,
@@ -38,6 +40,7 @@ import {
 	type TreeNode,
 	type UnhydratedFlexTreeNode,
 	getInnerNode,
+	getOrCreateNodeFromInnerNode,
 	type NodeSchemaMetadata,
 	type ImplicitAllowedTypes,
 	TreeNodeValid,
@@ -337,6 +340,13 @@ class ObjectProxyHandler implements ProxyHandler<TreeNode> {
 		if (fieldInfo !== undefined) {
 			const flexNode = getInnerNode(proxy);
 			debugAssert(() => !flexNode.context.isDisposed() || "FlexTreeNode is disposed");
+			if (flexNode.tryGetSingleContent !== undefined) {
+				// Read the content without creating a field object for it.
+				const content = flexNode.tryGetSingleContent(fieldInfo.storedKey);
+				if (content !== notLeafContent) {
+					return isFlexTreeNode(content) ? getOrCreateNodeFromInnerNode(content) : content;
+				}
+			}
 			const field = flexNode.tryGetField(fieldInfo.storedKey);
 			if (field !== undefined) {
 				return tryGetTreeNodeForField(field);

@@ -10,6 +10,7 @@ import {
 	type DetachedField,
 	type FieldKindIdentifier,
 	type ForestEvents,
+	type ITreeSubscriptionCursor,
 	type SchemaPolicy,
 	type TreeStoredSchema,
 	anchorSlot,
@@ -89,6 +90,11 @@ export interface FlexTreeHydratedContext
 export const ContextSlot = anchorSlot<Context>();
 
 /**
+ * Number of released cursors a {@link Context} keeps for reuse.
+ */
+const maxSpareCursors = 64;
+
+/**
  * Implementation of `FlexTreeHydratedContext`.
  *
  * @remarks An editor is required to edit the FlexTree.
@@ -101,6 +107,11 @@ export const ContextSlot = anchorSlot<Context>();
 export class Context implements FlexTreeHydratedContext, IDisposable {
 	public readonly withCursors: Set<LazyEntity> = new Set();
 	public readonly withAnchors: Set<LazyEntity> = new Set();
+
+	/**
+	 * Cleared cursors released by entities, for reuse by entities which need one again.
+	 */
+	private readonly spareCursors: ITreeSubscriptionCursor[] = [];
 
 	/**
 	 * Callbacks to run when disposing.
@@ -164,6 +175,25 @@ export class Context implements FlexTreeHydratedContext, IDisposable {
 		assert(this.withCursors.size === 0, 0x773 /* prepareForEdit should remove all cursors */);
 	}
 
+	/**
+	 * Gets a cleared cursor for this context's forest, reusing a released one if possible.
+	 */
+	public takeCursor(): ITreeSubscriptionCursor {
+		return this.spareCursors.pop() ?? this.checkout.forest.allocateCursor("LazyEntity");
+	}
+
+	/**
+	 * Takes back a cursor an entity no longer uses: it is cleared, and kept for reuse or freed.
+	 */
+	public releaseCursor(cursor: ITreeSubscriptionCursor): void {
+		if (this.spareCursors.length < maxSpareCursors && !this.disposed) {
+			cursor.clear();
+			this.spareCursors.push(cursor);
+		} else {
+			cursor.free();
+		}
+	}
+
 	public [disposeSymbol](): void {
 		assert(this.disposed === false, 0x803 /* double dispose */);
 		this.disposed = true;
@@ -175,6 +205,10 @@ export class Context implements FlexTreeHydratedContext, IDisposable {
 
 		const deleted = this.checkout.forest.anchors.slots.delete(ContextSlot);
 		assert(deleted, 0x8c4 /* unexpected dispose */);
+		for (const cursor of this.spareCursors) {
+			cursor.free();
+		}
+		this.spareCursors.length = 0;
 	}
 
 	/**

@@ -253,6 +253,44 @@ export abstract class LazyField extends LazyEntity<FieldAnchor> implements FlexT
 	): TreeNavigationResult {
 		return this.context.checkout.forest.tryMoveCursorToField(this.anchor, cursor);
 	}
+	/**
+	 * The {@link LazyTreeNode} of the parent node, once found by {@link LazyField.cursorFromParent}.
+	 */
+	private parentNode: LazyTreeNode | undefined;
+
+	/**
+	 * Forks the cursor of the parent node's {@link LazyTreeNode}, if it has one, and enters this field.
+	 * @remarks
+	 * This is much cheaper than moving a cursor from the root to the field's anchor.
+	 * The parent's cursor is only used if it is at the parent node (and not, for example, in one of its fields).
+	 */
+	protected override cursorFromParent(): ITreeSubscriptionCursor | undefined {
+		if (this.anchor.parent === undefined) {
+			return undefined;
+		}
+		let parent = this.parentNode;
+		if (parent === undefined) {
+			const found = this.context.checkout.forest.anchors
+				.locate(this.anchor.parent)
+				?.slots.get(flexTreeSlot);
+			if (!(found instanceof LazyTreeNode)) {
+				return undefined;
+			}
+			parent = this.parentNode = found;
+		}
+		if (parent.isFreed()) {
+			this.parentNode = undefined;
+			return undefined;
+		}
+		const parentCursor = parent.cursor;
+		if (parentCursor.mode !== CursorLocationType.Nodes) {
+			return undefined;
+		}
+
+		const cursor = parentCursor.fork("LazyField from parent");
+		cursor.enterField(this.key);
+		return cursor;
+	}
 
 	protected override forgetAnchor(): void {
 		this.offAfterDestroy?.();

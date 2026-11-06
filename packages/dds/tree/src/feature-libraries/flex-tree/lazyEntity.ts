@@ -35,7 +35,15 @@ export function assertFlexTreeEntityNotFreed(entity: FlexTreeEntity): void {
  * This is a base class for lazy (cursor based) UntypedEntity implementations, which uniformly handles cursors and anchors.
  */
 export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, IDisposable {
-	readonly #lazyCursor: ITreeSubscriptionCursor;
+	/**
+	 * A cursor at this entity, or undefined if it has none.
+	 * @remarks
+	 * The cursor is only kept while it is current (see {@link Context.withCursors}):
+	 * before an edit it is returned to the context (which keeps a few for reuse and frees the rest),
+	 * and {@link LazyEntity.cursor} gets one again when next needed.
+	 */
+	#lazyCursor: ITreeSubscriptionCursor | undefined;
+	#freed = false;
 	public readonly anchor: TAnchor;
 
 	protected constructor(
@@ -56,19 +64,30 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 	public abstract get [flexTreeMarker](): FlexTreeEntityKind;
 
 	public [disposeSymbol](): void {
-		this.#lazyCursor.free();
+		this.#freed = true;
+		this.#lazyCursor?.free();
+		this.#lazyCursor = undefined;
 		this.context.withCursors.delete(this);
 		this.forgetAnchor();
 		this.context.withAnchors.delete(this);
 	}
 
+	/**
+	 * Releases this entity's cursor to the context (see {@link Context.releaseCursor}), if it has one.
+	 * @remarks
+	 * Called before edits. The cursor is obtained again the next time it is needed.
+	 */
 	public prepareForEdit(): void {
-		this.#lazyCursor.clear();
+		const cursor = this.#lazyCursor;
+		if (cursor !== undefined) {
+			this.#lazyCursor = undefined;
+			this.context.releaseCursor(cursor);
+		}
 		this.context.withCursors.delete(this);
 	}
 
 	public isFreed(): boolean {
-		return this.#lazyCursor.state === ITreeSubscriptionCursorState.Freed;
+		return this.#freed;
 	}
 
 	/**
@@ -83,7 +102,7 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 	 */
 	protected ensureValidForAccess(): void {
 		assert(!this.isFreed(), 0xd93 /* Cannot access a freed FlexTree entity */);
-		if (this.#lazyCursor.state !== ITreeSubscriptionCursorState.Current) {
+		if (this.#lazyCursor?.state !== ITreeSubscriptionCursorState.Current) {
 			this.context.checkout.forest.breaker.use();
 		}
 	}
@@ -96,24 +115,50 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 	 * This method implicitly relies on the forest to break, clear or continue to support its cursors if the forest becomes broken.
 	 */
 	public get cursor(): ITreeSubscriptionCursor {
-		if (this.#lazyCursor.state !== ITreeSubscriptionCursorState.Current) {
+		const held = this.#lazyCursor;
+		if (held !== undefined) {
+			if (held.state === ITreeSubscriptionCursorState.Current) {
+				return held;
+			}
 			assert(
-				this.#lazyCursor.state === ITreeSubscriptionCursorState.Cleared,
-				0x778 /* Unset cursor should be in cleared state */,
+				held.state === ITreeSubscriptionCursorState.Cleared,
+				"Unset cursor should be in cleared state",
 			);
+			this.#lazyCursor = undefined;
+			this.context.releaseCursor(held);
+		}
+		assert(!this.#freed, 0x778 /* Unset cursor should be in cleared state */);
+		assert(
+			this.anchor !== undefined,
+			0x779 /* FlexTree should have an anchor if it does not have a cursor */,
+		);
+		const cursor = this.cursorFromParent() ?? this.cursorFromAnchor();
+		this.#lazyCursor = cursor;
+		this.context.withCursors.add(this);
+		return cursor;
+	}
+
+	/**
+	 * A cursor at this entity, moved there from the root using the anchor.
+	 */
+	private cursorFromAnchor(): ITreeSubscriptionCursor {
+		const cursor = this.context.takeCursor();
+		const result = this.tryMoveCursorToAnchor(cursor);
+		if (result !== TreeNavigationResult.Ok) {
+			this.context.releaseCursor(cursor);
 			assert(
-				this.anchor !== undefined,
-				0x779 /* FlexTree should have an anchor if it does not have a cursor */,
-			);
-			const result = this.tryMoveCursorToAnchor(this.#lazyCursor);
-			assert(
-				result === TreeNavigationResult.Ok,
+				false,
 				0x77a /* It is invalid to access a FlexTree node which no longer exists */,
 			);
-			this.context.withCursors.add(this);
 		}
+		return cursor;
+	}
 
-		return this.#lazyCursor;
+	/**
+	 * A current cursor at this entity derived from the cursor of an entity containing it, if that is cheaper than moving one from the root.
+	 */
+	protected cursorFromParent(): ITreeSubscriptionCursor | undefined {
+		return undefined;
 	}
 
 	protected abstract tryMoveCursorToAnchor(
