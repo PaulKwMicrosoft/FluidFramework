@@ -160,6 +160,7 @@ export {
 	breakingMethod,
 	throwIfBroken,
 	breakingClass,
+	markNonBreaking,
 } from "./breakable.js";
 
 export {

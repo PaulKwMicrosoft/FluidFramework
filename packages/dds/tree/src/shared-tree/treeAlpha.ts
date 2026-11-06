@@ -97,6 +97,7 @@ import {
 	type TreeArrayNode,
 	type TreeMapNode,
 	releaseTreeNode,
+	runReadScope,
 	insertVerbose,
 	setVerbose,
 } from "../simple-tree/index.js";
@@ -758,6 +759,29 @@ ode.
 	 * @throws A usage error if `node` cannot be released, as described above.
 	 */
 	release(node: TreeNode): void;
+
+	/**
+	 * Runs `read` as a short-lived, read-only use of the tree containing `node`, and releases the objects it created for reading when it returns.
+	 * @param node - A node in the tree to read (any node in it). Must be in the document.
+	 * @param read - Reads the tree. Its result is returned.
+	 * @remarks
+	 * Nodes first read inside the scope (those whose {@link TreeNode}s are created during it) are released when it ends,
+	 * as {@link (TreeAlpha:interface).release} releases a node, so that reading a large tree once does not keep memory for every node read.
+	 * They must not be used after the scope ends: every use of them then throws a usage error,
+	 * and reading the same locations again creates new nodes.
+	 * Nodes which existed before the scope behave as usual, during and after it.
+	 *
+	 * Inside the scope:
+	 *
+	 * - The tree cannot be edited: edits, transactions, reverts and other branch operations throw a usage error.
+	 *
+	 * - Nodes first read in the scope cannot be subscribed to (for example with {@link (TreeBeta:interface).on}): this throws a usage error.
+	 *
+	 * - Read scopes cannot be nested.
+	 *
+	 * @throws A usage error if `node` is not in the document, or in the cases described above.
+	 */
+	readScope<T>(node: TreeNode, read: () => T): T;
 }
 
 /**
@@ -1370,6 +1394,22 @@ export const TreeAlpha: TreeAlpha = {
 
 	release(node: TreeNode): void {
 		releaseTreeNode(node);
+	},
+
+	readScope<T>(node: TreeNode, read: () => T): T {
+		if (getKernel(node).getStatus() !== TreeStatus.InDocument) {
+			throw new UsageError("Read scopes require a node in the document.");
+		}
+		const flexNode = getInnerNode(node);
+		assert(flexNode.isHydrated(), "A node in the document must be hydrated");
+		const checkout = flexNode.context.checkout;
+		if (!(checkout instanceof CheckoutBase)) {
+			throw new UsageError("Read scopes are not supported for this tree.");
+		}
+		return runReadScope(
+			(fn) => checkout.runWithEditsLocked("a read scope (TreeAlpha.readScope)", fn),
+			read,
+		);
 	},
 };
 

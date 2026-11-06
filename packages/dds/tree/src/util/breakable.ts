@@ -82,6 +82,9 @@ export class Breakable {
 	 * If there is a use-case, this should be made public.
 	 */
 	private rethrowCaught(brokenBy: unknown): never {
+		if (nonBreakingErrors.has(brokenBy as object)) {
+			throw brokenBy;
+		}
 		if (brokenBy instanceof Error) {
 			this.break(brokenBy);
 		}
@@ -274,4 +277,20 @@ export function breakingClass<Target extends abstract new (...args: any[]) => Wi
 	}
 
 	return DecoratedBreakable;
+}
+
+/**
+ * Errors which do not put a {@link Breakable} into a broken state when thrown through {@link Breakable.run} (see {@link markNonBreaking}).
+ */
+const nonBreakingErrors: WeakSet<object> = new WeakSet();
+
+/**
+ * Marks `error` as not putting a {@link Breakable} into a broken state when thrown through {@link Breakable.run} or a {@link breakingMethod}.
+ * @remarks
+ * Only for errors thrown before the operation has changed any state, such as usage errors from checks done first.
+ * @returns `error`.
+ */
+export function markNonBreaking<T extends Error>(error: T): T {
+	nonBreakingErrors.add(error);
+	return error;
 }

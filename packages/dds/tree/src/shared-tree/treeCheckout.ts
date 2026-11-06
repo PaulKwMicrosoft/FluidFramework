@@ -131,6 +131,7 @@ import {
 	disposeSymbol,
 	getOrCreate,
 	hasSome,
+	markNonBreaking,
 	throwIfBroken,
 	type JsonCompatibleReadOnly,
 	type JsonCompatibleReadOnlyObject,
@@ -823,6 +824,24 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	 */
 	private readonly editedFields: Map<RevisionTag, EditedField[]> | undefined;
 
+	/**
+	 * Runs `fn` with edits to this checkout forbidden: any edit, transaction, revert or branch operation attempted during it throws a usage error
+	 * which mentions `reason`, and leaves this checkout usable (unlike edits attempted during change events, which break it).
+	 * @remarks
+	 * If edits are already forbidden (for example during a change event), `fn` simply runs.
+	 */
+	public runWithEditsLocked<T>(reason: string, fn: () => T): T {
+		const lock = this.editLock;
+		if (lock.isLocked) {
+			return fn();
+		}
+		lock.lock(reason, true);
+		try {
+			return fn();
+		} finally {
+			lock.unlock();
+		}
+	}
 	/**
 	 * Whether base content is enabled (see {@link TreeCheckoutOptions.enableBaseContent}).
 	 */
@@ -2954,7 +2973,9 @@ class EditLock {
 	 */
 	private status:
 		| { readonly isLocked: false }
-		| { readonly isLocked: true; readonly reason: string } = { isLocked: false };
+		| { readonly isLocked: true; readonly reason: string; readonly nonBreaking?: boolean } = {
+		isLocked: false,
+	};
 
 	public get isLocked(): boolean {
 		return this.status.isLocked;
@@ -3025,12 +3046,12 @@ class EditLock {
 	 * @param reason - A string describing why the lock is being acquired. This will be included in the error message if an attempt is made to edit while the lock is held.
 	 * @remarks May only be called when the lock is not already locked.
 	 */
-	public lock(reason: string): void {
+	public lock(reason: string, nonBreaking?: boolean): void {
 		if (this.status.isLocked) {
 			debugger;
 		}
 		assert(!this.status.isLocked, 0xaa7 /* Checkout has already been locked */);
-		this.status = { isLocked: true, reason };
+		this.status = { isLocked: true, reason, nonBreaking };
 	}
 
 	/**
@@ -3040,7 +3061,9 @@ class EditLock {
 	 */
 	public checkUnlocked<T extends string>(action: T extends Capitalize<T> ? T : never): void {
 		if (this.status.isLocked) {
-			throw new UsageError(`${action} is forbidden during ${this.status.reason}`);
+			const error = new UsageError(`${action} is forbidden during ${this.status.reason}`);
+			// Checks are done before the action changes anything: when the lock allows it, do not break the checkout.
+			throw this.status.nonBreaking === true ? markNonBreaking(error) : error;
 		}
 	}
 

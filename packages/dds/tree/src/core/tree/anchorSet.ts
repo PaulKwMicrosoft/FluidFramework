@@ -609,7 +609,7 @@ export class AnchorSet implements AnchorLocator {
 		// Update new parent to add children
 		const field = destinationPath.children.get(destination.parentField);
 		if (field === undefined) {
-			destinationPath.children.set(destination.parentField, coupleInfo.nodes);
+			destinationPath.setChildren(destination.parentField, coupleInfo.nodes);
 		} else {
 			// Update existing field contents
 			const numberBeforeCouple = this.increaseParentIndexes(
@@ -1089,6 +1089,11 @@ enum Status {
  * 2. refcount is non-zero.
  * 3. events are registered.
  */
+/**
+ * {@link PathNode.children} of a node which has never had children.
+ */
+const noChildren: ReadonlyMap<FieldKey, PathNode[]> = new Map();
+
 class PathNode extends ReferenceCountedBase implements AnchorNode {
 	public status: Status = Status.Alive;
 	/**
@@ -1106,7 +1111,21 @@ class PathNode extends ReferenceCountedBase implements AnchorNode {
 	 * This would be complicated by the need for parent pointers (including indexes),
 	 * but is possible to do.
 	 */
-	public readonly children: Map<FieldKey, PathNode[]> = new Map();
+	public get children(): ReadonlyMap<FieldKey, PathNode[]> {
+		return this.#children ?? noChildren;
+	}
+
+	/**
+	 * Backing map of {@link PathNode.children}, allocated when the first child is added.
+	 */
+	#children: Map<FieldKey, PathNode[]> | undefined;
+
+	/**
+	 * Sets the children of this node in field `key` (see {@link PathNode.children} for the invariants).
+	 */
+	public setChildren(key: FieldKey, nodes: PathNode[]): void {
+		(this.#children ??= new Map()).set(key, nodes);
+	}
 
 	// See note on BrandedKey.
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1210,7 +1229,7 @@ class PathNode extends ReferenceCountedBase implements AnchorNode {
 		let field = this.children.get(key);
 		if (field === undefined) {
 			field = [];
-			this.children.set(key, field);
+			this.setChildren(key, field);
 		}
 		let child = binaryFind(field, index);
 		if (child === undefined) {
@@ -1264,7 +1283,7 @@ class PathNode extends ReferenceCountedBase implements AnchorNode {
 	 */
 	public afterEmptyField(key: FieldKey): void {
 		assert(this.status === Status.Alive, 0x40f /* PathNode must be alive */);
-		this.children.delete(key);
+		this.#children?.delete(key);
 		this.considerDispose();
 	}
 

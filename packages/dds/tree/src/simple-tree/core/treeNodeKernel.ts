@@ -9,6 +9,7 @@ import {
 	assert,
 	fail,
 	debugAssert,
+	oob,
 	unreachableCase,
 } from "@fluidframework/core-utils/internal";
 import { UsageError } from "@fluidframework/telemetry-utils/internal";
@@ -35,7 +36,7 @@ import {
 
 import type { Context, HydratedContext } from "./context.js";
 import type { TreeNode } from "./treeNode.js";
-import type { TreeNodeSchema } from "./treeNodeSchema.js";
+import { NodeKind, type TreeNodeSchema } from "./treeNodeSchema.js";
 import type { InternalTreeNode, Unhydrated } from "./types.js";
 import { UnhydratedFlexTreeNode } from "./unhydratedFlexTree.js";
 
@@ -108,7 +109,7 @@ interface HydratedState {
 	/** The flex node for this kernel */
 	readonly innerNode: HydratedFlexTreeNode;
 	/** All {@link Off | event deregistration functions} that should be run when the kernel is disposed. */
-	readonly offAnchorNode: Set<Off>;
+	readonly offAnchorNode: readonly Off[];
 }
 
 /**
@@ -148,7 +149,7 @@ export class TreeNodeKernel {
 	 * Generation number which is incremented any time we have an edit on the node.
 	 * Used during iteration to make sure there has been no edits that were concurrently made.
 	 * @remarks
-	 * This is updated monotonically by this class when edits are applied.
+	 * This is updated monotonically by this class when edits are applied to the children of array nodes (the only nodes which use it).
 	 * TODO: update this when applying edits to unhydrated trees.
 	 *
 	 * If TypeScript supported making this immutable from outside the class without making it readonly from inside, that would be used here,
@@ -244,22 +245,33 @@ export class TreeNodeKernel {
 		this.#eventBuffer?.migrateEventSource(inner.anchorNode.events);
 	}
 
+	/**
+	 * Whether this node was first read in a read scope (see {@link runReadScope}), and is thus released when the scope ends.
+	 */
+	#inReadScope = false;
 	private createHydratedState(innerNode: HydratedFlexTreeNode): HydratedState {
 		assert(
 			!innerNode.anchorNode.slots.has(simpleTreeNodeSlot),
 			0x7f5 /* Cannot associate an flex node with multiple simple-tree nodes */,
 		);
 		innerNode.anchorNode.slots.set(simpleTreeNodeSlot, this.node);
-		return {
-			innerNode,
-			offAnchorNode: new Set([
-				innerNode.anchorNode.events.on("afterDestroy", () => this.dispose()),
+		if (readScopeKernels !== undefined) {
+			this.#inReadScope = true;
+			readScopeKernels.push(this);
+		}
+		const offAnchorNode: Off[] = [
+			innerNode.anchorNode.events.on("afterDestroy", () => this.dispose()),
+		];
+		// Only array nodes read the generation number, so only they need to track it.
+		if (this.schema.kind === NodeKind.Array) {
+			offAnchorNode.push(
 				// TODO: this should be triggered on change even for unhydrated nodes.
 				innerNode.anchorNode.events.on("childrenChanging", () => {
 					this.generationNumber += 1;
 				}),
-			]),
-		};
+			);
+		}
+		return { innerNode, offAnchorNode };
 	}
 
 	public getStatus(): TreeStatus {
@@ -287,6 +299,11 @@ export class TreeNodeKernel {
 
 	public get events(): Listenable<KernelEvents> {
 		const state = this.#getUnreleasedState();
+		if (this.#inReadScope) {
+			throw new UsageError(
+				"Nodes first read in a read scope cannot be subscribed to: they are released when the scope ends. Read the node outside the scope to subscribe to it.",
+			);
+		}
 		assert(!this.disposed, 0xcfa /* Cannot register events on a disposed node */);
 		// Allocate the buffer on first access. See {@link TreeNodeKernel.#eventBuffer} for rationale.
 		if (this.#eventBuffer === undefined) {
@@ -759,6 +776,44 @@ export function tryDisposeTreeNode(anchorNode: AnchorNode): void {
 	}
 }
 
+/**
+ * Kernels of the nodes first read in the current read scope, if one is running.
+ */
+let readScopeKernels: TreeNodeKernel[] | undefined;
+
+/**
+ * Runs `read` in a read scope: nodes first read during it (whose {@link TreeNode}s are created during it) are released when it ends.
+ * @param lockEdits - Runs its argument with edits to the tree forbidden.
+ * @remarks
+ * Implements {@link (TreeAlpha:interface).readScope}.
+ * Nodes which existed before the scope are not affected, including those under nodes first read in it.
+ * @throws A usage error if called inside another read scope.
+ */
+export function runReadScope<T>(
+	lockEdits: <TResult>(fn: () => TResult) => TResult,
+	read: () => T,
+): T {
+	if (readScopeKernels !== undefined) {
+		throw new UsageError("Read scopes cannot be nested.");
+	}
+	const kernels: TreeNodeKernel[] = [];
+	readScopeKernels = kernels;
+	try {
+		return lockEdits(read);
+	} finally {
+		readScopeKernels = undefined;
+		// Release children (read after their parents) first.
+		for (let index = kernels.length - 1; index >= 0; index--) {
+			const kernel = kernels[index] ?? oob();
+			if (kernel.isReleased() || kernel.getStatus() === TreeStatus.Deleted) {
+				continue;
+			}
+			const anchorNode = kernel.anchorNode ?? fail("A hydrated node has an anchor node");
+			kernel.release();
+			disposeHydratedFlexTreeNode(anchorNode);
+		}
+	}
+}
 /**
  * Releases the objects created for reading a hydrated `node` and every node under it which has been read:
  * their {@link TreeNode}s and kernels, their flex tree nodes and fields, and the anchors holding them.
