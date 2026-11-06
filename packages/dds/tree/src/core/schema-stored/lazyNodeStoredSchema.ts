@@ -3,6 +3,8 @@
  * Licensed under the MIT License.
  */
 
+import { UsageError } from "@fluidframework/telemetry-utils/internal";
+
 import { compareStrings } from "../../util/index.js";
 
 import type { TreeNodeSchemaIdentifier } from "./formatV1.js";
@@ -36,14 +38,23 @@ interface LazyNodeStoredSchemaState {
  * Iterating the collection derives the schema for every identifier.
  *
  * Each identifier's schema is derived at most once, so lookups always return the same object.
+ *
+ * What the schema are derived from is held in private fields, so it is not reached by `JSON.stringify`, `util.inspect` or deep equality checks:
+ * those see the collection as a `Map` of its node schema.
+ * As a `Map` subclass, deep equality checks compare its entries (through its iterator), deriving all of them.
  */
 export class LazyNodeStoredSchemaMap
+	extends Map<TreeNodeSchemaIdentifier, TreeNodeStoredSchema>
 	implements ReadonlyMap<TreeNodeSchemaIdentifier, TreeNodeStoredSchema>
 {
-	private constructor(
-		private readonly state: LazyNodeStoredSchemaState,
-		private readonly sorted: boolean,
-	) {}
+	readonly #state: LazyNodeStoredSchemaState;
+	readonly #sorted: boolean;
+
+	private constructor(state: LazyNodeStoredSchemaState, sorted: boolean) {
+		super();
+		this.#state = state;
+		this.#sorted = sorted;
+	}
 
 	/**
 	 * @param identifiers - The identifiers the collection holds schema for, in the order to iterate them in.
@@ -62,26 +73,26 @@ export class LazyNodeStoredSchemaMap
 	 * as {@link TreeStoredSchemaRepository} does.
 	 */
 	public withSortedIteration(): LazyNodeStoredSchemaMap {
-		return this.sorted ? this : new LazyNodeStoredSchemaMap(this.state, true);
+		return this.#sorted ? this : new LazyNodeStoredSchemaMap(this.#state, true);
 	}
 
 	/**
 	 * The number of node schema which have been derived so far.
 	 */
 	public get derivedCount(): number {
-		return this.state.derived.size;
+		return this.#state.derived.size;
 	}
 
-	public get size(): number {
-		return this.state.identifiers.size;
+	public override get size(): number {
+		return this.#state.identifiers.size;
 	}
 
-	public has(identifier: TreeNodeSchemaIdentifier): boolean {
-		return this.state.identifiers.has(identifier);
+	public override has(identifier: TreeNodeSchemaIdentifier): boolean {
+		return this.#state.identifiers.has(identifier);
 	}
 
-	public get(identifier: TreeNodeSchemaIdentifier): TreeNodeStoredSchema | undefined {
-		const { identifiers, derive, derived } = this.state;
+	public override get(identifier: TreeNodeSchemaIdentifier): TreeNodeStoredSchema | undefined {
+		const { identifiers, derive, derived } = this.#state;
 		let schema = derived.get(identifier);
 		if (schema === undefined && identifiers.has(identifier)) {
 			schema = derive(identifier);
@@ -90,39 +101,45 @@ export class LazyNodeStoredSchemaMap
 		return schema;
 	}
 
-	public keys(): MapIterator<TreeNodeSchemaIdentifier> {
-		return this.orderedIdentifiers()[Symbol.iterator]();
+	public override set(): never {
+		throw new UsageError("LazyNodeStoredSchemaMap is immutable");
 	}
 
-	public *values(): MapIterator<TreeNodeStoredSchema> {
-		for (const identifier of this.orderedIdentifiers()) {
-			yield this.getExisting(identifier);
+	public override delete(): never {
+		throw new UsageError("LazyNodeStoredSchemaMap is immutable");
+	}
+
+	public override clear(): never {
+		throw new UsageError("LazyNodeStoredSchemaMap is immutable");
+	}
+
+	public override keys(): MapIterator<TreeNodeSchemaIdentifier> {
+		return this.#orderedIdentifiers()[Symbol.iterator]();
+	}
+
+	public override *values(): MapIterator<TreeNodeStoredSchema> {
+		for (const identifier of this.#orderedIdentifiers()) {
+			yield this.#getExisting(identifier);
 		}
 	}
 
-	public *entries(): MapIterator<[TreeNodeSchemaIdentifier, TreeNodeStoredSchema]> {
-		for (const identifier of this.orderedIdentifiers()) {
-			yield [identifier, this.getExisting(identifier)];
+	public override *entries(): MapIterator<[TreeNodeSchemaIdentifier, TreeNodeStoredSchema]> {
+		for (const identifier of this.#orderedIdentifiers()) {
+			yield [identifier, this.#getExisting(identifier)];
 		}
 	}
 
-	public [Symbol.iterator](): MapIterator<[TreeNodeSchemaIdentifier, TreeNodeStoredSchema]> {
+	public override [Symbol.iterator](): MapIterator<
+		[TreeNodeSchemaIdentifier, TreeNodeStoredSchema]
+	> {
 		return this.entries();
 	}
 
-	/**
-	 * Shows the collection as a `Map` of its node schema (deriving all of them) when inspected in NodeJS,
-	 * rather than its internals, which reference the view schema it derives them from.
-	 */
-	public [Symbol.for("nodejs.util.inspect.custom")](): unknown {
-		return new Map(this.entries());
-	}
-
-	public forEach(
+	public override forEach(
 		callbackfn: (
 			value: TreeNodeStoredSchema,
 			key: TreeNodeSchemaIdentifier,
-			map: ReadonlyMap<TreeNodeSchemaIdentifier, TreeNodeStoredSchema>,
+			map: Map<TreeNodeSchemaIdentifier, TreeNodeStoredSchema>,
 		) => void,
 		thisArg?: unknown,
 	): void {
@@ -131,17 +148,38 @@ export class LazyNodeStoredSchemaMap
 		}
 	}
 
-	private getExisting(identifier: TreeNodeSchemaIdentifier): TreeNodeStoredSchema {
+	/**
+	 * The node schema derived so far, encoded, by identifier, so serializing the collection doesn't derive the rest.
+	 */
+	public toJSON(): Record<string, unknown> {
+		const result: Record<string, unknown> = {};
+		for (const [identifier, schema] of this.#state.derived) {
+			result[identifier] = schema.encodeV2();
+		}
+		return result;
+	}
+
+	/**
+	 * Shows the node schema derived so far when inspected in NodeJS, without deriving the rest.
+	 */
+	public [Symbol.for("nodejs.util.inspect.custom")](): unknown {
+		return {
+			size: this.size,
+			derived: new Map(this.#state.derived),
+		};
+	}
+
+	#getExisting(identifier: TreeNodeSchemaIdentifier): TreeNodeStoredSchema {
 		// Every identifier iterated is in the collection, so `get` always returns a schema for it.
 		return this.get(identifier) as TreeNodeStoredSchema;
 	}
 
-	private orderedIdentifiers(): readonly TreeNodeSchemaIdentifier[] {
-		const keys = this.state.identifiers.keys() as Iterable<TreeNodeSchemaIdentifier>;
-		if (!this.sorted) {
+	#orderedIdentifiers(): readonly TreeNodeSchemaIdentifier[] {
+		const keys = this.#state.identifiers.keys() as Iterable<TreeNodeSchemaIdentifier>;
+		if (!this.#sorted) {
 			return [...keys];
 		}
-		this.state.sortedIdentifiers ??= [...keys].sort(compareStrings);
-		return this.state.sortedIdentifiers;
+		this.#state.sortedIdentifiers ??= [...keys].sort(compareStrings);
+		return this.#state.sortedIdentifiers;
 	}
 }
