@@ -26,8 +26,13 @@ import {
 	type RecordNodeSchema,
 } from "../node-kinds/index.js";
 import type { SchemaType, SimpleNodeSchema } from "../simpleSchema.js";
-import { toUnhydratedSchema, transformSimpleSchema } from "../toStoredSchema.js";
-import { getRootSchemaDerivedData, toInitialSchema, type TreeSchema } from "../treeSchema.js";
+import { toUnhydratedSchema } from "../toStoredSchema.js";
+import {
+	getRootSchemaDerivedData,
+	toInitialSchema,
+	toStoredSchema,
+	type TreeSchema,
+} from "../treeSchema.js";
 import { walkFieldSchema } from "../walkFieldSchema.js";
 
 import { SchemaIdentityInternal, type SchemaIdentity } from "./schemaIdentity.js";
@@ -318,8 +323,9 @@ export class TreeViewConfigurationAlpha<
 		}
 
 		// Eagerly perform these conversions to surface errors sooner.
+		// Without staged upgrades, all policies share one stored schema, whose node schemas are derived as they are looked up.
 		toInitialSchema(this.root, this.stagedUpgradePolicy);
-		transformSimpleSchema(treeSchema, toUnhydratedSchema);
+		toStoredSchema(this.root, toUnhydratedSchema);
 	}
 }
 

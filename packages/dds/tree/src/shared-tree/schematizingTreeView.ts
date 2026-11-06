@@ -358,7 +358,8 @@ export class SchematizingSimpleTreeView<
 			throw new UsageError("Tree cannot be initialized more than once.");
 		}
 
-		const schema = toInitialSchema(this.config.schema, this.stagedUpgradePolicy);
+		// The configuration cached this under its normalized root field schema, so look it up with that key.
+		const schema = toInitialSchema(this.viewSchema.root, this.stagedUpgradePolicy);
 		const schemaHash = this.computeSchemaHash(this.stagedUpgradePolicy);
 		this.runSchemaEdit(() => {
 			// This has to be the contextless version, since when "initialize" is called (right after this),

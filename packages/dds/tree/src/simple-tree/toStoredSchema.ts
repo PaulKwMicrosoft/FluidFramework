@@ -13,6 +13,7 @@ import { UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import {
 	EmptyKey,
+	LazyNodeStoredSchemaMap,
 	LeafNodeStoredSchema,
 	MapNodeStoredSchema,
 	ObjectNodeStoredSchema,
@@ -58,6 +59,7 @@ import type {
 	SimpleRecordNodeSchema,
 	SimpleTreeSchema,
 } from "./simpleSchema.js";
+import type { TreeSchema } from "./treeSchema.js";
 
 // TODO: this file, src/simple-tree/api/storedSchema.ts and src/simple-tree/core/toStored.ts should be refactored to group the logic more logically.
 // The content of src/simple-tree/api/storedSchema.ts should probably removed from the API surface, replaced by simple schema snapshotting APIs.
@@ -163,6 +165,42 @@ function allowedTypesHaveStagedUpgrades(
 		}
 	}
 	return false;
+}
+
+/**
+/**
+ * The stored schema {@link toStoredSchema} generates from a schema without staged upgrades (see {@link hasStagedSchemaUpgrades}),
+ * with each node schema derived the first time it is looked up.
+ * @remarks
+ * Without staged upgrades, every node schema in `schema.definitions` is reachable whatever the policy,
+ * so the node schemas are those of `schema.definitions`, in its order, as {@link transformSimpleSchema} would give.
+ */
+export function lazyStoredSchema(schema: TreeSchema): TreeStoredSchema {
+	const policy = StagedSchemaUpgradePolicy.restrictive;
+	const definitions = schema.definitions;
+	return {
+		rootFieldSchema: toStoredFieldSchema(schema.root, policy),
+		nodeSchema: LazyNodeStoredSchemaMap.create(definitions, (identifier) =>
+			getStoredSchema(
+				transformSimpleNodeSchema(
+					definitions.get(identifier) ?? fail("Lazy stored schema has no view schema"),
+					policy,
+				),
+			),
+		),
+	};
+}
+
+/**
+ * Converts a view {@link SimpleFieldSchema} into a {@link TreeFieldStoredSchema}, as {@link toStoredSchema} does for the root field.
+ */
+export function toStoredFieldSchema(
+	field: SimpleFieldSchema<SchemaType.View>,
+	options: StagedSchemaUpgradePolicy,
+): TreeFieldStoredSchema {
+	return convertField(
+		filterFieldAllowedTypes(field, options) as SimpleFieldSchema<SchemaType.Stored>,
+	);
 }
 
 /**

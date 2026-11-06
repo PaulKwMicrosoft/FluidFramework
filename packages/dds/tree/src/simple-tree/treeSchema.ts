@@ -29,6 +29,7 @@ import {
 import { isObjectNodeSchema } from "./node-kinds/index.js";
 import type { SchemaType, SimpleNodeSchema, SimpleTreeSchema } from "./simpleSchema.js";
 import {
+	lazyStoredSchema,
 	resolveStoredSchemaGenerationOptions,
 	simpleStoredSchemaToStoredSchema,
 	transformSimpleSchema,
@@ -320,7 +321,8 @@ export class RootSchemaDerivedData implements TransitiveSchemaInfo {
 				!(this.#storedSchemas instanceof WeakMap),
 				0xda1 /* Expected a policy-independent cache */,
 			);
-			this.#storedSchemas ??= this.#convertStoredSchema(options);
+			// Every policy gives the same result, so derive each node schema only when it is first looked up.
+			this.#storedSchemas ??= runSchemaInitialization(() => lazyStoredSchema(this.treeSchema));
 			return this.#storedSchemas;
 		}
 		this.#storedSchemas ??= new WeakMap();
