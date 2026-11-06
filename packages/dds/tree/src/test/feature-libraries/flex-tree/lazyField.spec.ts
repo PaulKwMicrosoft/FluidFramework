@@ -517,18 +517,23 @@ describe("LazyField", () => {
 
 					function testLengthCaching(size: number, expectCaching: boolean): void {
 						const { view, field } = setup(size);
-						const cursor = field.cursor;
-						const getFieldLength = cursor.getFieldLength.bind(cursor);
 						let reads = 0;
-						cursor.getFieldLength = () => {
-							reads++;
-							return getFieldLength();
+						// Counts the field length reads of the field's current cursor (which is replaced after an edit).
+						const countReads = (): void => {
+							const cursor = field.cursor;
+							const getFieldLength = cursor.getFieldLength.bind(cursor);
+							cursor.getFieldLength = () => {
+								reads++;
+								return getFieldLength();
+							};
 						};
+						countReads();
 						assert.equal(field.length, size);
 						assert.equal(reads, 1);
 						assert.equal(field.length, size);
 						assert.equal(reads, expectCaching ? 1 : 2);
 						view.root.items[0].value++;
+						countReads();
 						const readsBefore = reads;
 						assert.equal(field.length, size);
 						assert.equal(reads, expectCaching ? 1 : readsBefore + 1);
