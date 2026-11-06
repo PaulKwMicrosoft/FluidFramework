@@ -4,6 +4,7 @@
  */
 
 import { strict as assert } from "node:assert";
+import { inspect } from "node:util";
 
 import {
 	LazyNodeStoredSchemaMap,
@@ -70,6 +71,34 @@ describe("LazyNodeStoredSchemaMap", () => {
 		const visited: string[] = [];
 		map.forEach((value, key) => visited.push(key));
 		assert.deepEqual(visited, ["b", "a", "c"]);
+	});
+
+	it("is immutable", () => {
+		const { schema } = lazySchema(["a"]);
+		const map: Map<TreeNodeSchemaIdentifier, TreeNodeStoredSchema> = schema.nodeSchema;
+		assert.throws(() => map.set(id("b"), new LeafNodeStoredSchema(ValueSchema.Number)));
+		assert.throws(() => map.delete(id("a")));
+		assert.throws(() => map.clear());
+		assert.equal(map.size, 1);
+	});
+
+	it("exposes only node schema to deep equality, inspection and serialization", () => {
+		const first = lazySchema(["b", "a"]).schema.nodeSchema;
+		const second = lazySchema(["b", "a"]).schema.nodeSchema;
+		const other = lazySchema(["b", "c"]).schema.nodeSchema;
+		assert.deepEqual(first, second);
+		assert.notDeepEqual(first, other);
+
+		const { schema, derivedLog } = lazySchema(["b", "a"]);
+		const map = schema.nodeSchema;
+		map.get(id("a"));
+		assert.deepEqual(JSON.parse(JSON.stringify(map)), {
+			a: { kind: { leaf: ValueSchema.Number } },
+		});
+		const shown = inspect(map, { depth: 10 });
+		assert(!shown.includes("identifiers"), shown);
+		assert(!inspect(map, { customInspect: false, depth: 10 }).includes("identifiers"));
+		assert.deepEqual(derivedLog, ["a"]);
 	});
 });
 

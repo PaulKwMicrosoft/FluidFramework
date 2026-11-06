@@ -5,6 +5,7 @@
 
 import { strict as assert } from "node:assert";
 
+import type { TreeStoredSchema } from "../../../core/index.js";
 import { exportSimpleSchema } from "../../../shared-tree/index.js";
 import {
 	generateSchemaFromSimpleSchema,
@@ -21,6 +22,14 @@ import {
 import { testTreeSchema } from "../../cursorTestSuite.js";
 import { AllowsUnknownOptionalFields, testSimpleTrees } from "../../testTrees.js";
 
+/**
+ * The content of a stored schema, with its node schemas in a `Map`, for comparison with `deepEqual`
+ * (whatever collection holds them: a schema without staged upgrades derives its node schemas lazily).
+ */
+function comparable(schema: TreeStoredSchema): TreeStoredSchema {
+	return { rootFieldSchema: schema.rootFieldSchema, nodeSchema: new Map(schema.nodeSchema) };
+}
+
 describe("schemaFromSimple", () => {
 	function roundtrip(root: ImplicitFieldSchema): void {
 		const stored = toInitialSchema(root);
@@ -29,7 +38,7 @@ describe("schemaFromSimple", () => {
 		const roundTripped = generateSchemaFromSimpleSchema(simpleFromStored);
 		// This should exactly match stored as it should have lost the exact same information.
 		const stored2 = toInitialSchema(roundTripped.root);
-		assert.deepEqual(stored2, stored);
+		assert.deepEqual(comparable(stored2), comparable(stored));
 
 		// This should not lose metadata like property keys as it doesn't go through the stored schema.
 		const simpleFromView = getSimpleSchema(root);
@@ -37,7 +46,7 @@ describe("schemaFromSimple", () => {
 
 		// Lossy extraction of stored schema should still be the same
 		const stored3 = toInitialSchema(roundTripped2.root);
-		assert.deepEqual(stored3, stored);
+		assert.deepEqual(comparable(stored3), comparable(stored));
 
 		// Simple schema should be the same after round trip from TreeSchema -> Simple -> TreeSchema -> Simple
 		const simpleFromView2 = getSimpleSchema(roundTripped2.root);
