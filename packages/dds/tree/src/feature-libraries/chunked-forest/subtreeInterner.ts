@@ -94,6 +94,18 @@ export const textFormatFieldsOnly: SharedFieldPolicy = (type, key) =>
 	key === "format" && type.startsWith("com.fluidframework.text.formatted");
 
 /**
+ * {@link SharedFieldPolicy} sharing the formats of formatted text atoms (see {@link textFormatFieldsOnly}),
+ * and the children of fields with any of the given keys, in nodes of any type.
+ *
+ * @remarks
+ * Intended for property bags which many nodes hold identical copies of, such as paragraph or text body properties.
+ */
+export function textFormatsAndFields(keys: Iterable<string>): SharedFieldPolicy {
+	const keySet: ReadonlySet<string> = new Set(keys);
+	return (type, key) => keySet.has(key) || textFormatFieldsOnly(type, key);
+}
+
+/**
  * Shares one immutable chunk between identical small subtrees as content is chunked.
  *
  * @remarks
