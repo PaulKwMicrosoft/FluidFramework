@@ -1374,6 +1374,24 @@ export const TreeAlpha: TreeAlpha = {
 };
 
 /**
+ * Whether 
+ode is in the document of a tree with base content enabled (see {@link IndependentTreeHistoryOptions.enableBaseContent}).
+ * @remarks
+ * Such trees are independent of any collaboration, so content may be edited in ways which give the same content
+ * but different edits than collaboration would expect.
+ */
+export function isInBaseContentTree(node: TreeNode): boolean {
+	if (getKernel(node).getStatus() !== TreeStatus.InDocument) {
+		return false;
+	}
+	const flexNode = getInnerNode(node);
+	return (
+		flexNode.isHydrated() &&
+		flexNode.context.checkout instanceof CheckoutBase &&
+		flexNode.context.checkout.baseContentEnabled
+	);
+}
+/**
  * Writes the new content for {@link replaceAsBase}.
  */
 interface BaseContentWriter {

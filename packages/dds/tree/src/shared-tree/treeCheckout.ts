@@ -824,6 +824,13 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	private readonly editedFields: Map<RevisionTag, EditedField[]> | undefined;
 
 	/**
+	 * Whether base content is enabled (see {@link TreeCheckoutOptions.enableBaseContent}).
+	 */
+	public get baseContentEnabled(): boolean {
+		return this.editedFields !== undefined;
+	}
+
+	/**
 	 * Revisions with {@link CheckoutBase.editedFields} recorded during the current transaction.
 	 * @remarks If the transaction is aborted, these records are removed.
 	 */

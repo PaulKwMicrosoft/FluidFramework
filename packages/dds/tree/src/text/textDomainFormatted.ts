@@ -39,7 +39,12 @@ import {
 	ExtrinsicRangeTracker,
 	// eslint-disable-next-line import-x/no-internal-modules -- Shared implementation details, intentionally not package exported.
 } from "../extrinsic-locations/extrinsicRangeTracker.js";
-import { TreeAlpha, Tree as TreeStatic, TreeBeta } from "../shared-tree/index.js";
+import {
+	isInBaseContentTree,
+	TreeAlpha,
+	Tree as TreeStatic,
+	TreeBeta,
+} from "../shared-tree/index.js";
 import {
 	createArrayInsertionAnchor,
 	getInnerNode,
@@ -737,13 +742,31 @@ export namespace FormattedText {
 				// Apply the per-schema operation to each atom in the range.
 				// In the future we may want to implement a more efficient way to express and encode at least the common case of edits like this,
 				// like a lower level range editing API which we can use for more efficient batch updates when the schema allows it.
-				this.#editRange(start, end, "FormattedText.formatRange", (atom) => {
-					const formatNode = atom.format;
-					const atomFormatSchema = TreeStatic.schema(formatNode);
-					const operation = getOrCreate(perSchemaOperation, atomFormatSchema, buildOperation);
-					// buildOperation rejects leaf schema, so this cast is safe.
-					operation(formatNode as TreeNode);
-				});
+				this.#editFormats(
+					start,
+					end,
+					"FormattedText.formatRange",
+					(runFormat) => {
+						if (!isTreeNode(runFormat)) {
+							return undefined;
+						}
+						const operation = getOrCreate(
+							perSchemaOperation,
+							TreeStatic.schema(runFormat),
+							buildOperation,
+						);
+						const updated = TreeBeta.clone(runFormat as TreeNode) as TreeNode;
+						operation(updated);
+						return updated;
+					},
+					(atom) => {
+						const formatNode = atom.format;
+						const atomFormatSchema = TreeStatic.schema(formatNode);
+						const operation = getOrCreate(perSchemaOperation, atomFormatSchema, buildOperation);
+						// buildOperation rejects leaf schema, so this cast is safe.
+						operation(formatNode as TreeNode);
+					},
+				);
 			}
 
 			public reformat(
@@ -752,9 +775,90 @@ export namespace FormattedText {
 				format?: InsertableTreeFieldFromImplicitField<FormatSchema>,
 			): void {
 				const node = getFormatNode(format);
-				this.#editRange(start, end, "FormattedText.reformat", (atom) => {
-					atom.format = cloneFormat(node);
+				this.#editFormats(
+					start,
+					end,
+					"FormattedText.reformat",
+					() => (isTreeNode(node) ? node : undefined),
+					(atom) => {
+						atom.format = cloneFormat(node);
+					},
+				);
+			}
+
+			/**
+			 * Edits the formats of a range of atoms: per run if possible (see {@link TextNode.#formatRuns}), otherwise per atom with dit.
+			 * @param runFormat - The new format of the atoms of a run, given their current format, or undefined if the runs can not be edited as runs.
+			 */
+			#editFormats(
+				start: number | undefined,
+				end: number | undefined,
+				method: string,
+				runFormat: (format: TreeNodeFromImplicitAllowedTypes<FormatSchema>) => TreeNode | undefined,
+				edit: (atom: StringAtom) => void,
+			): void {
+				const formatStart = start ?? 0;
+				validateIndex(formatStart, this.content, method, true);
+				const formatEnd = Math.min(this.content.length, end ?? this.content.length);
+				validateIndexRange(formatStart, formatEnd, this.content, method);
+				if (!this.#formatRuns(formatStart, formatEnd, runFormat)) {
+					this.#editRange(formatStart, formatEnd, method, edit);
+				}
+			}
+
+			/**
+			 * Replaces the atoms of a range with the same characters as runs, each run with the format `runFormat` gives for it.
+			 * @remarks
+			 * The range is removed and reinserted as runs (see {@link FormattedText.Statics.fromRuns}) in one transaction,
+			 * so this takes time proportional to the number of runs in the range rather than creating objects for each atom.
+			 * The content is the same as editing the format of each atom, but the edit is a removal and insertion of the atoms.
+			 *
+			 * Since collaborators would see a removal and insertion rather than format changes, this is only done in trees
+			 * with base content enabled, which are independent of any collaboration (see {@link isInBaseContentTree}).
+			 * Change events also report the range as removed and inserted.
+			 *
+			 * Does nothing and returns false if the range can not be edited this way:
+			 * when the text is not in such a tree, tracks ranges (whose endpoints a removal would move),
+			 * has atoms which are not characters, or `runFormat` returns undefined for a run.
+			 */
+			#formatRuns(
+				formatStart: number,
+				formatEnd: number,
+				runFormat: (format: TreeNodeFromImplicitAllowedTypes<FormatSchema>) => TreeNode | undefined,
+			): boolean {
+				if (
+					includeRanges ||
+					formatEnd - formatStart < 2 ||
+					!isInBaseContentTree(this)
+				) {
+					return false;
+				}
+				const layout = getRunLayout();
+				const verboseFormats = new Map<TreeNode, VerboseTree>();
+				const items: VerboseTree[] = [];
+				for (const run of this.#runsFrom(formatStart, formatEnd)) {
+					if (run.atom !== undefined) {
+						return false;
+					}
+					const format = runFormat(run.format);
+					if (format === undefined) {
+						return false;
+					}
+					const verboseFormat = getOrCreate(verboseFormats, format, () =>
+						TreeAlpha.exportVerbose(format, { keys: KeyEncodingOptions.allStoredKeys }),
+					);
+					const textRun: VerboseTextRun = { text: run.text, layout };
+					items.push({
+						type: layout.atomType,
+						fields: { [formatKey]: verboseFormat },
+						[verboseTextRun]: textRun,
+					} as VerboseTree);
+				}
+				TreeAlpha.context(this).runTransaction(() => {
+					this.content.removeRange(formatStart, formatEnd);
+					TreeAlpha.insertVerbose(this.content, formatStart, items);
 				});
+				return true;
 			}
 
 			/**
@@ -1215,6 +1319,11 @@ export namespace FormattedText {
 					throw new UsageError("endIndex must be greater than startIndex for getUniformRun.");
 				}
 				const arrayLength = this.length;
+				// A run of characters is the uniform run, and reading it skips over the atoms of run chunks.
+				const characterRun = this.readRun(startIndex, Math.min(endIndex, arrayLength));
+				if (characterRun.text !== undefined) {
+					return characterRun.length;
+				}
 				return this.withBorrowedSequenceCursor((cursor) => {
 					cursor.enterNode(startIndex);
 
@@ -1792,7 +1901,8 @@ export namespace FormattedText {
 			MembersWithRanges<FormatSchema, ExtraAtomsSchema, RangeDataSchema>,
 			FormattedTextSchemaIdentifier<TUserScope>
 		>,
-		FormatSchema
+		FormatSchema,
+		ExtraAtomsSchema
 	> &
 		ErasedSchemaSubclassable<
 			MembersWithRanges<FormatSchema, ExtraAtomsSchema, RangeDataSchema>,
