@@ -48,6 +48,7 @@ import {
 	type TreeNodeSchemaInitializedData,
 	privateDataSymbol,
 	createTreeNodeSchemaPrivateData,
+	normalizeAllowedTypes,
 	type FlexContent,
 	type UnhydratedFlexTreeField,
 	createField,
@@ -506,9 +507,15 @@ const objectNodeDataSymbol: unique symbol = Symbol("objectNodeData");
  * All object node schema without fields share {@link emptyFieldData}.
  */
 interface ObjectNodeFieldData {
-	readonly fields: ReadonlyMap<string, FieldSchemaAlpha & SimpleObjectFieldSchema>;
+	/**
+	 * Cache for {@link CustomObjectNodeBase.fields}, computed on first use (see {@link getFields}).
+	 */
+	fields: ReadonlyMap<string, FieldSchemaAlpha & SimpleObjectFieldSchema> | undefined;
 	readonly flexKeyMap: SimpleKeyMap;
-	readonly storedKeyToPropertyKey: ReadonlyMap<FieldKey, string>;
+	/**
+	 * Cache for {@link CustomObjectNodeBase.storedKeyToPropertyKey}, computed on first use.
+	 */
+	storedKeyToPropertyKey: ReadonlyMap<FieldKey, string> | undefined;
 	readonly identifierFieldKeys: readonly FieldKey[];
 	readonly childAllowedTypes: readonly AllowedTypesFull[];
 	/**
@@ -602,29 +609,48 @@ function createFieldData(
 		}
 	}
 
-	const fields = new Map(
-		Array.from(flexKeyMap, ([key, value]) => [
+	return {
+		fields: undefined,
+		flexKeyMap,
+		storedKeyToPropertyKey: undefined,
+		identifierFieldKeys,
+		// The same (cached) normalized allowed types as the corresponding entries of `fields` have.
+		childAllowedTypes: Array.from(flexKeyMap.values(), (value) =>
+			normalizeAllowedTypes(value.schema.allowedTypes),
+		),
+		childTypes: undefined,
+	};
+}
+
+/**
+ * {@link CustomObjectNodeBase.fields}, created on first use: many schemas never need it.
+ */
+function getFields(
+	fieldData: ObjectNodeFieldData,
+): ReadonlyMap<string, FieldSchemaAlpha & SimpleObjectFieldSchema> {
+	return (fieldData.fields ??= new Map(
+		Array.from(fieldData.flexKeyMap, ([key, value]) => [
 			key as string,
 			new ObjectFieldSchema(value.schema.kind, value.schema.allowedTypes, {
 				...value.schema.props,
 				key: getStoredKey(key as string, value.schema),
 			}),
 		]),
-	);
+	));
+}
 
-	return {
-		fields,
-		flexKeyMap,
-		storedKeyToPropertyKey: new Map(
-			Array.from(flexKeyMap, ([key, value]): [FieldKey, string] => [
-				value.storedKey,
-				key as string,
-			]),
-		),
-		identifierFieldKeys,
-		childAllowedTypes: Array.from(fields.values(), (schema) => schema.allowedTypesFull),
-		childTypes: undefined,
-	};
+/**
+ * {@link CustomObjectNodeBase.storedKeyToPropertyKey}, created on first use.
+ */
+function getStoredKeyToPropertyKey(
+	fieldData: ObjectNodeFieldData,
+): ReadonlyMap<FieldKey, string> {
+	return (fieldData.storedKeyToPropertyKey ??= new Map(
+		Array.from(fieldData.flexKeyMap, ([key, value]): [FieldKey, string] => [
+			value.storedKey,
+			key as string,
+		]),
+	));
 }
 
 function createObjectNodeSchemaData(
@@ -684,13 +710,13 @@ abstract class CustomObjectNodeBase<
 		return this[objectNodeDataSymbol].allowUnknownOptionalFields;
 	}
 	public static get fields(): ReadonlyMap<string, FieldSchemaAlpha & SimpleObjectFieldSchema> {
-		return this[objectNodeDataSymbol].fieldData.fields;
+		return getFields(this[objectNodeDataSymbol].fieldData);
 	}
 	public static get flexKeyMap(): SimpleKeyMap {
 		return this[objectNodeDataSymbol].fieldData.flexKeyMap;
 	}
 	public static get storedKeyToPropertyKey(): ReadonlyMap<FieldKey, string> {
-		return this[objectNodeDataSymbol].fieldData.storedKeyToPropertyKey;
+		return getStoredKeyToPropertyKey(this[objectNodeDataSymbol].fieldData);
 	}
 	public static get identifierFieldKeys(): readonly FieldKey[] {
 		return this[objectNodeDataSymbol].fieldData.identifierFieldKeys;
@@ -1053,7 +1079,7 @@ function shallowCompatibilityTest(
 	// TODO#7441: Consider allowing data to be inserted which has keys that are extraneous/unknown to the schema (those keys are ignored)
 
 	// If the schema has a required key which is not present in the input object, reject it.
-	for (const [fieldKey, fieldSchema] of schema.fields) {
+	for (const [fieldKey, { schema: fieldSchema }] of schema.flexKeyMap) {
 		if (fieldSchema.requiresValue && getFieldProperty(data, fieldKey) === undefined) {
 			return CompatibilityLevel.None;
 		}

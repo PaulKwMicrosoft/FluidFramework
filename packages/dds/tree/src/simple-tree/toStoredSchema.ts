@@ -140,7 +140,7 @@ export function hasStagedSchemaUpgrades(schema: SimpleTreeSchema<SchemaType.View
 					break;
 				}
 				case NodeKind.Object: {
-					for (const field of nodeSchema.fields.values()) {
+					for (const field of objectFieldSchemas(nodeSchema)) {
 						if (fieldHasStagedUpgrades(field)) {
 							return true;
 						}
@@ -156,6 +156,27 @@ export function hasStagedSchemaUpgrades(schema: SimpleTreeSchema<SchemaType.View
 	});
 }
 
+/**
+ * The field schemas of an object node schema.
+ * @remarks
+ * For class based schemas, reads the normalized field schemas they keep (in `flexKeyMap`), which `fields` entries copy,
+ * so that their `fields` map is not created just to check for staged upgrades.
+ */
+function objectFieldSchemas(
+	nodeSchema: SimpleObjectNodeSchema<SchemaType.View>,
+): Iterable<SimpleFieldSchema<SchemaType.View>> {
+	const flexKeyMap = (
+		nodeSchema as {
+			readonly flexKeyMap?: ReadonlyMap<unknown, { readonly schema: unknown }>;
+		}
+	).flexKeyMap;
+	return flexKeyMap === undefined
+		? nodeSchema.fields.values()
+		: mapIterable(
+				flexKeyMap.values(),
+				(value) => value.schema as SimpleFieldSchema<SchemaType.View>,
+			);
+}
 function allowedTypesHaveStagedUpgrades(
 	allowedTypes: SimpleAllowedTypes<SchemaType.View>,
 ): boolean {
