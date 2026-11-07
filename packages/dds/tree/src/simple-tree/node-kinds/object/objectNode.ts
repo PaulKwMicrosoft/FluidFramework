@@ -874,11 +874,8 @@ export function objectSchema<
 		public declare static readonly info: T;
 		public declare static readonly implicitlyConstructable: ImplicitlyConstructable;
 		public declare static readonly metadata: NodeSchemaMetadata<TCustomMetadata>;
-
-		protected static override constructorCached: MostDerivedData | undefined = undefined;
-		public static override readonly [objectNodeDataSymbol]: ObjectNodeSchemaData = data;
 	}
-	data.nodeClass = CustomObjectNode;
+	defineSchemaClassData(CustomObjectNode, data);
 
 	type Output = typeof CustomObjectNode &
 		(new (
@@ -937,11 +934,8 @@ export function singletonObjectSchema<TName extends string, TValue extends strin
 		{ allowUnknownOptionalFields: false },
 		{ value },
 	);
-	class SingletonSchema extends SingletonNodeBase {
-		protected static override constructorCached: MostDerivedData | undefined = undefined;
-		public static override readonly [objectNodeDataSymbol]: ObjectNodeSchemaData = data;
-	}
-	data.nodeClass = SingletonSchema;
+	class SingletonSchema extends SingletonNodeBase {}
+	defineSchemaClassData(SingletonSchema, data);
 	return SingletonSchema as unknown as TreeNodeSchemaClass<
 		TName,
 		NodeKind.Object,
@@ -954,6 +948,33 @@ export function singletonObjectSchema<TName extends string, TValue extends strin
 }
 
 const emptyInfo: Record<string, never> = Object.freeze({});
+
+/**
+ * Defines the static members which each class created for an object schema has, as static class fields would,
+ * and records the class in `data`.
+ * @remarks
+ * Unlike static class fields, which are initialized by a function closing over `data`,
+ * this does not allocate closure contexts for each class: large schemas can have many classes.
+ */
+function defineSchemaClassData(
+	nodeClass: abstract new (...args: never[]) => CustomObjectNodeBase<never>,
+	data: ObjectNodeSchemaData,
+): void {
+	// TreeNodeValid.markMostDerived requires each schema class to have its own `constructorCached`, initially undefined.
+	Object.defineProperty(nodeClass, "constructorCached", {
+		value: undefined,
+		writable: true,
+		enumerable: true,
+		configurable: true,
+	});
+	Object.defineProperty(nodeClass, objectNodeDataSymbol, {
+		value: data,
+		writable: true,
+		enumerable: true,
+		configurable: true,
+	});
+	data.nodeClass = nodeClass;
+}
 
 /**
  * The proxy (node) whose target is 	arget, once its kernel is attached: the proxy forwards the kernel slot to its target.
