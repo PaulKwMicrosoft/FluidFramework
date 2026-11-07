@@ -59,7 +59,6 @@ import type {
 	SimpleRecordNodeSchema,
 	SimpleTreeSchema,
 } from "./simpleSchema.js";
-import type { TreeSchema } from "./treeSchema.js";
 
 // TODO: this file, src/simple-tree/api/storedSchema.ts and src/simple-tree/core/toStored.ts should be refactored to group the logic more logically.
 // The content of src/simple-tree/api/storedSchema.ts should probably removed from the API surface, replaced by simple schema snapshotting APIs.
@@ -189,30 +188,30 @@ function allowedTypesHaveStagedUpgrades(
 }
 
 /**
-/**
- * The stored schema {@link toStoredSchema} generates from a schema without staged upgrades (see {@link hasStagedSchemaUpgrades}),
- * with each node schema derived the first time it is looked up.
+ * The node schema of the stored schema {@link toStoredSchema} generates from a schema without staged upgrades (see {@link hasStagedSchemaUpgrades}),
+ * with each derived the first time it is looked up.
+ * @param definitions - The schema's definitions.
+ * Only their identifiers and lookups by identifier are used, so this can be a view of a larger map, as long as it is exact.
  * @remarks
- * Without staged upgrades, every node schema in `schema.definitions` is reachable whatever the policy,
- * so the node schemas are those of `schema.definitions`, in its order, as {@link transformSimpleSchema} would give.
+ * Without staged upgrades, every node schema in the schema's definitions is reachable whatever the policy,
+ * so the node schemas are those of `definitions`, in its order, as {@link transformSimpleSchema} would give.
  */
-export function lazyStoredSchema(schema: TreeSchema): TreeStoredSchema {
-	const policy = StagedSchemaUpgradePolicy.restrictive;
-	const definitions = schema.definitions;
-	return {
-		rootFieldSchema: toStoredFieldSchema(schema.root, policy),
-		nodeSchema: LazyNodeStoredSchemaMap.create(definitions, (identifier) => {
-			const definition =
-				definitions.get(identifier) ?? fail("Lazy stored schema has no view schema");
-			return getOrCreate(sharedNodeStoredSchemas, definition, () =>
-				getStoredSchema(transformSimpleNodeSchema(definition, policy)),
-			);
-		}),
-	};
+export function lazyNodeStoredSchema(
+	definitions: ReadonlyMap<string, SimpleNodeSchema<SchemaType.View>>,
+): LazyNodeStoredSchemaMap {
+	return LazyNodeStoredSchemaMap.create(definitions, (identifier) => {
+		const definition =
+			definitions.get(identifier) ?? fail("Lazy stored schema has no view schema");
+		return getOrCreate(sharedNodeStoredSchemas, definition, () =>
+			getStoredSchema(
+				transformSimpleNodeSchema(definition, StagedSchemaUpgradePolicy.restrictive),
+			),
+		);
+	});
 }
 
 /**
- * The stored node schema {@link lazyStoredSchema} derives, by view node schema, shared by all roots.
+ * The stored node schema {@link lazyNodeStoredSchema} derives, by view node schema, shared by all roots.
  * @remarks
  * A root without staged upgrades reaches no node schema with staged allowed types,
  * so the stored schema of each node schema it reaches is the same whichever root, and whichever policy, it is derived for.

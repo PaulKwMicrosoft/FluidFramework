@@ -6,7 +6,7 @@
 import { assert } from "@fluidframework/core-utils/internal";
 import { UsageError } from "@fluidframework/telemetry-utils/internal";
 
-import type { TreeStoredSchema } from "../core/index.js";
+import type { LazyNodeStoredSchemaMap, TreeStoredSchema } from "../core/index.js";
 import { defaultSchemaPolicy } from "../feature-libraries/index.js";
 import { getOrCreate, oneFromIterable } from "../util/index.js";
 
@@ -29,9 +29,10 @@ import {
 import { isObjectNodeSchema } from "./node-kinds/index.js";
 import type { SchemaType, SimpleNodeSchema, SimpleTreeSchema } from "./simpleSchema.js";
 import {
-	lazyStoredSchema,
+	lazyNodeStoredSchema,
 	resolveStoredSchemaGenerationOptions,
 	simpleStoredSchemaToStoredSchema,
+	toStoredFieldSchema,
 	transformSimpleSchema,
 	// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Used by TSDoc links.
 	type toUnhydratedSchema,
@@ -106,9 +107,9 @@ export class SchemaComponent implements TransitiveSchemaInfo {
 	 */
 	#definitions: TreeSchema["definitions"] | undefined;
 	/**
-	 * Default unhydrated context, cached only after successful construction.
+	 * Data derived for this component on first use, which most components never need.
 	 */
-	#context: Context | undefined;
+	#derived: ComponentDerivedData | undefined;
 
 	/**
 	 * Every schema identity in this unfiltered component, including non-class leaf schemas.
@@ -150,14 +151,22 @@ export class SchemaComponent implements TransitiveSchemaInfo {
 	 */
 	public static fromSchema(schema: TreeNodeSchema): SchemaComponent {
 		const component = getOrCreateSchemaComponent(schema);
+		component.validateIdentifiers();
+		return component;
+	}
+
+	/**
+	 * Validates that the identifiers reachable from this component are unique, unless that is already known.
+	 * @throws A {@link UsageError} if distinct reachable schemas have the same identifier.
+	 */
+	public validateIdentifiers(): void {
 		// Identifiers reachable from a component were validated if they were when building definitions which include them.
-		if (!componentsWithValidatedIdentifiers.has(component)) {
+		if (!containingDefinitions.has(this)) {
 			assert(
-				component.definitions !== undefined,
+				this.definitions !== undefined,
 				0xd9f /* Expected a validated schema component */,
 			);
 		}
-		return component;
 	}
 
 	/**
@@ -175,31 +184,89 @@ export class SchemaComponent implements TransitiveSchemaInfo {
 	}
 
 	/**
+	 * The same node schema as {@link SchemaComponent.definitions}, for looking schema up by identifier.
+	 * @remarks
+	 * Unless {@link SchemaComponent.definitions} has been materialized, a component included in definitions built for another component or root
+	 * gets an exact view of those definitions, restricted to the schema reachable from it, rather than a map of its own.
+	 * This avoids a map of every reachable schema for each component that content is created under, such as the roots content is imported under.
+	 * Iteration order is unspecified.
+	 * @throws A {@link UsageError} if distinct reachable schemas have the same identifier.
+	 */
+	public get reachableDefinitions(): TreeSchema["definitions"] {
+		if (this.#definitions !== undefined) {
+			return this.#definitions;
+		}
+		const derived = (this.#derived ??= {});
+		if (derived.reachableDefinitions === undefined) {
+			const containing = containingDefinitions.get(this);
+			derived.reachableDefinitions =
+				containing === undefined ? this.definitions : reachableSubset(this, containing);
+		}
+		return derived.reachableDefinitions;
+	}
+
+	/**
+	 * The stored schema of the node schema reachable from this component, each derived when it is first looked up.
+	 * @remarks
+	 * Only for components without staged schema, whose stored schema is the same for every policy.
+	 * Shared by the stored schema of every root with only this component, and this component's {@link SchemaComponent.context}.
+	 */
+	public get storedNodeSchema(): LazyNodeStoredSchemaMap {
+		assert(
+			!this.hasStagedSchema,
+			"A component with staged schema has a stored schema per policy",
+		);
+		const derived = (this.#derived ??= {});
+		return (derived.storedNodeSchema ??= lazyNodeStoredSchema(this.reachableDefinitions));
+	}
+
+	/**
 	 * Default context shared by all roots referencing this component.
 	 * Root-field annotations are not part of an unhydrated node's context.
 	 * @remarks
-	 * Created on first access.
-	 * Reuses the permissive root conversion of one member, since every member reaches the same unfiltered nodes.
+	 * Created on first access, and cached only after successful construction.
+	 * Uses {@link SchemaComponent.storedNodeSchema} without staged schema;
+	 * otherwise reuses the permissive root conversion of one member, since every member reaches the same unfiltered nodes.
 	 * Does not allow unknown optional fields.
 	 */
 	public get context(): Context {
-		if (this.#context !== undefined) {
-			return this.#context;
+		const cached = this.#derived?.context;
+		if (cached !== undefined) {
+			return cached;
 		}
-		const member = this.members[0];
-		assert(
-			member !== undefined,
-			0xda0 /* A schema component must contain at least one node */,
-		);
-		const data = getRootSchemaDerivedData(member);
-		return (this.#context = new Context(
-			new UnhydratedContext(
-				defaultSchemaPolicy,
-				data.getStoredSchema(StagedSchemaUpgradePolicy.permissive).nodeSchema,
-			),
-			data.definitions,
-		));
+		let context: Context;
+		if (this.hasStagedSchema) {
+			const member = this.members[0];
+			assert(
+				member !== undefined,
+				0xda0 /* A schema component must contain at least one node */,
+			);
+			const data = getRootSchemaDerivedData(member);
+			context = new Context(
+				new UnhydratedContext(
+					defaultSchemaPolicy,
+					data.getStoredSchema(StagedSchemaUpgradePolicy.permissive).nodeSchema,
+				),
+				data.definitions,
+			);
+		} else {
+			context = new Context(
+				new UnhydratedContext(defaultSchemaPolicy, this.storedNodeSchema),
+				this.reachableDefinitions,
+			);
+		}
+		(this.#derived ??= {}).context = context;
+		return context;
 	}
+}
+
+/**
+ * Data derived for a {@link SchemaComponent} on first use.
+ */
+interface ComponentDerivedData {
+	reachableDefinitions?: TreeSchema["definitions"];
+	storedNodeSchema?: LazyNodeStoredSchemaMap;
+	context?: Context;
 }
 
 /**
@@ -339,7 +406,13 @@ export class RootSchemaDerivedData implements TransitiveSchemaInfo {
 				0xda1 /* Expected a policy-independent cache */,
 			);
 			// Every policy gives the same result, so derive each node schema only when it is first looked up.
-			this.#storedSchemas ??= runSchemaInitialization(() => lazyStoredSchema(this.treeSchema));
+			// A root with one component shares that component's node schema, so that the roots of one component share them.
+			this.#storedSchemas ??= runSchemaInitialization(() => ({
+				rootFieldSchema: toStoredFieldSchema(this.root, StagedSchemaUpgradePolicy.restrictive),
+				nodeSchema:
+					oneFromIterable(this.components)?.storedNodeSchema ??
+					lazyNodeStoredSchema(this.definitions),
+			}));
 			return this.#storedSchemas;
 		}
 		this.#storedSchemas ??= new WeakMap();
@@ -400,7 +473,13 @@ export function getRootSchemaDerivedData(
 		// Root staging metadata can also invoke user code, independently of component discovery.
 		return runSchemaInitialization(() => {
 			const data = new RootSchemaDerivedData(root, components);
-			assert(data.treeSchema !== undefined, 0xda3 /* Expected a validated root graph */);
+			// A staging-free root with one component needs only that component's identifiers validated, not definitions of its own.
+			const component = oneFromIterable(components);
+			if (component === undefined || data.hasStagedSchema) {
+				assert(data.treeSchema !== undefined, 0xda3 /* Expected a validated root graph */);
+			} else {
+				component.validateIdentifiers();
+			}
 			return data;
 		});
 	});
@@ -561,19 +640,146 @@ function materializeDefinitions(roots: Iterable<SchemaComponent>): TreeSchema["d
 	}
 	// Every component visited has all the components it reaches in `components`, whose identifiers are unique.
 	for (const component of components) {
-		componentsWithValidatedIdentifiers.add(component);
+		if (!containingDefinitions.has(component)) {
+			containingDefinitions.set(component, definitions);
+		}
 	}
 	return definitions;
 }
 
 /**
- * Components whose reachable schemas are known to have unique identifiers, because definitions including them all were built.
+ * For each component whose reachable schemas are known to have unique identifiers, definitions which include them all.
  * @remarks
  * {@link SchemaComponent.fromSchema} validates a component's reachable identifiers by building its definitions.
- * A component in this set does not need to, which avoids building a map of the reachable definitions
+ * A component in this map does not need to, which avoids building a map of the reachable definitions
  * for each node schema first used in a tree whose schema was validated as a whole.
+ * {@link SchemaComponent.reachableDefinitions} looks schema up in these definitions for the same reason.
+ * The first definitions built which include a component are kept.
  */
-const componentsWithValidatedIdentifiers = new WeakSet<SchemaComponent>();
+const containingDefinitions = new WeakMap<SchemaComponent, TreeSchema["definitions"]>();
+
+/**
+ * The node schema of some definitions, numbered, so that subsets of them can be held as bit sets.
+ */
+interface DefinitionsIndex {
+	readonly schemas: readonly (SimpleNodeSchema<SchemaType.View> & TreeNodeSchema)[];
+	readonly positions: ReadonlyMap<string, number>;
+}
+
+/**
+ * The {@link DefinitionsIndex} of each map in {@link containingDefinitions} used by {@link reachableSubset}.
+ */
+const definitionsIndexes = new WeakMap<TreeSchema["definitions"], DefinitionsIndex>();
+
+/**
+ * An exact view of the node schema reachable from `component`, which `containing` includes all of.
+ */
+function reachableSubset(
+	component: SchemaComponent,
+	containing: TreeSchema["definitions"],
+): ReachableDefinitions {
+	const index = getOrCreate(definitionsIndexes, containing, () => {
+		const schemas = [...containing.values()];
+		return {
+			schemas,
+			positions: new Map(schemas.map((schema, position) => [schema.identifier, position])),
+		};
+	});
+	const members = new Uint32Array(Math.ceil(index.schemas.length / 32));
+	let size = 0;
+	const components = new Set([component]);
+	for (const reached of components) {
+		for (const schema of reached.members) {
+			const position = index.positions.get(schema.identifier);
+			assert(
+				position !== undefined && index.schemas[position] === schema,
+				"Definitions which include a component include every schema reachable from it",
+			);
+			// Components are disjoint, so each schema is counted once.
+			// eslint-disable-next-line no-bitwise -- A bit set is much smaller than a map for each component.
+			const word = position >>> 5;
+			// eslint-disable-next-line no-bitwise -- A bit set is much smaller than a map for each component.
+			members[word] = (members[word] ?? 0) | (1 << (position & 31));
+			size++;
+		}
+		for (const dependency of reached.dependencies) {
+			components.add(dependency);
+		}
+	}
+	return new ReachableDefinitions(index, members, size);
+}
+
+/**
+ * A subset of the node schema of some definitions, held as a bit set over their {@link DefinitionsIndex}.
+ */
+class ReachableDefinitions
+	implements ReadonlyMap<string, SimpleNodeSchema<SchemaType.View> & TreeNodeSchema>
+{
+	public constructor(
+		private readonly index: DefinitionsIndex,
+		private readonly members: Uint32Array,
+		public readonly size: number,
+	) {}
+
+	public get(
+		identifier: string,
+	): (SimpleNodeSchema<SchemaType.View> & TreeNodeSchema) | undefined {
+		const position = this.index.positions.get(identifier);
+		return position !== undefined && this.#includes(position)
+			? this.index.schemas[position]
+			: undefined;
+	}
+
+	public has(identifier: string): boolean {
+		return this.get(identifier) !== undefined;
+	}
+
+	public *entries(): MapIterator<
+		[string, SimpleNodeSchema<SchemaType.View> & TreeNodeSchema]
+	> {
+		for (const [position, schema] of this.index.schemas.entries()) {
+			if (this.#includes(position)) {
+				yield [schema.identifier, schema];
+			}
+		}
+	}
+
+	public *keys(): MapIterator<string> {
+		for (const [identifier] of this.entries()) {
+			yield identifier;
+		}
+	}
+
+	public *values(): MapIterator<SimpleNodeSchema<SchemaType.View> & TreeNodeSchema> {
+		for (const [, schema] of this.entries()) {
+			yield schema;
+		}
+	}
+
+	public [Symbol.iterator](): MapIterator<
+		[string, SimpleNodeSchema<SchemaType.View> & TreeNodeSchema]
+	> {
+		return this.entries();
+	}
+
+	public forEach(
+		callbackfn: (
+			value: SimpleNodeSchema<SchemaType.View> & TreeNodeSchema,
+			key: string,
+			map: ReadonlyMap<string, SimpleNodeSchema<SchemaType.View> & TreeNodeSchema>,
+		) => void,
+		thisArg?: unknown,
+	): void {
+		for (const [identifier, schema] of this.entries()) {
+			callbackfn.call(thisArg, schema, identifier, this);
+		}
+	}
+
+	#includes(position: number): boolean {
+		// eslint-disable-next-line no-bitwise, @typescript-eslint/no-non-null-assertion -- A bit set, with a word for every position.
+		return (this.members[position >>> 5]! & (1 << (position & 31))) !== 0;
+	}
+}
 
 /**
  * Adds a schema to an identity-deduplicated graph, rejecting identifier collisions.
