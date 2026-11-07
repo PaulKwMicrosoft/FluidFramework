@@ -570,6 +570,16 @@ function attachPass(
  *
  * TODO: Update the visitDelta logic and downstream APIs to avoid splitting up sequences into individual nodes.
  */
+/**
+ * Cursors at each top-level node of `trees`.
+ * @remarks
+ * A chunk with one node, as a build of one new value has, gets the chunk's own cursor in that node rather than a fork of it.
+ */
 function nodeCursorsFromChunk(trees: TreeChunk): ITreeCursorSynchronous[] {
-	return mapCursorField(trees.cursor(), (c) => c.fork());
+	const cursor = trees.cursor();
+	if (trees.topLevelLength === 1) {
+		cursor.enterNode(0);
+		return [cursor];
+	}
+	return mapCursorField(cursor, (c) => c.fork());
 }
