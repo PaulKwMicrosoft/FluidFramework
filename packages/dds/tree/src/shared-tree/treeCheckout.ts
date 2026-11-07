@@ -1699,19 +1699,29 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	 */
 	private discardHistory(revisions: readonly RevisionTag[]): void {
 		// Garbage collect any repair data whose latest relevant revision is one of the discarded revisions.
-		this.withCombinedVisitor((visitor) => {
-			for (const revision of revisions) {
-				// get all the roots last created or used by the revision
-				const roots = this._removedRoots.getRootsLastTouchedByRevision(revision);
+		// Commits without repair data (such as inserts) don't need the forest to be edited.
+		const removedRoots = this._removedRoots;
+		const hasRepairData = (revision: RevisionTag): boolean =>
+			removedRoots.getRootsLastTouchedByRevision(revision)[Symbol.iterator]().next().done !==
+			true;
+		if (revisions.some(hasRepairData)) {
+			this.withCombinedVisitor((visitor) => {
+				for (const revision of revisions) {
+					// get all the roots last created or used by the revision
+					const roots = removedRoots.getRootsLastTouchedByRevision(revision);
 
-				// get the detached field for the root and delete it from the removed roots
-				for (const root of roots) {
-					visitor.destroy(this._removedRoots.toFieldKey(root), 1);
+					// get the detached field for the root and delete it from the removed roots
+					for (const root of roots) {
+						visitor.destroy(removedRoots.toFieldKey(root), 1);
+					}
+
+					removedRoots.deleteRootsLastTouchedByRevision(revision);
 				}
-
-				this._removedRoots.deleteRootsLastTouchedByRevision(revision);
-			}
-		});
+			});
+		}
+		debugAssert(() =>
+			revisions.some(hasRepairData) ? "Discarded commits must leave no repair data" : true,
+		);
 		for (const revision of revisions) {
 			// A discarded commit can no longer settle, so its events will never be emitted.
 			this.localCommitEventEmitters.delete(revision);

@@ -482,6 +482,39 @@ describe("independentView", () => {
 			assert.deepEqual([...view.root], []);
 		});
 
+		it("edits the forest to discard history only when the discarded commits have repair data", () => {
+			const { checkout, view } = createView(1, ["a"]);
+			let visitors = 0;
+			const forest = checkout.forest;
+			const acquireVisitor = forest.acquireVisitor.bind(forest);
+			forest.acquireVisitor = () => {
+				visitors++;
+				return acquireVisitor();
+			};
+			const visitorsOf = (edit: () => void): number => {
+				const before = visitors;
+				edit();
+				return visitors - before;
+			};
+			// Applying a commit takes one visitor. Discarding the commits of inserts, which have no repair data, takes none.
+			assert.equal(
+				visitorsOf(() => view.root.insertAtEnd("b")),
+				1,
+			);
+			assert.equal(
+				visitorsOf(() => view.root.removeAt(0)),
+				1,
+			);
+			assert.equal(checkout.getRemovedRoots().length, 1);
+			// Discarding the removal's commit destroys its repair data.
+			assert.equal(
+				visitorsOf(() => view.root.insertAtEnd("c")),
+				2,
+			);
+			assert.equal(checkout.getRemovedRoots().length, 0);
+			assert.deepEqual([...view.root], ["b", "c"]);
+		});
+
 		it("retains the commits needed by valid revertibles", () => {
 			const { checkout, view } = createView(2, ["a", "b", "c", "d", "e"]);
 			const history = checkout.branchHistory;
