@@ -212,6 +212,8 @@ export {
 	type HydratedFlexTreeNode,
 	getOrCreateHydratedFlexTreeNode,
 	disposeHydratedFlexTreeNode,
+	inPlaceValueChange,
+	trySetValueInPlace,
 	currentObserver,
 	withObservation,
 	type Observer,

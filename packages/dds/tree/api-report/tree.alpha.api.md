@@ -294,7 +294,7 @@ export function createIdentifierIndex<TSchema extends ImplicitFieldSchema>(view:
 export function createIndependentTreeAlpha(options?: CreateIndependentTreeAlphaOptions): ViewableTreeAlpha;
 
 // @alpha
-export type CreateIndependentTreeAlphaOptions = ForestOptions & IndependentViewTelemetryOptions & IndependentTreeHistoryOptions & ((IndependentViewOptions & {
+export type CreateIndependentTreeAlphaOptions = ForestOptions & InPlaceValueChangeOptions & IndependentViewTelemetryOptions & IndependentTreeHistoryOptions & ((IndependentViewOptions & {
     content?: never;
 }) | (ICodecOptions & {
     content: ViewContent;
@@ -755,7 +755,7 @@ export interface IndependentTreeHistoryOptions {
 export function independentView<const TSchema extends ImplicitFieldSchema>(config: TreeViewConfiguration<TSchema>, options?: IndependentViewOptions): TreeViewAlpha<TSchema>;
 
 // @alpha @input
-export interface IndependentViewOptions extends ForestOptions, Partial<CodecWriteOptions>, IndependentViewTelemetryOptions, IndependentTreeHistoryOptions {
+export interface IndependentViewOptions extends ForestOptions, InPlaceValueChangeOptions, Partial<CodecWriteOptions>, IndependentViewTelemetryOptions, IndependentTreeHistoryOptions {
     idCompressor?: IIdCompressor | undefined;
 }
 
@@ -766,6 +766,11 @@ export interface IndependentViewTelemetryOptions {
 
 // @public @system
 type _InlineTrick = 0;
+
+// @alpha @input
+export interface InPlaceValueChangeOptions {
+    readonly enableInPlaceValueChanges?: boolean;
+}
 
 // @public @system
 export type Input<T extends never> = T;
@@ -1662,7 +1667,7 @@ export interface SharedTreeFormatOptions {
 }
 
 // @alpha @input
-export interface SharedTreeOptions extends SharedTreeOptionsBeta, Partial<CodecWriteOptions>, Partial<SharedTreeFormatOptions> {
+export interface SharedTreeOptions extends SharedTreeOptionsBeta, Partial<CodecWriteOptions>, Partial<SharedTreeFormatOptions>, InPlaceValueChangeOptions {
     readonly enableSharedBranches?: boolean;
     readonly retainHistory?: boolean | number;
     shouldEncodeIncrementally?: IncrementalEncodingPolicy;

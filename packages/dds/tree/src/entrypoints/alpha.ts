@@ -223,6 +223,7 @@ export {
 	ICodecOptions, 
 	ITreeAlpha, 
 	ITreeViewConfigurationAlpha, 
+	InPlaceValueChangeOptions, 
 	IncrementalEncodingPolicy, 
 	IndependentTreeHistoryOptions, 
 	IndependentViewOptions, 

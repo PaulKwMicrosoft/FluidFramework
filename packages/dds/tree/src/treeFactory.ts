@@ -230,9 +230,20 @@ export function resolveOptions(options: SharedTreeOptions): SharedTreeOptionsInt
 
 function resolveFormatOptions(options: SharedTreeOptions): SharedTreeOptionsInternal {
 	const enableSharedBranches = options.enableSharedBranches ?? false;
+	const enableInPlaceValueChanges = options.enableInPlaceValueChanges ?? false;
+
+	if (enableSharedBranches && enableInPlaceValueChanges) {
+		throw new UsageError(
+			"Shared branches and in-place value changes cannot be enabled together.",
+		);
+	}
 
 	if (enableSharedBranches) {
 		return sharedBranchesOptions;
+	}
+
+	if (enableInPlaceValueChanges) {
+		return inPlaceValueChangesOptions;
 	}
 
 	return {};
@@ -243,6 +254,14 @@ const sharedBranchesOptions: SharedTreeOptionsInternal = {
 		[editManagerCodecName, EditManagerFormatVersion.vSharedBranches],
 		[messageCodecName, MessageFormatVersion.vSharedBranches],
 		[detachedFieldIndexCodecBuilder.name, DetachedFieldIndexFormatVersion.v2],
+	]),
+	allowPossiblyIncompatibleWriteVersionOverrides: true,
+};
+
+const inPlaceValueChangesOptions: SharedTreeOptionsInternal = {
+	writeVersionOverrides: new Map<string, FormatVersion>([
+		[editManagerCodecName, EditManagerFormatVersion.vInPlaceValues],
+		[messageCodecName, MessageFormatVersion.vInPlaceValues],
 	]),
 	allowPossiblyIncompatibleWriteVersionOverrides: true,
 };

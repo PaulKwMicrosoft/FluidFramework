@@ -13,6 +13,7 @@ export {
 	type SharedTreeFormatOptions,
 	defaultSharedTreeOptions,
 	type ForestOptions,
+	type InPlaceValueChangeOptions,
 	type ITreeInternal,
 	exportSimpleSchema,
 	type SharedTreeKernelView,

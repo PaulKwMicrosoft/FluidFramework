@@ -21,6 +21,7 @@ import {
 	type FlexTreeNode,
 	type FlexTreeOptionalField,
 	type FlexTreeRequiredField,
+	trySetValueInPlace,
 } from "../../../feature-libraries/index.js";
 import type {
 	RestrictiveStringRecord,
@@ -459,8 +460,10 @@ export function setField(
 	switch (field.schema) {
 		case FieldKinds.required.identifier: {
 			assert(mapTree !== undefined, 0xa04 /* Cannot set a required field to undefined */);
-			const typedField = field as FlexTreeRequiredField;
-			typedField.editor.set(mapTree);
+			if (!trySetValueInPlace(field, destinationSchema, mapTree)) {
+				const typedField = field as FlexTreeRequiredField;
+				typedField.editor.set(mapTree);
+			}
 			break;
 		}
 		case FieldKinds.optional.identifier: {

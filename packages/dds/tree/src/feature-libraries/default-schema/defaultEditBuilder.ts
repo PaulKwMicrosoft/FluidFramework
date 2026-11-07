@@ -35,6 +35,7 @@ import {
 	ModularChangeFamily,
 	type ModularChangeset,
 	ModularEditBuilder,
+	type NodeValueChange,
 	intoDelta as intoModularDelta,
 	relevantRemovedRoots as relevantModularRemovedRoots,
 } from "../modular-schema/index.js";
@@ -136,7 +137,6 @@ export function relevantRemovedRoots(change: ModularChangeset): Iterable<DeltaDe
  * Examples of these non-expressible edits include:
  *
  * - Changing the type of a node while keeping its merge identity.
- * - Changing the value of a leaf while keeping its merge identity.
  * - Swapping subtrees between two value fields.
  * - Replacing a node in the middle of a tree while reusing some of the old nodes decedents that were under value fields.
  *
@@ -146,6 +146,11 @@ export function relevantRemovedRoots(change: ModularChangeset): Iterable<DeltaDe
  */
 export interface IDefaultEditBuilder<TContent = TreeChunk> {
 	/**
+	 * Whether {@link IDefaultEditBuilder.setFields} accepts sets of kind "value", which change the values of leaves in place.
+	 */
+	readonly inPlaceValueChanges: boolean;
+
+	/**
 	 * Replaces the content of several required or optional fields, in order, as one change.
 	 * @remarks
 	 * Gives the same result as setting each field with {@link IDefaultEditBuilder.valueField} or {@link IDefaultEditBuilder.optionalField},
@@ -153,6 +158,7 @@ export interface IDefaultEditBuilder<TContent = TreeChunk> {
 	 * The fields are identified by their paths in the tree as it is before any of them is set,
 	 * so no field may be under the content of another field set by the same call.
 	 * Each field may be set at most once.
+	 * Sets of kind "value" are only valid when {@link IDefaultEditBuilder.inPlaceValueChanges} is true.
 	 */
 	setFields(sets: readonly FieldSet<TContent>[]): void;
 
@@ -230,6 +236,7 @@ export class DefaultEditBuilder implements ChangeFamilyEditor, IDefaultEditBuild
 		private readonly mintRevisionTag: () => RevisionTag,
 		changeReceiver: (change: TaggedChange<DefaultChangeset>) => void,
 		codecOptions: CodecWriteOptions,
+		public readonly inPlaceValueChanges: boolean = false,
 	) {
 		this.modularBuilder = new ModularEditBuilder(
 			rebaser,
@@ -293,6 +300,17 @@ export class DefaultEditBuilder implements ChangeFamilyEditor, IDefaultEditBuild
 		for (const set of sets) {
 			if (set.kind === "required") {
 				this.addRequiredFieldSet(edits, set.field, set.content, revision);
+			} else if (set.kind === "value") {
+				assert(
+					this.inPlaceValueChanges,
+					"In-place value changes must be enabled to change a leaf value in place",
+				);
+				edits.push({
+					type: "value",
+					node: { parent: set.field.parent, parentField: set.field.field, parentIndex: 0 },
+					change: set.change,
+					revision,
+				});
 			} else {
 				this.addOptionalFieldSet(edits, set.field, set.content, set.wasEmpty, revision);
 			}
@@ -554,6 +572,16 @@ export type FieldSet<TContent> =
 			 * Whether the field is empty before it is set.
 			 */
 			readonly wasEmpty: boolean;
+	  }
+	| {
+			/**
+			 * Changes the value of the leaf in the required field `field` in place, keeping the node.
+			 * @remarks
+			 * Only valid when {@link IDefaultEditBuilder.inPlaceValueChanges} is true.
+			 */
+			readonly kind: "value";
+			readonly field: FieldUpPath;
+			readonly change: NodeValueChange;
 	  };
 
 export interface OptionalFieldEditBuilder<TContent> {

@@ -416,6 +416,11 @@ export function createTreeCheckout(
 		 * Must not be true when `branch` is provided.
 		 */
 		enableBaseContent?: boolean;
+		/**
+		 * Whether the checkout's editors change the values of leaves in place where they can.
+		 * Ignored when `changeFamily` is provided.
+		 */
+		inPlaceValueChanges?: boolean;
 	},
 ): TreeCheckout {
 	assert(
@@ -438,6 +443,7 @@ export function createTreeCheckout(
 			codecOptions,
 			args?.chunkCompressionStrategy,
 			idCompressor,
+			args?.inPlaceValueChanges,
 		);
 
 	// TODO: If a branch is passed in, is it supposed to be local main?
@@ -3019,6 +3025,9 @@ class EditLock {
 		this.editor = {
 			get schema() {
 				return editor.schema;
+			},
+			get inPlaceValueChanges() {
+				return editor.inPlaceValueChanges;
 			},
 			valueField(...fieldArgs) {
 				const valueField = editor.valueField(...fieldArgs);

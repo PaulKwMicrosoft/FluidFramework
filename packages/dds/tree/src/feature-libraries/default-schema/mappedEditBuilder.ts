@@ -52,16 +52,22 @@ export class MappedEditBuilder<TBase, TAdapted> implements IDefaultEditBuilder<T
 			},
 		};
 	}
+	public get inPlaceValueChanges(): boolean {
+		return this.baseBuilder.inPlaceValueChanges;
+	}
 	public setFields(sets: readonly FieldSet<TAdapted>[]): void {
 		this.baseBuilder.setFields(
 			sets.map(
 				(set): FieldSet<TBase> =>
-					set.kind === "required"
-						? { ...set, content: this.mapDelegate(set.content) }
-						: {
-								...set,
-								content: set.content === undefined ? undefined : this.mapDelegate(set.content),
-							},
+					set.kind === "value"
+						? set
+						: set.kind === "required"
+							? { ...set, content: this.mapDelegate(set.content) }
+							: {
+									...set,
+									content:
+										set.content === undefined ? undefined : this.mapDelegate(set.content),
+								},
 			),
 		);
 	}
