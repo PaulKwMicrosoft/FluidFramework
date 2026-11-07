@@ -352,8 +352,10 @@ export class FieldSchema<
 	/**
 	 * This class is used with instanceof, and therefore should have nominal typing.
 	 * This field enforces that.
+	 * @privateRemarks
+	 * Declared only, so instances don't hold it: large schemas have many field schemas.
 	 */
-	protected _typeCheck!: MakeNominal;
+	protected declare _typeCheck: MakeNominal;
 
 	/**
 	 * {@link FieldSchema.allowedTypeSet}, once evaluated.
@@ -421,6 +423,7 @@ export class FieldSchemaAlpha<
 		Kind extends FieldKind = FieldKind,
 		Types extends ImplicitAllowedTypes = ImplicitAllowedTypes,
 		TCustomMetadata = unknown,
+		// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Part of the public type, which callers specify.
 		TProps extends FieldPropsAlpha<TCustomMetadata> | undefined =
 			| FieldPropsAlpha<TCustomMetadata>
 			| undefined,
@@ -428,14 +431,15 @@ export class FieldSchemaAlpha<
 	extends FieldSchema<Kind, Types, TCustomMetadata>
 	implements SimpleFieldSchema<SchemaType.View>
 {
-	private readonly propsAlpha: TProps;
-
 	public get persistedMetadata(): JsonCompatibleReadOnlyObject | undefined {
-		return this.propsAlpha?.persistedMetadata;
+		return (this.props as FieldPropsAlpha<TCustomMetadata> | undefined)?.persistedMetadata;
 	}
 
 	public get isStagedOptional(): false | SchemaUpgrade {
-		return this.propsAlpha?.stagedOptionalUpgrade ?? false;
+		return (
+			(this.props as FieldPropsAlpha<TCustomMetadata> | undefined)?.stagedOptionalUpgrade ??
+			false
+		);
 	}
 
 	static {
@@ -482,7 +486,6 @@ export class FieldSchemaAlpha<
 
 		const normalizedTypes = normalizeAllowedTypes(types);
 		this.allowedTypesFull = normalizedTypes;
-		this.propsAlpha = props as TProps;
 	}
 }
 
