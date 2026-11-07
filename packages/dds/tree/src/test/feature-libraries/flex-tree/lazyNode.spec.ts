@@ -14,13 +14,18 @@ import {
 	type FieldKey,
 	type ITreeSubscriptionCursor,
 	type MapTree,
+	compareUpPaths,
 	rootFieldKey,
 } from "../../../core/index.js";
 import { Context } from "../../../feature-libraries/flex-tree/context.js";
 import { LazyField } from "../../../feature-libraries/flex-tree/lazyField.js";
 import { LazyTreeNode } from "../../../feature-libraries/flex-tree/lazyNode.js";
 import { withObservation } from "../../../feature-libraries/flex-tree/observer.js";
-import type { FlexTreeField, FlexTreeNode } from "../../../feature-libraries/index.js";
+import {
+	type FlexTreeField,
+	type FlexTreeNode,
+	TreeStatus,
+} from "../../../feature-libraries/index.js";
 import { JsonAsTree } from "../../../jsonDomainSchema.js";
 import {
 	SchemaFactory,
@@ -260,6 +265,133 @@ describe("LazyNode", () => {
 			assert.throws(() => item.value);
 			source.dispose();
 			target.dispose();
+		});
+
+		describe(`reads after an edit (${name})`, () => {
+			const sf = new SchemaFactory("reads-after-edit");
+			class Offset extends sf.object("Offset", { x: sf.number, y: sf.number }) {}
+			class Transform extends sf.object("Transform", {
+				off: Offset,
+				rot: sf.optional(sf.number),
+			}) {}
+			class Shape extends sf.object("Shape", { id: sf.number, xfrm: Transform }) {}
+			class Shapes extends sf.array("Shapes", Shape) {}
+			class Slide extends sf.object("Slide", { shapes: Shapes, title: sf.string }) {}
+			function createSlide(count: number) {
+				const view = createIndependentTreeAlpha({ forest }).viewWith(
+					new TreeViewConfiguration({ schema: Slide }),
+				);
+				view.initialize({
+					title: "slide",
+					shapes: Array.from({ length: count }, (_, i) => ({
+						id: i,
+						xfrm: { off: { x: i, y: -i }, rot: i % 2 === 0 ? i : undefined },
+					})),
+				});
+				return view;
+			}
+			const lazy = (node: object): LazyTreeNode => {
+				const inner = getInnerNode(node as Shape);
+				assert(inner instanceof LazyTreeNode);
+				return inner;
+			};
+
+			it("read the same nodes and values, and give cursors only to nodes whose leaves are read", () => {
+				const view = createSlide(5);
+				const shapes = [...view.root.shapes];
+				const transforms = shapes.map((shape) => shape.xfrm);
+				const offsets = transforms.map((xfrm) => xfrm.off);
+				const sum = (): number =>
+					view.root.shapes.reduce(
+						(total, shape) =>
+							total + shape.id + shape.xfrm.off.x + shape.xfrm.off.y + (shape.xfrm.rot ?? 0),
+						0,
+					);
+				const before = sum();
+				view.root.title = "edited";
+				assert.equal(sum(), before);
+				assert.deepEqual([...view.root.shapes], shapes);
+				assert.deepEqual(
+					view.root.shapes.map((shape) => shape.xfrm),
+					transforms,
+				);
+				assert.deepEqual(
+					view.root.shapes.map((shape) => shape.xfrm.off),
+					offsets,
+				);
+				// Reading `shape.xfrm.off` finds each node from its parent's anchor, so `xfrm` gets no cursor.
+				view.root.title = "edited again";
+				for (const shape of view.root.shapes) {
+					assert.equal(shape.xfrm.off.x, shape.id);
+				}
+				for (const xfrm of transforms) {
+					assert.equal(lazy(xfrm).holdsCursor, false);
+				}
+				for (const offset of offsets) {
+					assert(lazy(offset).holdsCursor);
+				}
+				view.dispose();
+			});
+
+			it("give a node a cursor at its own place in the tree", () => {
+				const view = createSlide(4);
+				const offsets = view.root.shapes.map((shape) => shape.xfrm.off);
+				view.root.title = "edited";
+				// The first shape's cursor is one an offset's cursor can be derived from.
+				assert.equal(view.root.shapes[0]?.id, 0);
+				for (const offset of offsets) {
+					const node = lazy(offset);
+					assert.equal(node.holdsCursor, false);
+					const cursor = node.cursor;
+					assert.equal(compareUpPaths(cursor.getPath(), node.anchorNode), true);
+					assert.equal(cursor.type, Offset.identifier);
+				}
+				assert.deepEqual(
+					offsets.map((offset) => [offset.x, offset.y]),
+					[0, 1, 2, 3].map((i) => [i, i === 0 ? 0 : -i]),
+				);
+				view.dispose();
+			});
+
+			it("follow replaced and moved nodes", () => {
+				const view = createSlide(3);
+				const [first, second] = view.root.shapes;
+				assert(first !== undefined && second !== undefined);
+				const oldOffset = first.xfrm.off;
+				first.xfrm.off = new Offset({ x: 10, y: 20 });
+				assert.notEqual(first.xfrm.off, oldOffset);
+				assert.equal(first.xfrm.off.x, 10);
+				assert.equal(Tree.status(oldOffset), TreeStatus.Removed);
+				view.root.shapes.insertAtStart({ id: 9, xfrm: { off: { x: 9, y: 9 } } });
+				assert.equal(view.root.shapes[1], first);
+				assert.equal(view.root.shapes[2], second);
+				assert.equal(view.root.shapes[0]?.xfrm.off.x, 9);
+				view.root.shapes.moveToEnd(1);
+				assert.equal(view.root.shapes[3], first);
+				assert.equal(view.root.shapes[1], second);
+				assert.equal(first.xfrm.off.y, 20);
+				view.dispose();
+			});
+
+			it("read leaves with flex tree nodes as values", () => {
+				const view = createSlide(2);
+				const shape = view.root.shapes[0];
+				assert(shape !== undefined);
+				const idField = lazy(shape).getBoxed(brand("id"));
+				assert(idField.boxedAt(0) instanceof LazyTreeNode);
+				view.root.title = "edited";
+				assert.equal(shape.id, 0);
+				const numbers = createIndependentTreeAlpha({ forest }).viewWith(
+					new TreeViewConfiguration({ schema: sf.array("Numbers", sf.number) }),
+				);
+				numbers.initialize([1, 2, 3]);
+				assert(lazy(numbers.root).getBoxed(EmptyKey).boxedAt(1) instanceof LazyTreeNode);
+				numbers.root.insertAtEnd(4);
+				assert.deepEqual([...numbers.root], [1, 2, 3, 4]);
+				assert.equal(numbers.root[1], 2);
+				numbers.dispose();
+				view.dispose();
+			});
 		});
 	}
 

@@ -303,8 +303,29 @@ export abstract class LazyField extends LazyEntity<FieldAnchor> implements FlexT
 	}
 
 	public atIndex(index: number): FlexTreeUnknownUnboxed {
+		const cached = this.cachedChild(index);
+		if (cached !== undefined) {
+			return cached;
+		}
 		return inCursorNode(this.cursor, index, (cursor) =>
-			unboxedFlexNode(this.context, cursor, this.anchor),
+			unboxedFlexNode(this.context, cursor, this.anchor, index),
+		);
+	}
+
+	/**
+	 * The {@link LazyTreeNode} already created for the node at `index`, if there is one and it is not a leaf.
+	 * @remarks
+	 * Such a node is found through the anchors, so reading it needs no cursor at this field.
+	 */
+	private cachedChild(index: number): LazyTreeNode | undefined {
+		if (this.anchor.parent === undefined) {
+			return undefined;
+		}
+		this.ensureValidForAccess();
+		return LazyTreeNode.cachedNonLeaf(
+			this.context.checkout.forest.anchors
+				.locate(this.anchor.parent)
+				?.childIfAnchored(this.key, index),
 		);
 	}
 
@@ -540,16 +561,19 @@ const kindToClass: ReadonlyMap<FieldKindIdentifier, Builder> = new Map(builderLi
 
 /**
  * Returns the flex tree node, or the value if it has one.
+ * @param index - The index of the cursor's node in its field, if known: computing it from the cursor can be slow.
  */
 export function unboxedFlexNode(
 	context: Context,
 	cursor: ITreeSubscriptionCursor,
 	fieldAnchor: FieldAnchor,
+	index?: number,
 ): FlexTreeUnknownUnboxed {
 	const value = cursor.value;
 	if (value !== undefined) {
 		return value;
 	}
+	const fieldIndex = index ?? cursor.fieldIndex;
 
 	// Try accessing cached child node via anchors.
 	// This avoids O(depth) related costs from getOrCreateHydratedFlexTreeNode in the cached case.
@@ -559,18 +583,18 @@ export function unboxedFlexNode(
 		child = context.checkout.forest.anchors.find({
 			parent: undefined,
 			parentField: fieldAnchor.fieldKey,
-			parentIndex: cursor.fieldIndex,
+			parentIndex: fieldIndex,
 		});
 	} else {
 		const anchorNode = context.checkout.forest.anchors.locate(anchor);
 		assert(anchorNode !== undefined, 0xa4c /* missing anchor */);
-		child = anchorNode.childIfAnchored(fieldAnchor.fieldKey, cursor.fieldIndex);
+		child = anchorNode.childIfAnchored(fieldAnchor.fieldKey, fieldIndex);
 		if (child === undefined) {
 			// Anchoring the child under its parent's anchor node only adds a reference to the parent,
 			// whereas getOrCreateHydratedFlexTreeNode anchors it from the cursor's path.
 			const [childAnchor, childAnchorNode] = anchorNode.getOrCreateChildRef(
 				fieldAnchor.fieldKey,
-				cursor.fieldIndex,
+				fieldIndex,
 			);
 			return new LazyTreeNode(context, cursor.type, cursor, childAnchorNode, childAnchor);
 		}

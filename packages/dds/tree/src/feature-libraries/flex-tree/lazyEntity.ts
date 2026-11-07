@@ -101,6 +101,13 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 	}
 
 	/**
+	 * The cursor this entity holds, if any, which may not be current.
+	 */
+	protected get heldCursor(): ITreeSubscriptionCursor | undefined {
+		return this.#lazyCursor;
+	}
+
+	/**
 	 * Gives up this entity's cursor, if any, for {@link Context.releaseCursors}, which also removes it from its list
 	 * of cursor holders.
 	 */

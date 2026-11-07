@@ -3,7 +3,7 @@
  * Licensed under the MIT License.
  */
 
-import { assert, fail } from "@fluidframework/core-utils/internal";
+import { assert, fail, oob } from "@fluidframework/core-utils/internal";
 
 import {
 	type Anchor,
@@ -12,6 +12,8 @@ import {
 	type FieldKey,
 	type FieldKindIdentifier,
 	type ITreeSubscriptionCursor,
+	ITreeSubscriptionCursorState,
+	LeafNodeStoredSchema,
 	type TreeNavigationResult,
 	type TreeNodeSchemaIdentifier,
 	type TreeNodeStoredSchema,
@@ -197,6 +199,10 @@ export class LazyTreeNode extends LazyEntity<Anchor> implements HydratedFlexTree
 		if (getCachedField(this, key) !== undefined) {
 			return notLeafContent;
 		}
+		const cachedChild = this.cachedSingleChild(key);
+		if (cachedChild !== undefined) {
+			return cachedChild;
+		}
 		const cursor = this.cursor;
 		cursor.enterField(key);
 		let result: FlexTreeUnknownUnboxed | undefined | typeof notLeafContent;
@@ -205,13 +211,93 @@ export class LazyTreeNode extends LazyEntity<Anchor> implements HydratedFlexTree
 			result = undefined;
 		} else if (length === 1) {
 			cursor.enterNode(0);
-			result = unboxedFlexNode(this.context, cursor, { parent: this.anchor, fieldKey: key });
+			result = unboxedFlexNode(
+				this.context,
+				cursor,
+				{ parent: this.anchor, fieldKey: key },
+				0,
+			);
 			cursor.exitNode();
 		} else {
 			result = notLeafContent;
 		}
 		cursor.exitField();
 		return result;
+	}
+
+	/**
+	 * The {@link LazyTreeNode} already created for the only node in the field `key`, if that field cannot hold more than one node and the node is not a leaf.
+	 * @remarks
+	 * Such a node is found through the anchors, so reading it needs no cursor at this node.
+	 * Anchors follow edits, so the node anchored at index 0 of the field is the field's content.
+	 */
+	private cachedSingleChild(key: FieldKey): LazyTreeNode | undefined {
+		const cached = LazyTreeNode.cachedNonLeaf(this.anchorNode.childIfAnchored(key, 0));
+		if (
+			cached === undefined ||
+			this.storedSchema.getFieldSchema(key).kind === FieldKinds.sequence.identifier
+		) {
+			return undefined;
+		}
+		this.ensureValidForAccess();
+		return cached;
+	}
+
+	/**
+	 * The {@link LazyTreeNode} already created for the node `anchorNode` is the anchor of, if there is one and that node is not a leaf.
+	 * @remarks
+	 * Reading a leaf gives its value, so leaves must be read with a cursor.
+	 */
+	public static cachedNonLeaf(anchorNode: AnchorNode | undefined): LazyTreeNode | undefined {
+		const cached = anchorNode?.slots.get(flexTreeSlot);
+		return cached instanceof LazyTreeNode &&
+			!(cached.storedSchema instanceof LeafNodeStoredSchema)
+			? cached
+			: undefined;
+	}
+
+	/**
+	 * Forks the cursor of the closest ancestor whose {@link LazyTreeNode} holds a current cursor at it, and moves it down to this node.
+	 * @remarks
+	 * This is much cheaper than moving a cursor from the root: edits release all cursors, and reading a node's content after one would otherwise move a cursor from the root for each node read.
+	 */
+	protected override cursorFromParent(): ITreeSubscriptionCursor | undefined {
+		const keys: FieldKey[] = [];
+		const indexes: number[] = [];
+		let node: AnchorNode = this.anchorNode;
+		for (let ancestor = node.parent; ancestor !== undefined; ancestor = ancestor.parent) {
+			keys.push(node.parentField);
+			indexes.push(node.parentIndex);
+			const holder = ancestor.slots.get(flexTreeSlot);
+			if (holder instanceof LazyTreeNode && !holder.isFreed()) {
+				const held = holder.currentCursorAtNode();
+				if (held !== undefined) {
+					const cursor = held.fork("LazyTreeNode from ancestor");
+					for (let index = keys.length - 1; index >= 0; index--) {
+						cursor.enterField(keys[index] ?? oob());
+						cursor.enterNode(indexes[index] ?? oob());
+					}
+					return cursor;
+				}
+			}
+			node = ancestor;
+		}
+		return undefined;
+	}
+
+	/**
+	 * The cursor this node holds, if it is current and at this node.
+	 * @remarks
+	 * A held cursor is moved away from its node only briefly, while reading the node's content.
+	 */
+	private currentCursorAtNode(): ITreeSubscriptionCursor | undefined {
+		const held = this.heldCursor;
+		return held?.state === ITreeSubscriptionCursorState.Current &&
+			held.mode === CursorLocationType.Nodes &&
+			held.type === this.type &&
+			held.fieldIndex === this.anchorNode.parentIndex
+			? held
+			: undefined;
 	}
 
 	public getBoxed(key: FieldKey): FlexTreeField {
