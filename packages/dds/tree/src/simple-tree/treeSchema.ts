@@ -3,7 +3,7 @@
  * Licensed under the MIT License.
  */
 
-import { assert } from "@fluidframework/core-utils/internal";
+import { assert, fail } from "@fluidframework/core-utils/internal";
 import { UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import type { LazyNodeStoredSchemaMap, TreeStoredSchema } from "../core/index.js";
@@ -627,12 +627,12 @@ function getCompletedComponent(schema: TreeNodeSchema): SchemaComponent {
  * Checks identifier uniqueness without materializing descendant maps or initializing contexts.
  * Different acyclic roots can still retain overlapping maps.
  */
-function materializeDefinitions(roots: Iterable<SchemaComponent>): TreeSchema["definitions"] {
+function materializeDefinitions(roots: Iterable<SchemaComponent>): IndexedDefinitions {
 	const components = new Set(roots);
-	const definitions = new Map<string, SimpleNodeSchema<SchemaType.View> & TreeNodeSchema>();
+	const definitions = new IndexedDefinitions();
 	for (const component of components) {
 		for (const schema of component.members) {
-			addDefinition(definitions, schema);
+			definitions.add(schema);
 		}
 		for (const dependency of component.dependencies) {
 			components.add(dependency);
@@ -656,43 +656,113 @@ function materializeDefinitions(roots: Iterable<SchemaComponent>): TreeSchema["d
  * {@link SchemaComponent.reachableDefinitions} looks schema up in these definitions for the same reason.
  * The first definitions built which include a component are kept.
  */
-const containingDefinitions = new WeakMap<SchemaComponent, TreeSchema["definitions"]>();
+const containingDefinitions = new WeakMap<SchemaComponent, IndexedDefinitions>();
 
 /**
- * The node schema of some definitions, numbered, so that subsets of them can be held as bit sets.
+ * A node schema in some definitions.
  */
-interface DefinitionsIndex {
-	readonly schemas: readonly (SimpleNodeSchema<SchemaType.View> & TreeNodeSchema)[];
-	readonly positions: ReadonlyMap<string, number>;
+type DefinedSchema = SimpleNodeSchema<SchemaType.View> & TreeNodeSchema;
+
+/**
+ * Definitions built by {@link materializeDefinitions}: node schema numbered in the order they were added,
+ * with a map from each identifier to its number.
+ * @remarks
+ * The numbers let {@link ReachableDefinitions} hold subsets of these definitions as bit sets,
+ * without a second map from identifiers to schema.
+ * Iterates in the order the schema were added.
+ */
+class IndexedDefinitions implements ReadonlyMap<string, DefinedSchema> {
+	readonly #schemas: DefinedSchema[] = [];
+	readonly #positions = new Map<string, number>();
+
+	/**
+	 * Adds a schema, rejecting identifier collisions.
+	 * @throws A {@link UsageError} if a schema with the same identifier was added.
+	 */
+	public add(schema: TreeNodeSchema): void {
+		if (this.#positions.has(schema.identifier)) {
+			throw new UsageError(
+				`Multiple schema encountered with the identifier ${JSON.stringify(schema.identifier)}. Remove or rename them to avoid the collision.`,
+			);
+		}
+		this.#positions.set(schema.identifier, this.#schemas.length);
+		this.#schemas.push(schema as DefinedSchema);
+	}
+
+	/**
+	 * The number of the schema with `identifier`, or undefined if there is none.
+	 */
+	public positionOf(identifier: string): number | undefined {
+		return this.#positions.get(identifier);
+	}
+
+	/**
+	 * The schema numbered `position`.
+	 */
+	public at(position: number): DefinedSchema {
+		return this.#schemas[position] ?? fail("Definitions have a schema at each position");
+	}
+
+	public get size(): number {
+		return this.#schemas.length;
+	}
+
+	public get(identifier: string): DefinedSchema | undefined {
+		const position = this.#positions.get(identifier);
+		return position === undefined ? undefined : this.#schemas[position];
+	}
+
+	public has(identifier: string): boolean {
+		return this.#positions.has(identifier);
+	}
+
+	public *entries(): MapIterator<[string, DefinedSchema]> {
+		for (const schema of this.#schemas) {
+			yield [schema.identifier, schema];
+		}
+	}
+
+	public keys(): MapIterator<string> {
+		return this.#positions.keys();
+	}
+
+	public values(): MapIterator<DefinedSchema> {
+		return this.#schemas.values();
+	}
+
+	public [Symbol.iterator](): MapIterator<[string, DefinedSchema]> {
+		return this.entries();
+	}
+
+	public forEach(
+		callbackfn: (
+			value: DefinedSchema,
+			key: string,
+			map: ReadonlyMap<string, DefinedSchema>,
+		) => void,
+		thisArg?: unknown,
+	): void {
+		for (const schema of this.#schemas) {
+			callbackfn.call(thisArg, schema, schema.identifier, this);
+		}
+	}
 }
-
-/**
- * The {@link DefinitionsIndex} of each map in {@link containingDefinitions} used by {@link reachableSubset}.
- */
-const definitionsIndexes = new WeakMap<TreeSchema["definitions"], DefinitionsIndex>();
 
 /**
  * An exact view of the node schema reachable from `component`, which `containing` includes all of.
  */
 function reachableSubset(
 	component: SchemaComponent,
-	containing: TreeSchema["definitions"],
+	containing: IndexedDefinitions,
 ): ReachableDefinitions {
-	const index = getOrCreate(definitionsIndexes, containing, () => {
-		const schemas = [...containing.values()];
-		return {
-			schemas,
-			positions: new Map(schemas.map((schema, position) => [schema.identifier, position])),
-		};
-	});
-	const members = new Uint32Array(Math.ceil(index.schemas.length / 32));
+	const members = new Uint32Array(Math.ceil(containing.size / 32));
 	let size = 0;
 	const components = new Set([component]);
 	for (const reached of components) {
 		for (const schema of reached.members) {
-			const position = index.positions.get(schema.identifier);
+			const position = containing.positionOf(schema.identifier);
 			assert(
-				position !== undefined && index.schemas[position] === schema,
+				position !== undefined && containing.at(position) === schema,
 				"Definitions which include a component include every schema reachable from it",
 			);
 			// Components are disjoint, so each schema is counted once.
@@ -706,27 +776,23 @@ function reachableSubset(
 			components.add(dependency);
 		}
 	}
-	return new ReachableDefinitions(index, members, size);
+	return new ReachableDefinitions(containing, members, size);
 }
 
 /**
- * A subset of the node schema of some definitions, held as a bit set over their {@link DefinitionsIndex}.
+ * A subset of the node schema of some {@link IndexedDefinitions}, held as a bit set over their numbers.
  */
-class ReachableDefinitions
-	implements ReadonlyMap<string, SimpleNodeSchema<SchemaType.View> & TreeNodeSchema>
-{
+class ReachableDefinitions implements ReadonlyMap<string, DefinedSchema> {
 	public constructor(
-		private readonly index: DefinitionsIndex,
+		private readonly index: IndexedDefinitions,
 		private readonly members: Uint32Array,
 		public readonly size: number,
 	) {}
 
-	public get(
-		identifier: string,
-	): (SimpleNodeSchema<SchemaType.View> & TreeNodeSchema) | undefined {
-		const position = this.index.positions.get(identifier);
+	public get(identifier: string): DefinedSchema | undefined {
+		const position = this.index.positionOf(identifier);
 		return position !== undefined && this.#includes(position)
-			? this.index.schemas[position]
+			? this.index.at(position)
 			: undefined;
 	}
 
@@ -734,11 +800,10 @@ class ReachableDefinitions
 		return this.get(identifier) !== undefined;
 	}
 
-	public *entries(): MapIterator<
-		[string, SimpleNodeSchema<SchemaType.View> & TreeNodeSchema]
-	> {
-		for (const [position, schema] of this.index.schemas.entries()) {
+	public *entries(): MapIterator<[string, DefinedSchema]> {
+		for (let position = 0; position < this.index.size; position++) {
 			if (this.#includes(position)) {
+				const schema = this.index.at(position);
 				yield [schema.identifier, schema];
 			}
 		}
@@ -750,23 +815,21 @@ class ReachableDefinitions
 		}
 	}
 
-	public *values(): MapIterator<SimpleNodeSchema<SchemaType.View> & TreeNodeSchema> {
+	public *values(): MapIterator<DefinedSchema> {
 		for (const [, schema] of this.entries()) {
 			yield schema;
 		}
 	}
 
-	public [Symbol.iterator](): MapIterator<
-		[string, SimpleNodeSchema<SchemaType.View> & TreeNodeSchema]
-	> {
+	public [Symbol.iterator](): MapIterator<[string, DefinedSchema]> {
 		return this.entries();
 	}
 
 	public forEach(
 		callbackfn: (
-			value: SimpleNodeSchema<SchemaType.View> & TreeNodeSchema,
+			value: DefinedSchema,
 			key: string,
-			map: ReadonlyMap<string, SimpleNodeSchema<SchemaType.View> & TreeNodeSchema>,
+			map: ReadonlyMap<string, DefinedSchema>,
 		) => void,
 		thisArg?: unknown,
 	): void {
