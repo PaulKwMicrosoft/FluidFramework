@@ -6,6 +6,7 @@
 import type { NormalizedFieldUpPath, NormalizedUpPath } from "../../core/index.js";
 
 import type {
+	FieldSet,
 	IDefaultEditBuilder,
 	OptionalFieldEditBuilder,
 	SequenceFieldEditBuilder,
@@ -50,6 +51,19 @@ export class MappedEditBuilder<TBase, TAdapted> implements IDefaultEditBuilder<T
 				baseField.remove(index, count);
 			},
 		};
+	}
+	public setFields(sets: readonly FieldSet<TAdapted>[]): void {
+		this.baseBuilder.setFields(
+			sets.map(
+				(set): FieldSet<TBase> =>
+					set.kind === "required"
+						? { ...set, content: this.mapDelegate(set.content) }
+						: {
+								...set,
+								content: set.content === undefined ? undefined : this.mapDelegate(set.content),
+							},
+			),
+		);
 	}
 	public move(
 		sourceField: NormalizedFieldUpPath,

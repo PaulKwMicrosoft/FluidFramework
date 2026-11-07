@@ -330,6 +330,9 @@ interface DefaultProvider extends ErasedType<"@fluidframework/tree.FieldProvider
 }
 
 // @alpha
+export const defaultSharedPropertyFieldKeys: readonly string[];
+
+// @alpha
 export function defineTreeDataStore<const TSchema extends ImplicitFieldSchema>(options: TreeDataStoreOptions<TSchema>): DataStoreKind<TreeView<TSchema>>;
 
 // @alpha
@@ -588,6 +591,12 @@ export const ForestTypeExpensiveDebug: ForestType;
 // @beta
 export const ForestTypeOptimized: ForestType;
 
+// @alpha
+export function forestTypeOptimizedSharingFields(fieldKeys: Iterable<string>): ForestType;
+
+// @alpha
+export const ForestTypeOptimizedSharingTextFormats: ForestType;
+
 // @beta
 export const ForestTypeReference: ForestType;
 
@@ -614,11 +623,11 @@ export namespace FormattedText {
         readonly format: TFormat;
     }
     // @sealed
-    export type FormattedTextSchema<TUserScope extends string, FormatSchema extends ImplicitAllowedTypes, ExtraAtomsSchema extends readonly LazyItem<TreeNodeSchema<string, NodeKind, TextAtom & TreeNode>>[]> = Statics<ErasedNode<Members<FormatSchema, ExtraAtomsSchema>, FormattedTextSchemaIdentifier<TUserScope>>, FormatSchema> & ErasedSchemaSubclassable<Members<FormatSchema, ExtraAtomsSchema>, FormattedTextSchemaIdentifier<TUserScope>>;
+    export type FormattedTextSchema<TUserScope extends string, FormatSchema extends ImplicitAllowedTypes, ExtraAtomsSchema extends readonly LazyItem<TreeNodeSchema<string, NodeKind, TextAtom & TreeNode>>[]> = Statics<ErasedNode<Members<FormatSchema, ExtraAtomsSchema>, FormattedTextSchemaIdentifier<TUserScope>>, FormatSchema, ExtraAtomsSchema> & ErasedSchemaSubclassable<Members<FormatSchema, ExtraAtomsSchema>, FormattedTextSchemaIdentifier<TUserScope>>;
     export type FormattedTextSchemaIdentifier<TUserScope extends string> = ScopedSchemaName<`com.fluidframework.text.formatted<${TUserScope}>`, "Text">;
     const // @sealed
     StringTextAtom: StringTextAtomStatics & TreeNodeSchema<"com.fluidframework.text.formatted.StringTextAtom", NodeKind, TextAtom & TreeNode & WithType<"com.fluidframework.text.formatted.StringTextAtom", NodeKind, unknown>, never, false>;
-    export type FormattedTextSchemaWithRanges<TUserScope extends string, FormatSchema extends ImplicitAllowedTypes, ExtraAtomsSchema extends readonly LazyItem<TreeNodeSchema<string, NodeKind, TextAtom & TreeNode>>[], RangeDataSchema extends ImplicitAllowedTypes> = Statics<ErasedNode<MembersWithRanges<FormatSchema, ExtraAtomsSchema, RangeDataSchema>, FormattedTextSchemaIdentifier<TUserScope>>, FormatSchema> & ErasedSchemaSubclassable<MembersWithRanges<FormatSchema, ExtraAtomsSchema, RangeDataSchema>, FormattedTextSchemaIdentifier<TUserScope>>;
+    export type FormattedTextSchemaWithRanges<TUserScope extends string, FormatSchema extends ImplicitAllowedTypes, ExtraAtomsSchema extends readonly LazyItem<TreeNodeSchema<string, NodeKind, TextAtom & TreeNode>>[], RangeDataSchema extends ImplicitAllowedTypes> = Statics<ErasedNode<MembersWithRanges<FormatSchema, ExtraAtomsSchema, RangeDataSchema>, FormattedTextSchemaIdentifier<TUserScope>>, FormatSchema, ExtraAtomsSchema> & ErasedSchemaSubclassable<MembersWithRanges<FormatSchema, ExtraAtomsSchema, RangeDataSchema>, FormattedTextSchemaIdentifier<TUserScope>>;
     export type FormatUpdate<TFormat> = TFormat extends FluidReadonlyMap<string, infer TValue> ? FluidReadonlyMap<string, TValue | undefined> | Readonly<Record<string, TValue | undefined>> : Partial<TFormat>;
     // @sealed
     export interface Members<FormatSchema extends ImplicitAllowedTypes, ExtraAtomsSchema extends readonly LazyItem<TreeNodeSchema<string, NodeKind, TextAtom & TreeNode>>[]> extends PlainText.Members {
@@ -631,14 +640,17 @@ export namespace FormattedText {
         insertWithFormattingAt(index: number, additionalCharacters: Iterable<FormattedAtomInsertable<InsertableTreeNodeFromImplicitAllowedTypes<FormatSchema>, InsertableTreeNodeFromImplicitAllowedTypes<TextAtomSchemas<ExtraAtomsSchema>>>>): void;
         onContentChanged(callback: (ops: readonly PlainText.TextOp[] | undefined) => void): () => void;
         reformat(startIndex?: number | undefined, endIndex?: number | undefined, format?: InsertableTreeFieldFromImplicitField<FormatSchema>): void;
+        runs(start?: number, end?: number): IterableIterator<TextRun<TreeNodeFromImplicitAllowedTypes<FormatSchema>, TreeNodeFromImplicitAllowedTypes<TextAtomSchemas<ExtraAtomsSchema>>>>;
     }
     // @sealed
     export interface MembersWithRanges<FormatSchema extends ImplicitAllowedTypes, ExtraAtomsSchema extends readonly LazyItem<TreeNodeSchema<string, NodeKind, TextAtom & TreeNode>>[], RangeDataSchema extends ImplicitAllowedTypes> extends Members<FormatSchema, ExtraAtomsSchema> {
         readonly ranges: ExtrinsicLocations.RangeCollection<TreeNodeFromImplicitAllowedTypes<RangeDataSchema>, InsertableTreeNodeFromImplicitAllowedTypes<RangeDataSchema>>;
     }
     // @sealed
-    export interface Statics<TTree, FormatSchema extends ImplicitAllowedTypes> {
+    export interface Statics<TTree, FormatSchema extends ImplicitAllowedTypes, ExtraAtomsSchema extends readonly LazyItem<TreeNodeSchema<string, NodeKind, TextAtom & TreeNode>>[] = []> {
+        fromRuns(runs: Iterable<TextRunInsertable<InsertableTreeFieldFromImplicitField<FormatSchema>, TreeNodeFromImplicitAllowedTypes<TextAtomSchemas<ExtraAtomsSchema>>>>): TTree;
         fromString(value: string, format?: InsertableTreeFieldFromImplicitField<FormatSchema>): TTree;
+        verboseFromRuns(runs: Iterable<TextRunInsertable<VerboseTree, VerboseTree>>): VerboseTree;
     }
     // @sealed
     export type StringTextAtom = ErasedNode<TextAtom, "com.fluidframework.text.formatted.StringTextAtom">;
@@ -652,6 +664,23 @@ export namespace FormattedText {
     }
     // @sealed
     export type TextAtomSchemas<ExtraAtomsSchema extends readonly LazyItem<TreeNodeSchema<string, NodeKind, TextAtom & TreeNode>>[]> = readonly [typeof StringTextAtom, ...ExtraAtomsSchema];
+    // @sealed
+    export interface TextRun<TFormat, TAtom> {
+        readonly atom: TAtom | undefined;
+        readonly format: TFormat;
+        readonly formatId: object | undefined;
+        readonly length: number;
+        readonly start: number;
+        readonly text: string;
+    }
+    // @input
+    export type TextRunInsertable<TFormat, TAtom> = {
+        readonly text: string;
+        readonly format?: TFormat;
+    } | {
+        readonly atoms: Iterable<TAtom>;
+        readonly format?: TFormat;
+    };
 }
 
 // @alpha @sealed
@@ -2063,6 +2092,7 @@ export interface TreeAlpha {
     child(node: TreeNode, key: string | number): TreeNode | TreeLeafValue | undefined;
     children(node: TreeNode): Iterable<[propertyKey: string | number, child: TreeNode | TreeLeafValue]>;
     context(node: TreeNode): TreeContextAlpha;
+    copier<T extends TreeNode>(node: T): () => Unhydrated<T>;
     create<const TSchema extends ImplicitFieldSchema | UnsafeUnknownSchema>(schema: UnsafeUnknownSchema extends TSchema ? ImplicitFieldSchema : TSchema & ImplicitFieldSchema, data: InsertableField<TSchema>): Unhydrated<TSchema extends ImplicitFieldSchema ? TreeFieldFromImplicitField<TSchema> : TreeNode | TreeLeafValue | undefined>;
     exportCompressed(tree: TreeNode | TreeLeafValue, options: {
         idCompressor?: IIdCompressor;
@@ -2081,9 +2111,11 @@ export interface TreeAlpha {
     key2(node: TreeNode): string | number | undefined;
     // @deprecated
     on<K extends keyof TreeChangeEventsBeta<TNode>, TNode extends TreeNode>(node: TNode, eventName: K, listener: NoInfer<TreeChangeEventsBeta<TNode>[K]>): () => void;
+    readScope<T>(node: TreeNode, read: () => T): T;
     release(node: TreeNode): void;
     replaceAsBase(parent: TreeNode, key: string | number, newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined): void;
     replaceAsBaseVerbose(parent: TreeNode, key: string | number, newContent: VerboseTree | undefined): void;
+    setFields(assignments: readonly FieldAssignment[]): void;
     setVerbose(parent: TreeNode, key: string, content: VerboseTree | undefined): void;
     tagContentSchema<TSchema extends TreeNodeSchema, TContent extends InsertableField<TSchema>>(schema: TSchema, content: TContent): TContent;
     trackObservations<TResult>(onInvalidation: () => void, trackDuring: () => TResult): ObservationResults<TResult>;

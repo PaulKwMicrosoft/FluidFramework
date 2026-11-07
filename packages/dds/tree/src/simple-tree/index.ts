@@ -194,6 +194,8 @@ export {
 	verboseFromCursor,
 	insertVerbose,
 	setVerbose,
+	setFields,
+	type FieldAssignment,
 	conciseFromCursor,
 	createCopier,
 	createFromCursor,

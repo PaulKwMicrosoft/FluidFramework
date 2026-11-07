@@ -17,6 +17,7 @@ export {
 	DefaultChangeFamily,
 	DefaultEditBuilder,
 	type IDefaultEditBuilder,
+	type FieldSet,
 	type ValueFieldEditBuilder,
 	type OptionalFieldEditBuilder,
 	type SequenceFieldEditBuilder,

@@ -112,6 +112,45 @@ export function prepareArrayContentForInsertion(
 }
 
 /**
+ * {@link prepareForInsertion} for content set into several fields of a hydrated tree by a single edit.
+ * @remarks
+ * The next edits made to `destinationContext`'s forest must be the creation of a detached field
+ * for each item whose `data` is not undefined, in order.
+ *
+ * @privateRemarks
+ * This has to be done as a single operation for all items
+ * (as opposed to mapping {@link prepareForInsertion} over them)
+ * due to how the eventing in prepareContentForHydration works.
+ */
+export function prepareForInsertionBatch(
+	items: readonly {
+		readonly data: InsertableContent | undefined;
+		readonly schema: ImplicitFieldSchema;
+		readonly destinationSchema: TreeFieldStoredSchema;
+	}[],
+	destinationContext: FlexTreeHydratedContextMinimal & FlexTreeContext,
+): (FlexibleNodeContent | undefined)[] {
+	const schemaAndPolicy = getSchemaAndPolicy(destinationContext);
+	const batches: LocatedNodesBatch[] = [];
+	const collect: HydrationScheduler = (locatedNodes) => {
+		batches.push(...locatedNodes);
+	};
+	const prepared = items.map(({ data, schema, destinationSchema }) =>
+		prepareForInsertionContextless(
+			data,
+			schema,
+			schemaAndPolicy,
+			destinationContext,
+			destinationSchema,
+			collect,
+		),
+	);
+	const forest = destinationContext.checkout.forest;
+	scheduleHydration(batches, forest, hydrator(batches, forest));
+	return prepared;
+}
+
+/**
  * Split out from {@link prepareForInsertion} as to allow use without a context.
  *
  * @param hydratedData - If specified, the `mapTrees` will be prepared for hydration into this context.

@@ -146,6 +146,16 @@ export function relevantRemovedRoots(change: ModularChangeset): Iterable<DeltaDe
  */
 export interface IDefaultEditBuilder<TContent = TreeChunk> {
 	/**
+	 * Replaces the content of several required or optional fields, in order, as one change.
+	 * @remarks
+	 * Gives the same result as setting each field with {@link IDefaultEditBuilder.valueField} or {@link IDefaultEditBuilder.optionalField},
+	 * but as a single edit, so the tree is updated, and change events are raised, once for all of them.
+	 * The fields are identified by their paths in the tree as it is before any of them is set,
+	 * so no field may be under the content of another field set by the same call.
+	 */
+	setFields(sets: readonly FieldSet<TContent>[]): void;
+
+	/**
 	 * @param field - the value field which is being edited under the parent node
 	 * @returns An object with methods to edit the given field of the given parent.
 	 * The returned object can be used (i.e., have its methods called) multiple times but its lifetime
@@ -254,29 +264,10 @@ export class DefaultEditBuilder implements ChangeFamilyEditor, IDefaultEditBuild
 	public valueField(field: FieldUpPath): ValueFieldEditBuilder<TreeChunk> {
 		return {
 			set: (newContent: TreeChunk): void => {
-				assert(
-					newContent.topLevelLength === 1,
-					0xc12 /* Value fields should have a single top level node */,
-				);
 				const revision = this.mintRevisionTag();
-				const fill: ChangeAtomId = { localId: this.modularBuilder.generateId(), revision };
-				const detach: ChangeAtomId = { localId: this.modularBuilder.generateId(), revision };
-				const build = this.modularBuilder.buildTrees(fill.localId, newContent, revision);
-				const change: FieldChangeset = brand(
-					required.changeHandler.editor.set({
-						fill,
-						detach,
-					}),
-				);
-
-				const edit: FieldEditDescription = {
-					type: "field",
-					field,
-					fieldKind: required.identifier,
-					change,
-					revision,
-				};
-				this.modularBuilder.submitChanges([build, edit], revision);
+				const edits: EditDescription[] = [];
+				this.addRequiredFieldSet(edits, field, newContent, revision);
+				this.modularBuilder.submitChanges(edits, revision);
 			},
 		};
 	}
@@ -284,43 +275,88 @@ export class DefaultEditBuilder implements ChangeFamilyEditor, IDefaultEditBuild
 	public optionalField(field: FieldUpPath): OptionalFieldEditBuilder<TreeChunk> {
 		return {
 			set: (newContent: TreeChunk | undefined, wasEmpty: boolean): void => {
-				// The choice to ban empty chunks here instead of treating them as a clear is a subjective choice made to err of the side of more explicitness and stricter validation.
-				assert(
-					newContent === undefined || newContent.topLevelLength === 1,
-					0xc13 /* optional fields should have a single top level node, or undefined */,
-				);
-				const edits: EditDescription[] = [];
-				let optionalChange: OptionalChangeset;
 				const revision = this.mintRevisionTag();
-				const detach: ChangeAtomId = { localId: this.modularBuilder.generateId(), revision };
-				if (newContent === undefined) {
-					optionalChange = optional.changeHandler.editor.clear(wasEmpty, detach);
-				} else {
-					const fill: ChangeAtomId = { localId: this.modularBuilder.generateId(), revision };
-					const build = this.modularBuilder.buildTrees(fill.localId, newContent, revision);
-					edits.push(build);
-
-					optionalChange = optional.changeHandler.editor.set(wasEmpty, {
-						fill,
-						detach,
-					});
-				}
-
-				const change: FieldChangeset = brand(optionalChange);
-				const edit: FieldEditDescription = {
-					type: "field",
-					field,
-					fieldKind: optional.identifier,
-					change,
-					revision,
-				};
-				edits.push(edit);
-
+				const edits: EditDescription[] = [];
+				this.addOptionalFieldSet(edits, field, newContent, wasEmpty, revision);
 				this.modularBuilder.submitChanges(edits, revision);
 			},
 		};
 	}
 
+	public setFields(sets: readonly FieldSet<TreeChunk>[]): void {
+		if (sets.length === 0) {
+			return;
+		}
+		const revision = this.mintRevisionTag();
+		const edits: EditDescription[] = [];
+		for (const set of sets) {
+			if (set.kind === "required") {
+				this.addRequiredFieldSet(edits, set.field, set.content, revision);
+			} else {
+				this.addOptionalFieldSet(edits, set.field, set.content, set.wasEmpty, revision);
+			}
+		}
+		this.modularBuilder.submitChanges(edits, revision);
+	}
+
+	/**
+	 * Adds the edits which replace the content of the required field `field` with `newContent`.
+	 */
+	private addRequiredFieldSet(
+		edits: EditDescription[],
+		field: FieldUpPath,
+		newContent: TreeChunk,
+		revision: RevisionTag,
+	): void {
+		assert(
+			newContent.topLevelLength === 1,
+			0xc12 /* Value fields should have a single top level node */,
+		);
+		const fill: ChangeAtomId = { localId: this.modularBuilder.generateId(), revision };
+		const detach: ChangeAtomId = { localId: this.modularBuilder.generateId(), revision };
+		edits.push(this.modularBuilder.buildTrees(fill.localId, newContent, revision), {
+			type: "field",
+			field,
+			fieldKind: required.identifier,
+			change: brand(required.changeHandler.editor.set({ fill, detach })),
+			revision,
+		});
+	}
+
+	/**
+	 * Adds the edits which replace the content of the optional field `field` with `newContent`, or clear it.
+	 */
+	private addOptionalFieldSet(
+		edits: EditDescription[],
+		field: FieldUpPath,
+		newContent: TreeChunk | undefined,
+		wasEmpty: boolean,
+		revision: RevisionTag,
+	): void {
+		// The choice to ban empty chunks here instead of treating them as a clear is a subjective choice made to err of the side of more explicitness and stricter validation.
+		assert(
+			newContent === undefined || newContent.topLevelLength === 1,
+			0xc13 /* optional fields should have a single top level node, or undefined */,
+		);
+		let optionalChange: OptionalChangeset;
+		const detach: ChangeAtomId = { localId: this.modularBuilder.generateId(), revision };
+		if (newContent === undefined) {
+			optionalChange = optional.changeHandler.editor.clear(wasEmpty, detach);
+		} else {
+			const fill: ChangeAtomId = { localId: this.modularBuilder.generateId(), revision };
+			edits.push(this.modularBuilder.buildTrees(fill.localId, newContent, revision));
+			optionalChange = optional.changeHandler.editor.set(wasEmpty, { fill, detach });
+		}
+		const change: FieldChangeset = brand(optionalChange);
+		const edit: FieldEditDescription = {
+			type: "field",
+			field,
+			fieldKind: optional.identifier,
+			change,
+			revision,
+		};
+		edits.push(edit);
+	}
 	public move(
 		sourceField: FieldUpPath,
 		sourceIndex: number,
@@ -496,6 +532,28 @@ export interface ValueFieldEditBuilder<TContent> {
 	 */
 	set(newContent: TContent): void;
 }
+
+/**
+ * One field replaced by {@link IDefaultEditBuilder.setFields}.
+ */
+export type FieldSet<TContent> =
+	| {
+			readonly kind: "required";
+			readonly field: FieldUpPath;
+			readonly content: TContent;
+	  }
+	| {
+			readonly kind: "optional";
+			readonly field: FieldUpPath;
+			/**
+			 * The new content, or undefined to clear the field.
+			 */
+			readonly content: TContent | undefined;
+			/**
+			 * Whether the field is empty before it is set.
+			 */
+			readonly wasEmpty: boolean;
+	  };
 
 export interface OptionalFieldEditBuilder<TContent> {
 	/**

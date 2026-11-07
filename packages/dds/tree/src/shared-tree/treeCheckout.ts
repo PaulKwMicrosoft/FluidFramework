@@ -3032,6 +3032,10 @@ class EditLock {
 				checkLock();
 				editor.move(...moveArgs);
 			},
+			setFields(sets) {
+				checkLock();
+				editor.setFields(sets);
+			},
 			addNodeExistsConstraint(path) {
 				editor.addNodeExistsConstraint(path);
 			},

@@ -156,6 +156,7 @@ export {
 	replaceVerboseTreeHandles,
 } from "./verboseTree.js";
 export { insertVerbose, setVerbose } from "./verboseInsertion.js";
+export { setFields, type FieldAssignment } from "./setFields.js";
 
 export {
 	type TreeEncodingOptions,

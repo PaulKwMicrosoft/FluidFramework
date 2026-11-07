@@ -216,6 +216,7 @@ export {
 	type TreeSchema,
 	TreeViewConfigurationAlpha,
 	type VerboseTree,
+	type FieldAssignment,
 	extractPersistedSchema,
 	comparePersistedSchema,
 	type ConciseTree,

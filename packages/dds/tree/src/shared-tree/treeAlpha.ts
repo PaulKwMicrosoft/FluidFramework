@@ -100,6 +100,8 @@ import {
 	runReadScope,
 	insertVerbose,
 	setVerbose,
+	setFields,
+	type FieldAssignment,
 } from "../simple-tree/index.js";
 import { brand, extractFromOpaque, type JsonCompatible } from "../util/index.js";
 
@@ -727,6 +729,27 @@ ode.
 	 * if the property is an identifier, or if `content` is out of schema.
 	 */
 	setVerbose(parent: TreeNode, key: string, content: VerboseTree | undefined): void;
+
+	/**
+	 * Sets several properties of object nodes as a single edit.
+	 *
+	 * @param assignments - The properties to set: for each, the object node, the property key, and the new value.
+	 * `undefined` empties an optional property.
+	 *
+	 * @remarks
+	 * The result is that of assigning each property in order, but the tree is changed, and change events are raised, once for all of them.
+	 * Outside a transaction this is one edit, which is undone or redone as a whole.
+	 * This makes changing many properties, such as one property of each of many nodes, much faster than assigning them one by one.
+	 *
+	 * Each value is checked and converted as when it is assigned to the property, and emptying a property that is already empty does nothing.
+	 * All values are checked before the tree is changed: if any is invalid, nothing is changed.
+	 *
+	 * @throws A `UsageError` if a node is not an object node in the document of the same tree as the others,
+	 * if a key is not a property of its node's schema, if a property is set more than once,
+	 * if a node is under a property set by the same call (its path would be ambiguous),
+	 * or if a value is not allowed by its property's schema (including `undefined` for a required property).
+	 */
+	setFields(assignments: readonly FieldAssignment[]): void;
 
 	/**
 	 * Releases the objects created for reading `node` and the nodes under it, reducing memory use.
@@ -1390,6 +1413,10 @@ export const TreeAlpha: TreeAlpha = {
 
 	setVerbose(parent: TreeNode, key: string, content: VerboseTree | undefined): void {
 		setVerbose(parent, key, content);
+	},
+
+	setFields(assignments: readonly FieldAssignment[]): void {
+		setFields(assignments);
 	},
 
 	release(node: TreeNode): void {
