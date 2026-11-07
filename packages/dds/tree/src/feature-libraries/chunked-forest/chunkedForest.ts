@@ -26,6 +26,7 @@ import {
 	type Range,
 	TreeNavigationResult,
 	type TreeStoredSchemaSubscription,
+	type TreeValue,
 	type UpPath,
 	aboveRootPlaceholder,
 	combineVisitors,
@@ -328,6 +329,16 @@ export class ChunkedForest implements IEditableForest, WithBreakable {
 			},
 			detach(source: Range, destination: FieldKey, id: DeltaDetachedNodeId): void {
 				this.detachEdit(source, destination);
+			},
+			setValue(value: TreeValue): void {
+				this.forest.#events.emit("beforeChange");
+				// Entering a node made it an exclusively owned BasicChunk, so its value can be replaced in place.
+				assert(this.mutableChunk !== undefined, "A value can only be set on a node");
+				assert(
+					this.mutableChunk.value !== undefined,
+					"Only a node with a value can have its value set",
+				);
+				this.mutableChunk.value = value;
 			},
 			/**
 			 * Attaches the range into the current field by transferring it from the given source path.

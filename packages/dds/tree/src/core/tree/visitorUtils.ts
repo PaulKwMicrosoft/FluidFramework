@@ -12,6 +12,7 @@ import type { DetachedNodeId, Mark, Root } from "./delta.js";
 import { DetachedFieldIndex } from "./detachedFieldIndex.js";
 import type { ForestRootId } from "./detachedFieldIndexTypes.js";
 import type { NodeIndex, PlaceIndex, Range } from "./pathTree.js";
+import type { TreeValue } from "./types.js";
 import { type DeltaVisitor, visitDelta } from "./visitDelta.js";
 
 export function makeDetachedFieldIndex(prefix: string = "Temp"): DetachedFieldIndex {
@@ -124,6 +125,15 @@ class BreakingVisitor implements DeltaVisitor {
 		this.breaker.use();
 		try {
 			this.visitor.detach(source, destination, id, isReplaced);
+		} catch (error: unknown) {
+			this.breaker.rethrowCaught(error);
+		}
+	}
+
+	public setValue(value: TreeValue): void {
+		this.breaker.use();
+		try {
+			this.visitor.setValue(value);
 		} catch (error: unknown) {
 			this.breaker.rethrowCaught(error);
 		}
@@ -278,6 +288,15 @@ class CombinedVisitorImplementation implements CombinedVisitor {
 		}
 	}
 
+	public setValue(value: TreeValue): void {
+		for (const v of this.visitors) {
+			v.setValue(value);
+		}
+		for (const v of this.announcedVisitors) {
+			v.afterSetValue();
+		}
+	}
+
 	public enterNode(index: NodeIndex): void {
 		for (const v of this.visitors) {
 			v.enterNode(index);
@@ -328,6 +347,10 @@ export interface AnnouncedVisitor extends DeltaVisitor {
 		destination: FieldKey,
 		isReplaced: boolean,
 	): void;
+	/**
+	 * A hook that is called after the value of the current node has been set by {@link DeltaVisitor.setValue}.
+	 */
+	afterSetValue(): void;
 }
 
 const noOp = (): void => {};
@@ -352,6 +375,8 @@ export function createAnnouncedVisitor(
 		beforeDetach: visitorFunctions.beforeDetach ?? noOp,
 		detach: visitorFunctions.detach ?? noOp,
 		afterDetach: visitorFunctions.afterDetach ?? noOp,
+		setValue: visitorFunctions.setValue ?? noOp,
+		afterSetValue: visitorFunctions.afterSetValue ?? noOp,
 		enterNode: visitorFunctions.enterNode ?? noOp,
 		exitNode: visitorFunctions.exitNode ?? noOp,
 		enterField: visitorFunctions.enterField ?? noOp,

@@ -104,8 +104,10 @@ export function getDeltaChangeProfile(delta: Root): DeltaChangeProfile {
 		hasRenames: delta.rename !== undefined && delta.rename.length > 0,
 		hasChangesInDocumentTree: deltaFieldMapHasChanges(delta.fields),
 		hasChangesInDetachedTrees:
-			delta.global?.some((detachedNodeChanges) =>
-				deltaFieldMapHasChanges(detachedNodeChanges.fields),
+			delta.global?.some(
+				(detachedNodeChanges) =>
+					detachedNodeChanges.value !== undefined ||
+					deltaFieldMapHasChanges(detachedNodeChanges.fields),
 			) === true,
 	};
 	return profile;
@@ -140,6 +142,7 @@ export function deltaFieldChangesHaveChanges(fieldChanges: FieldChanges): boolea
 		if (
 			mark.attach !== undefined ||
 			mark.detach !== undefined ||
+			mark.value !== undefined ||
 			deltaFieldMapHasChanges(mark.fields)
 		) {
 			return true;

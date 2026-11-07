@@ -1811,6 +1811,22 @@ export abstract class CheckoutBase implements ITreeCheckout {
 				ancestorEdits.push(parentEdit);
 				parentEdit = undefined;
 			},
+			setValue: (value) => {
+				visitor.setValue(value);
+				// Setting a node's value edits the field containing it, as replacing the node would.
+				const node = parent;
+				assert(node !== undefined && field === undefined, "A value can only be set on a node");
+				// Record under the parent's entry for this visit of it.
+				const nodeEdit = parentEdit;
+				parentEdit = ancestorEdits.pop();
+				parent = node.parent;
+				field = node.parentField;
+				record();
+				ancestorEdits.push(parentEdit);
+				parentEdit = nodeEdit;
+				parent = node;
+				field = undefined;
+			},
 			exitNode: (index) => {
 				visitor.exitNode(index);
 				assert(parent !== undefined, "Must be in a node to exit it");

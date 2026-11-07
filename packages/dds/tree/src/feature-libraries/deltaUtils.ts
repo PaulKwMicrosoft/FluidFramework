@@ -40,9 +40,10 @@ export function mapRootChanges<TIn, TOut>(
 		}));
 	}
 	if (root.global !== undefined) {
-		out.global = root.global.map(({ id, fields }) => ({
+		out.global = root.global.map(({ id, fields, value }) => ({
 			id,
 			fields,
+			...(value === undefined ? {} : { value }),
 		}));
 	}
 	if (root.rename !== undefined) {

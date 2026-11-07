@@ -54,6 +54,9 @@ class LoggingVisitor implements DeltaVisitor {
 	public exitField(): void {
 		this.log("exitField");
 	}
+	public setValue(): void {
+		this.log("setValue");
+	}
 }
 
 class LoggingAnnouncedVisitor extends LoggingVisitor implements AnnouncedVisitor {
@@ -81,6 +84,9 @@ class LoggingAnnouncedVisitor extends LoggingVisitor implements AnnouncedVisitor
 	}
 	public afterReplace(): void {
 		this.log("afterReplace");
+	}
+	public afterSetValue(): void {
+		this.log("afterSetValue");
 	}
 }
 
@@ -162,6 +168,25 @@ describe("combineVisitors", () => {
 			"av2: attach",
 			"av1: afterAttach",
 			"av2: afterAttach",
+		];
+		assert.deepEqual(actual, expected);
+	});
+	it(`calls announced visitors "afterSetValue" after all visitors set the value`, () => {
+		const actual: string[] = [];
+		const combined = combineVisitors([
+			new LoggingVisitor("v1", actual),
+			new LoggingAnnouncedVisitor("av1", actual),
+			new LoggingVisitor("v2", actual),
+			new LoggingAnnouncedVisitor("av2", actual),
+		]);
+		combined.setValue(42);
+		const expected = [
+			"v1: setValue",
+			"av1: setValue",
+			"v2: setValue",
+			"av2: setValue",
+			"av1: afterSetValue",
+			"av2: afterSetValue",
 		];
 		assert.deepEqual(actual, expected);
 	});

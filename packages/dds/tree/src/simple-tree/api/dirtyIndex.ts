@@ -128,6 +128,17 @@ function createDirtyVisitor(forest: IEditableForest, dirty: DirtyTreeMap): Annou
 				}
 			}
 		},
+		afterSetValue: () => {
+			assert(parent !== undefined, "Expected node");
+			// Setting a node's value changes its parent, as replacing the node would.
+			const parentPath = parent.parent;
+			if (parentPath !== undefined) {
+				const parentNode = getNodeAtPath(forest, parentPath);
+				if (parentNode !== undefined && dirty.get(parentNode) !== "new") {
+					dirty.set(parentNode, "changed");
+				}
+			}
+		},
 		enterNode(index: number): void {
 			assert(parentField !== undefined, 0xc4c /* Expected field */);
 			parent = {

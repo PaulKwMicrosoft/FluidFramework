@@ -97,6 +97,8 @@ export {
 	type DeltaDetachedNodeId,
 	type DeltaFieldMap,
 	type DeltaDetachedNodeChanges,
+	type DeltaNodeChanges,
+	type DeltaValueChange,
 	type DeltaDetachedNodeBuild,
 	type DeltaDetachedNodeDestruction,
 	type DeltaDetachedNodeRename,
