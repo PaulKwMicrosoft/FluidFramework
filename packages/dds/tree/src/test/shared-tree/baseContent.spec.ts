@@ -66,6 +66,28 @@ function summarize(view: SchematizingSimpleTreeView<typeof Deck>): string[] {
 	return view.root.slides.map((slide) => `${slide.title}:${slide.shapes.length}`);
 }
 
+describe("initial content", () => {
+	it("is not revertible, even with an undo listener registered before it", () => {
+		const checkout = createIndependentTreeCheckout({
+			enableBaseContent: true,
+			maxRevertibles: 5,
+		});
+		const view = checkout.viewWith(config);
+		const { undoStack, unsubscribe } = createTestUndoRedoStacks(view.events);
+		const revertibleCommits: boolean[] = [];
+		view.events.on("changed", (metadata, getRevertible) => {
+			revertibleCommits.push(getRevertible !== undefined);
+		});
+		view.initialize(new Deck({ slides: [placeholder("1")], notes: {}, tags: {} }));
+		assert.deepEqual(revertibleCommits, [false]);
+		assert.equal(undoStack.length, 0);
+		view.root.slides[0]?.shapes.insertAtEnd(new Shape({ fill: "red" }));
+		assert.deepEqual(revertibleCommits, [false, true]);
+		assert.equal(undoStack.length, 1);
+		unsubscribe();
+	});
+});
+
 describe("TreeAlpha.replaceAsBase", () => {
 	it("replaces an array element without a commit", () => {
 		function logEvents(deckView: SchematizingSimpleTreeView<typeof Deck>): string[] {
