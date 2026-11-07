@@ -121,14 +121,16 @@ export function setFields(assignments: readonly FieldAssignment[]): void {
 	}[] = [];
 	for (const assignment of resolved) {
 		const { inner, storedKey, value } = assignment;
-		const wasEmpty = inner.tryGetField(storedKey) === undefined;
-		if (value === undefined && wasEmpty) {
-			continue;
-		}
 		const storedSchema = context.schema.nodeSchema.get(inner.type);
 		assert(storedSchema instanceof ObjectNodeStoredSchema, "Expected ObjectNodeStoredSchema");
 		const destinationSchema = storedSchema.getFieldSchema(storedKey);
 		const kind = destinationSchema.kind;
+		// A required field is never empty, so it is not read.
+		const wasEmpty =
+			kind !== FieldKinds.required.identifier && inner.tryGetField(storedKey) === undefined;
+		if (value === undefined && wasEmpty) {
+			continue;
+		}
 		if (kind !== FieldKinds.required.identifier && kind !== FieldKinds.optional.identifier) {
 			throw new UsageError(`The property ${JSON.stringify(storedKey)} cannot be set.`);
 		}
