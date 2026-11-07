@@ -684,13 +684,15 @@ export function optionalFieldIntoDelta(
 		for (const [id, childChange] of change.childChanges) {
 			const childDelta = deltaFromChild(childChange);
 			if (id === "self") {
-				mark.fields = childDelta;
+				mark.fields = childDelta.fields;
+				if (childDelta.value !== undefined) {
+					mark.value = childDelta.value;
+				}
 				markIsANoop = false;
 			} else {
-				const fields = childDelta;
 				globals.push({
 					id: { major: id.revision, minor: id.localId },
-					fields,
+					...childDelta,
 				});
 			}
 		}

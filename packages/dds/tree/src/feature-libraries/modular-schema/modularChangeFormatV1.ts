@@ -61,10 +61,26 @@ const EncodedNodeExistsConstraint = Type.Object(
 );
 type EncodedNodeExistsConstraint = Static<typeof EncodedNodeExistsConstraint>;
 
+const EncodedLeafValue = Type.Union([Type.Number(), Type.String(), Type.Boolean()]);
+
+/**
+ * The change of a leaf node's value.
+ * @remarks
+ * Only valid in formats which support value changes: see `makeModularChangeCodecV2`.
+ */
+const EncodedNodeValueChange = Type.Object(
+	{
+		old: EncodedLeafValue,
+		new: EncodedLeafValue,
+	},
+	noAdditionalProps,
+);
+
 export const EncodedNodeChangeset = Type.Object(
 	{
 		fieldChanges: Type.Optional(EncodedFieldChangeMap),
 		nodeExistsConstraint: Type.Optional(EncodedNodeExistsConstraint),
+		valueChange: Type.Optional(EncodedNodeValueChange),
 	},
 	noAdditionalProps,
 );

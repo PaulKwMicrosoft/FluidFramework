@@ -139,6 +139,18 @@ export function makeMessageCodecBuilder<TChangeset>(): VersionDispatchingCodecBu
 		},
 		{
 			minVersionForCollab: undefined,
+			formatVersion: MessageFormatVersion.vInPlaceValues,
+			codec: (options: MessageCodecBuilderOptions<TChangeset>) =>
+				makeV1ToV4CodecWithVersion(
+					options.changeCodecs.resolve(
+						options.dependentChangeFormatVersion.lookup(MessageFormatVersion.vInPlaceValues),
+					),
+					options.revisionTagCodec,
+					MessageFormatVersion.vInPlaceValues,
+				),
+		},
+		{
+			minVersionForCollab: undefined,
 			formatVersion: MessageFormatVersion.vSharedBranches,
 			codec: (options: MessageCodecBuilderOptions<TChangeset>) =>
 				makeSharedBranchesCodecWithVersion(

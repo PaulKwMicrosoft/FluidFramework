@@ -10,6 +10,7 @@ import {
 	type FieldKey,
 	type FieldKindIdentifier,
 	type RevisionInfo,
+	type TreeValue,
 } from "../../core/index.js";
 import { brand, RangeMap, type Brand } from "../../util/index.js";
 import type { ChangeAtomIdBTree } from "../changeAtomIdBTree.js";
@@ -125,6 +126,24 @@ export interface NodeChangeset extends HasFieldChanges {
 	nodeExistsConstraint?: NodeExistsConstraint;
 	/** Keeps track of whether node exists constraint will be violated when this change is reverted */
 	nodeExistsConstraintOnRevert?: NodeExistsConstraint;
+	/** A change to the value of the node, which keeps its identity and type. */
+	valueChange?: NodeValueChange;
+}
+
+/**
+ * A change to the value of a node with a value (a leaf), which keeps the node's identity and type.
+ * @remarks
+ * Concurrent value changes to the same node are resolved by the last one winning, as replacing the node would be.
+ */
+export interface NodeValueChange {
+	/**
+	 * The node's value in the input context of the change.
+	 * @remarks
+	 * The inverse of the change sets this value. Rebasing the change over another value change of the node updates it.
+	 */
+	readonly old: TreeValue;
+	/** The node's value in the output context of the change. */
+	readonly new: TreeValue;
 }
 
 export type NodeId = ChangeAtomId;

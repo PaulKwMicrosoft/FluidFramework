@@ -693,7 +693,7 @@ describe("optionalField", () => {
 				global: [
 					{
 						id: outerNodeId,
-						fields: TestNodeId.deltaFromChild(nodeChange1),
+						fields: TestNodeId.deltaFromChild(nodeChange1).fields,
 					},
 				],
 				local: { marks: [{ count: 1, attach: outerNodeId }] },
@@ -726,7 +726,7 @@ describe("optionalField", () => {
 					marks: [
 						{
 							count: 1,
-							fields: TestNodeId.deltaFromChild(nodeChange2),
+							fields: TestNodeId.deltaFromChild(nodeChange2).fields,
 						},
 					],
 				},

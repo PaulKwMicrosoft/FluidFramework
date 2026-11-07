@@ -13,6 +13,7 @@ import type {
 	DeltaDetachedNodeRename,
 	DeltaFieldChanges,
 	DeltaFieldMap,
+	DeltaValueChange,
 	RevisionMetadataSource,
 	RevisionReplacer,
 	RevisionTag,
@@ -326,10 +327,18 @@ export interface FieldEditor<TChangeset> {
 }
 
 /**
+ * The nested changes of a child node in a delta: changes to its fields (possibly none), and to its value.
+ */
+export interface ChildDelta {
+	readonly fields: DeltaFieldMap;
+	readonly value?: DeltaValueChange;
+}
+
+/**
  * The `index` represents the index of the child node in the input context.
  * The `index` should be `undefined` iff the child node does not exist in the input context (e.g., an inserted node).
  */
-export type ToDelta = (child: NodeId) => DeltaFieldMap;
+export type ToDelta = (child: NodeId) => ChildDelta;
 
 export type NodeChangeInverter = (change: NodeId) => NodeId;
 

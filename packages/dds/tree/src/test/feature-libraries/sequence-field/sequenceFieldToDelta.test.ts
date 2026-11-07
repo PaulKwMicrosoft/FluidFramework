@@ -10,13 +10,16 @@ import { deepFreeze } from "@fluidframework/test-runtime-utils/internal";
 import {
 	type ChangesetLocalId,
 	type DeltaDetachedNodeId,
-	type DeltaFieldMap,
 	type DeltaMark,
 	type FieldKey,
 	type RevisionTag,
 	tagChange,
 } from "../../../core/index.js";
-import { type NodeId, SequenceField as SF } from "../../../feature-libraries/index.js";
+import {
+	type ChildDelta,
+	type NodeId,
+	SequenceField as SF,
+} from "../../../feature-libraries/index.js";
 // eslint-disable-next-line import-x/no-internal-modules
 import type { FieldChangeDelta } from "../../../feature-libraries/modular-schema/fieldChangeHandler.js";
 // eslint-disable-next-line import-x/no-internal-modules
@@ -113,9 +116,9 @@ export function testToDelta(): void {
 				Mark.revive(1, { revision: tag, localId: brand(0) }, { changes: nodeId }),
 			];
 			const fieldChanges = new Map([[fooField, { marks: [] }]]);
-			const deltaFromChild = (child: NodeId): DeltaFieldMap => {
+			const deltaFromChild = (child: NodeId): ChildDelta => {
 				assert.deepEqual(child, nodeId);
-				return fieldChanges;
+				return { fields: fieldChanges };
 			};
 			const actual = sequenceFieldToDelta(changeset, deltaFromChild);
 			const expected: FieldChangeDelta = {
@@ -305,9 +308,9 @@ export function testToDelta(): void {
 				global: [{ id: buildId, fields: nestedMoveDelta }],
 				local: { marks: [{ count: 1, attach: buildId }] },
 			};
-			const deltaFromChild = (child: NodeId): DeltaFieldMap => {
+			const deltaFromChild = (child: NodeId): ChildDelta => {
 				assert.deepEqual(child, nodeId);
-				return nestedMoveDelta;
+				return { fields: nestedMoveDelta };
 			};
 			const actual = sequenceFieldToDelta(changeset, deltaFromChild);
 			assertFieldChangesEqual(actual, expected);

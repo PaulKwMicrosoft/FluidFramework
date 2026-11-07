@@ -122,6 +122,20 @@ export function makeEditManagerCodecBuilder<TChangeset>(): VersionDispatchingCod
 		},
 		{
 			minVersionForCollab: undefined,
+			formatVersion: EditManagerFormatVersion.vInPlaceValues,
+			codec: (options: EditManagerCodecOptions<TChangeset>) =>
+				makeV1toV4andV6CodecWithVersion(
+					options.changeCodecs.resolve(
+						options.dependentChangeFormatVersion.lookup(
+							EditManagerFormatVersion.vInPlaceValues,
+						),
+					),
+					options.revisionTagCodec,
+					EditManagerFormatVersion.vInPlaceValues,
+				),
+		},
+		{
+			minVersionForCollab: undefined,
 			formatVersion: EditManagerFormatVersion.vSharedBranches,
 			codec: (options: EditManagerCodecOptions<TChangeset>) =>
 				makeSharedBranchesCodecWithVersion(

@@ -67,5 +67,28 @@
         }
       }
     }
+  },
+  {
+    "version": 6,
+    "schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "object",
+            "required": [
+              "new",
+              "old"
+            ],
+            "properties": {
+              "new": {},
+              "old": {}
+            }
+          },
+          "data": {}
+        }
+      }
+    }
   }
 ]

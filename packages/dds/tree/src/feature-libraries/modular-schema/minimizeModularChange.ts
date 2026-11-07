@@ -111,10 +111,12 @@ class ModularChangeMinimizer {
 	}
 
 	public minimize(forestFactory: () => IEditableForest): ModularChangeset {
+		// Value changes of nodes in built trees are squashed into the builds.
 		const residualChange = filterEdits(
 			this.change,
 			this.filterEditsForResidualChange.bind(this),
 			this.fieldKinds,
+			(nodeId) => !this.isNodeIdInBuiltTree(nodeId),
 		);
 
 		(residualChange as Mutable<ModularChangeset>).builds = this.squashBuilds(forestFactory);
@@ -516,6 +518,7 @@ class ModularChangeMinimizer {
 			this.change,
 			this.filterEditsForBuildChange.bind(this),
 			this.fieldKinds,
+			(nodeId) => this.isNodeIdInBuiltTree(nodeId),
 		);
 
 		const deltaForBuilds = intoDelta(makeAnonChange(changeForBuilds), this.fieldKinds);

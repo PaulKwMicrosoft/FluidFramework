@@ -93,6 +93,11 @@ export const SharedTreeChangeFormatVersion = strictEnum("SharedTreeChangeFormatV
 	 * Adds support for "no change" constraints.
 	 */
 	v5: 5,
+	/**
+	 * Not yet released: only written when in-place value changes are enabled.
+	 * Uses {@link ModularChangeFormatVersion.v6}, which adds changes to the values of leaf nodes which keep the nodes.
+	 */
+	v6: 6,
 });
 export type SharedTreeChangeFormatVersion = Values<typeof SharedTreeChangeFormatVersion>;
 
@@ -124,6 +129,12 @@ export const dependenciesForChangeFormat = new Map<
 		SharedTreeChangeFormatVersion.v5,
 		{
 			modularChange: ModularChangeFormatVersion.v5,
+		},
+	],
+	[
+		SharedTreeChangeFormatVersion.v6,
+		{
+			modularChange: ModularChangeFormatVersion.v6,
 		},
 	],
 ]);

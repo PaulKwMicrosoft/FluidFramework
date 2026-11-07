@@ -38,10 +38,12 @@ export function makeV1ToV4CodecWithVersion<TChangeset>(
 		| typeof MessageFormatVersion.v3
 		| typeof MessageFormatVersion.v4
 		| typeof MessageFormatVersion.v6
-		| typeof MessageFormatVersion.v7,
+		| typeof MessageFormatVersion.v7
+		| typeof MessageFormatVersion.vInPlaceValues,
 ): CodecAndSchema<DecodedMessage<TChangeset>, MessageEncodingContext, MessageDecodingContext> {
 	// Persisted commit metadata was introduced in v7; older formats must not write the field.
-	const supportsCustomMetadata = version >= MessageFormatVersion.v7;
+	const supportsCustomMetadata =
+		version === MessageFormatVersion.v7 || version === MessageFormatVersion.vInPlaceValues;
 	const schema = Message(
 		changeCodec.encodedSchema ?? JsonCompatibleReadOnlySchema,
 		supportsCustomMetadata,

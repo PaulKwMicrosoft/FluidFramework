@@ -15,6 +15,7 @@ import {
 	taggedOptAtomId,
 } from "../core/index.js";
 import type {
+	ChildDelta,
 	NodeChangeComposer,
 	NodeChangePruner,
 	NodeChangeRebaser,
@@ -208,10 +209,10 @@ function toDelta<T>(
 	change: ChangesetWrapper<T>,
 	fieldToDelta: (change: T, deltaFromChild: ToDelta) => FieldChangeDelta,
 ): FieldChangeDelta {
-	const deltaFromChild = (id: NodeId) => {
+	const deltaFromChild = (id: NodeId): ChildDelta => {
 		const node = tryGetFromNestedMap(change.nodes, id.revision, id.localId);
 		assert(node !== undefined, "Unknown node ID");
-		return TestChange.toDelta(makeAnonChange(node));
+		return { fields: TestChange.toDelta(makeAnonChange(node)) };
 	};
 
 	return fieldToDelta(change.fieldChange, deltaFromChild);
