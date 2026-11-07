@@ -95,6 +95,12 @@ export const ContextSlot = anchorSlot<Context>();
 const maxSpareCursors = 64;
 
 /**
+ * How many more entries than twice the number of cursor holders a {@link Context}'s list of them may have before it
+ * drops the entries of entities which no longer hold one.
+ */
+const compactionSlack = 64;
+
+/**
  * Implementation of `FlexTreeHydratedContext`.
  *
  * @remarks An editor is required to edit the FlexTree.
@@ -105,7 +111,17 @@ const maxSpareCursors = 64;
  * This context and the trees it produces observe the kinds of fields from the schema
  */
 export class Context implements FlexTreeHydratedContext, IDisposable {
-	public readonly withCursors: Set<LazyEntity> = new Set();
+	/**
+	 * Entities which held a cursor since the last edit, each listed once (see {@link LazyEntity.markUnlisted}).
+	 * @remarks
+	 * Every entity holding a cursor is listed. An entity which gives up its cursor between edits stays listed until the
+	 * next edit, or until such entries outnumber the holders and the list is compacted, so giving one up costs no search.
+	 */
+	readonly #cursorHolders: LazyEntity[] = [];
+	/**
+	 * How many entities hold a cursor.
+	 */
+	#cursorHolderCount = 0;
 	public readonly withAnchors: Set<LazyEntity> = new Set();
 
 	/**
@@ -139,7 +155,7 @@ export class Context implements FlexTreeHydratedContext, IDisposable {
 	) {
 		this.onDispose = [
 			this.checkout.forest.events.on("beforeChange", () => {
-				this.prepareForEdit();
+				this.releaseCursors();
 			}),
 		];
 
@@ -164,15 +180,73 @@ export class Context implements FlexTreeHydratedContext, IDisposable {
 	}
 
 	/**
-	 * Called before editing.
-	 * Clears all cursors so editing can proceed.
+	 * Takes the cursor of every entity holding one, so the forest can be edited.
+	 * @remarks
+	 * Called before each edit. Entities get a cursor again when they next need one.
 	 */
-	private prepareForEdit(): void {
+	public releaseCursors(): void {
 		assert(this.disposed === false, 0x802 /* use after dispose */);
-		for (const target of this.withCursors) {
-			target.prepareForEdit();
+		const holders = this.#cursorHolders;
+		for (const entity of holders) {
+			const cursor = entity.takeCursorForEdit();
+			if (cursor !== undefined) {
+				this.releaseCursor(cursor);
+			}
 		}
-		assert(this.withCursors.size === 0, 0x773 /* prepareForEdit should remove all cursors */);
+		holders.length = 0;
+		this.#cursorHolderCount = 0;
+	}
+
+	/**
+	 * How many entities hold a cursor.
+	 */
+	public get cursorHolderCount(): number {
+		return this.#cursorHolderCount;
+	}
+
+	/**
+	 * How many entries the list of cursor holders has, including those of entities which gave up their cursor since the
+	 * last edit. For diagnostics and tests.
+	 */
+	public get listedCursorHolderCount(): number {
+		return this.#cursorHolders.length;
+	}
+
+	/**
+	 * Records that `entity` got a cursor, listing it unless `listed`, in which case it is already listed.
+	 */
+	public addCursorHolder(entity: LazyEntity, listed: boolean): void {
+		this.#cursorHolderCount++;
+		if (!listed) {
+			const holders = this.#cursorHolders;
+			if (holders.length >= 2 * this.#cursorHolderCount + compactionSlack) {
+				this.compactCursorHolders();
+			}
+			holders.push(entity);
+		}
+	}
+
+	/**
+	 * Records that a listed entity gave up its cursor between edits.
+	 */
+	public removeCursorHolder(): void {
+		this.#cursorHolderCount--;
+	}
+
+	/**
+	 * Drops the listed entities which no longer hold a cursor.
+	 */
+	private compactCursorHolders(): void {
+		const holders = this.#cursorHolders;
+		let kept = 0;
+		for (const entity of holders) {
+			if (entity.holdsCursor) {
+				holders[kept++] = entity;
+			} else {
+				entity.markUnlisted();
+			}
+		}
+		holders.length = kept;
 	}
 
 	/**
@@ -223,7 +297,11 @@ export class Context implements FlexTreeHydratedContext, IDisposable {
 			target[disposeSymbol]();
 		}
 		this.lazyRootCache = undefined;
-		assert(this.withCursors.size === 0, 0x774 /* free should remove all cursors */);
+		assert(this.#cursorHolderCount === 0, 0x774 /* free should remove all cursors */);
+		for (const entity of this.#cursorHolders) {
+			entity.markUnlisted();
+		}
+		this.#cursorHolders.length = 0;
 		assert(this.withAnchors.size === 0, 0x775 /* free should remove all anchors */);
 	}
 

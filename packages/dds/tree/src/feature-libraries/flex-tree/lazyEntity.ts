@@ -38,11 +38,15 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 	/**
 	 * A cursor at this entity, or undefined if it has none.
 	 * @remarks
-	 * The cursor is only kept while it is current (see {@link Context.withCursors}):
+	 * The cursor is only kept while it is current (see {@link Context.releaseCursors}):
 	 * before an edit it is returned to the context (which keeps a few for reuse and frees the rest),
 	 * and {@link LazyEntity.cursor} gets one again when next needed.
 	 */
 	#lazyCursor: ITreeSubscriptionCursor | undefined;
+	/**
+	 * Whether this entity is in its context's list of cursor holders, which it must be while it holds a cursor.
+	 */
+	#listed = false;
 	#freed = false;
 	public readonly anchor: TAnchor;
 
@@ -53,7 +57,7 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 	) {
 		this.anchor = anchor;
 		this.#lazyCursor = cursor.fork("LazyEntity Fork");
-		context.withCursors.add(this);
+		this.#addAsCursorHolder();
 		this.context.withAnchors.add(this);
 	}
 
@@ -65,9 +69,12 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 
 	public [disposeSymbol](): void {
 		this.#freed = true;
-		this.#lazyCursor?.free();
-		this.#lazyCursor = undefined;
-		this.context.withCursors.delete(this);
+		const cursor = this.#lazyCursor;
+		if (cursor !== undefined) {
+			this.#lazyCursor = undefined;
+			cursor.free();
+			this.context.removeCursorHolder();
+		}
 		this.forgetAnchor();
 		this.context.withAnchors.delete(this);
 	}
@@ -75,15 +82,45 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 	/**
 	 * Releases this entity's cursor to the context (see {@link Context.releaseCursor}), if it has one.
 	 * @remarks
-	 * Called before edits. The cursor is obtained again the next time it is needed.
+	 * The cursor is obtained again the next time it is needed.
 	 */
 	public prepareForEdit(): void {
 		const cursor = this.#lazyCursor;
 		if (cursor !== undefined) {
 			this.#lazyCursor = undefined;
+			this.context.removeCursorHolder();
 			this.context.releaseCursor(cursor);
 		}
-		this.context.withCursors.delete(this);
+	}
+
+	/**
+	 * Whether this entity holds a cursor.
+	 */
+	public get holdsCursor(): boolean {
+		return this.#lazyCursor !== undefined;
+	}
+
+	/**
+	 * Gives up this entity's cursor, if any, for {@link Context.releaseCursors}, which also removes it from its list
+	 * of cursor holders.
+	 */
+	public takeCursorForEdit(): ITreeSubscriptionCursor | undefined {
+		this.#listed = false;
+		const cursor = this.#lazyCursor;
+		this.#lazyCursor = undefined;
+		return cursor;
+	}
+
+	/**
+	 * Records that the context removed this entity, which holds no cursor, from its list of cursor holders.
+	 */
+	public markUnlisted(): void {
+		this.#listed = false;
+	}
+
+	#addAsCursorHolder(): void {
+		this.context.addCursorHolder(this, this.#listed);
+		this.#listed = true;
 	}
 
 	public isFreed(): boolean {
@@ -125,6 +162,7 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 				"Unset cursor should be in cleared state",
 			);
 			this.#lazyCursor = undefined;
+			this.context.removeCursorHolder();
 			this.context.releaseCursor(held);
 		}
 		assert(!this.#freed, 0x778 /* Unset cursor should be in cleared state */);
@@ -134,7 +172,7 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 		);
 		const cursor = this.cursorFromParent() ?? this.cursorFromAnchor();
 		this.#lazyCursor = cursor;
-		this.context.withCursors.add(this);
+		this.#addAsCursorHolder();
 		return cursor;
 	}
 

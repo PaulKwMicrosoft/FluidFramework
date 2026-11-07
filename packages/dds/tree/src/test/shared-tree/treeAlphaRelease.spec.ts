@@ -75,7 +75,7 @@ function countMaterialized(view: SchematizingSimpleTreeView<typeof Root>): {
 		treeNodes,
 		flexNodes,
 		withAnchors: context.withAnchors.size,
-		withCursors: context.withCursors.size,
+		withCursors: context.cursorHolderCount,
 	};
 }
 

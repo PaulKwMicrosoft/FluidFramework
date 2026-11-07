@@ -63,6 +63,55 @@ describe("LazyNode", () => {
 		["ChunkedForest", ForestTypeOptimized],
 		["ObjectForest", ForestTypeReference],
 	] as const) {
+		it(`an edit takes the cursor of every entity read since the last edit (${name})`, () => {
+			const sf = new SchemaFactory("edit-cursors");
+			class Item extends sf.object("Item", { value: sf.number, label: sf.string }) {}
+			class Items extends sf.array("Items", Item) {}
+			const view = createIndependentTreeAlpha({ forest }).viewWith(
+				new TreeViewConfiguration({ schema: Items }),
+			);
+			view.initialize(Array.from({ length: 200 }, (_, i) => ({ value: i, label: `${i}` })));
+			const context = getInnerNode(view.root).context;
+			assert(context instanceof Context);
+			const readAll = (): number =>
+				view.root.reduce((sum, item) => sum + item.value + item.label.length, 0);
+
+			const total = readAll();
+			assert(context.cursorHolderCount >= 200);
+			view.root[0].value = 1000;
+			// The edit's own reads may get cursors again after it, but not those of the other items.
+			assert(context.cursorHolderCount < 10);
+			assert.equal(readAll(), total + 1000);
+			view.root[1].value = 2000;
+			assert.equal(readAll(), total + 1000 + 2000 - 1);
+			view.dispose();
+		});
+
+		it(`entities which give up their cursor between edits are not kept for the next edit (${name})`, () => {
+			const sf = new SchemaFactory("cursor-holders");
+			class Item extends sf.object("Item", { value: sf.number }) {}
+			class Items extends sf.array("Items", Item) {}
+			const view = createIndependentTreeAlpha({ forest }).viewWith(
+				new TreeViewConfiguration({ schema: Items }),
+			);
+			view.initialize(Array.from({ length: 200 }, (_, i) => ({ value: i })));
+			const root = getInnerNode(view.root);
+			assert(root instanceof LazyTreeNode);
+			const context = root.context;
+			const field = root.getBoxed(EmptyKey);
+			for (let round = 0; round < 10; round++) {
+				for (let i = 0; i < 200; i++) {
+					const item = field.boxedAt(i);
+					assert(item instanceof LazyTreeNode);
+					assert(item.holdsCursor);
+					item[disposeSymbol]();
+				}
+				// The list is compacted as entities are added, so it doesn't grow with the 2000 entities made here.
+				assert(context.listedCursorHolderCount <= 2 * (context.cursorHolderCount + 1) + 64);
+			}
+			view.dispose();
+		});
+
 		it(`cached parents follow moves and removal without cursor recovery (${name})`, () => {
 			const sf = new SchemaFactory("cached-parents");
 			class Item extends sf.object("Item", { value: sf.number }) {}
@@ -80,7 +129,7 @@ describe("LazyNode", () => {
 			root.right.moveToStart(1, root.left);
 			const rightNode = getInnerNode(root.right);
 			const destination = rightNode.getBoxed(EmptyKey);
-			for (const entity of node.context.withCursors) entity.prepareForEdit();
+			node.context.releaseCursors();
 			let observations = 0;
 			withObservation(
 				{
@@ -98,7 +147,7 @@ describe("LazyNode", () => {
 				},
 			);
 			assert.equal(observations, 1);
-			assert.equal(node.context.withCursors.size, 0);
+			assert.equal(node.context.cursorHolderCount, 0);
 			assert.notEqual(destination, originalField);
 			assert.equal(Tree.parent(item), root.right);
 			assert.equal(Tree.key(item), 0);
@@ -122,7 +171,7 @@ describe("LazyNode", () => {
 			assert(node instanceof LazyTreeNode);
 			const key: FieldKey = brand("value");
 			const field = node.getBoxed(key);
-			for (const entity of node.context.withCursors) entity.prepareForEdit();
+			node.context.releaseCursors();
 			let observations = 0;
 			withObservation(
 				{
@@ -138,7 +187,7 @@ describe("LazyNode", () => {
 				() => assert.equal(node.getBoxed(key), field),
 			);
 			assert.equal(observations, 1);
-			assert.equal(node.context.withCursors.size, 0);
+			assert.equal(node.context.cursorHolderCount, 0);
 			assert.equal(node.tryGetField(key), undefined);
 			view.root.value = 1;
 			assert.equal(node.tryGetField(key), field);
