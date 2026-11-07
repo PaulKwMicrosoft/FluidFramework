@@ -17,7 +17,10 @@ import {
 	compareUpPaths,
 	rootFieldKey,
 } from "../../../core/index.js";
-import { Context } from "../../../feature-libraries/flex-tree/context.js";
+import {
+	Context,
+	cursorReleaseDelayMs,
+} from "../../../feature-libraries/flex-tree/context.js";
 import { LazyField } from "../../../feature-libraries/flex-tree/lazyField.js";
 import { LazyTreeNode } from "../../../feature-libraries/flex-tree/lazyNode.js";
 import { withObservation } from "../../../feature-libraries/flex-tree/observer.js";
@@ -371,6 +374,26 @@ describe("LazyNode", () => {
 				assert.equal(view.root.shapes[1], second);
 				assert.equal(first.xfrm.off.y, 20);
 				view.dispose();
+			});
+
+			it("give back their cursors soon after reads, and read the same afterwards", async () => {
+				const view = createSlide(4);
+				const context = lazy(view.root).context;
+				const read = (): number[] =>
+					view.root.shapes.map(
+						(shape) => shape.id + shape.xfrm.off.x * 10 + shape.xfrm.off.y * 100,
+					);
+				const before = read();
+				const shapes = [...view.root.shapes];
+				assert(context.cursorHolderCount > 0);
+				await new Promise((resolve) => setTimeout(resolve, cursorReleaseDelayMs + 100));
+				assert.equal(context.cursorHolderCount, 0);
+				assert.deepEqual(read(), before);
+				assert.deepEqual([...view.root.shapes], shapes);
+				assert(context.cursorHolderCount > 0);
+				// Disposing with a release pending cancels it.
+				view.dispose();
+				await new Promise((resolve) => setTimeout(resolve, cursorReleaseDelayMs + 100));
 			});
 
 			it("find known nodes of a sequence only in bounds and only for nodes already read", () => {

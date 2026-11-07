@@ -101,6 +101,15 @@ const maxSpareCursors = 64;
 const compactionSlack = 64;
 
 /**
+ * How long after an entity gets a cursor a {@link Context} takes back the cursors of all entities, in milliseconds.
+ * @remarks
+ * Each entity read keeps a cursor so that reading it again is fast, but a cursor takes far more memory than the rest of the entity.
+ * Reads made close together (such as all the reads of one rendering) keep their cursors, and the memory they take is
+ * given back soon after: entities which are read again later get a cursor from an ancestor's, or from the root.
+ */
+export const cursorReleaseDelayMs = 1000;
+
+/**
  * Implementation of `FlexTreeHydratedContext`.
  *
  * @remarks An editor is required to edit the FlexTree.
@@ -122,6 +131,10 @@ export class Context implements FlexTreeHydratedContext, IDisposable {
 	 * How many entities hold a cursor.
 	 */
 	#cursorHolderCount = 0;
+	/**
+	 * The timer which will take back the cursors entities hold, if one is pending (see {@link cursorReleaseDelayMs}).
+	 */
+	#cursorReleaseTimer: ReturnType<typeof setTimeout> | undefined;
 	public readonly withAnchors: Set<LazyEntity> = new Set();
 
 	/**
@@ -180,12 +193,17 @@ export class Context implements FlexTreeHydratedContext, IDisposable {
 	}
 
 	/**
-	 * Takes the cursor of every entity holding one, so the forest can be edited.
+	 * Takes the cursor of every entity holding one, so the forest can be edited, or to free the memory they take.
 	 * @remarks
-	 * Called before each edit. Entities get a cursor again when they next need one.
+	 * Called before each edit, and {@link cursorReleaseDelayMs} after an entity gets a cursor.
+	 * Entities get a cursor again when they next need one.
 	 */
 	public releaseCursors(): void {
 		assert(this.disposed === false, 0x802 /* use after dispose */);
+		if (this.#cursorReleaseTimer !== undefined) {
+			clearTimeout(this.#cursorReleaseTimer);
+			this.#cursorReleaseTimer = undefined;
+		}
 		const holders = this.#cursorHolders;
 		for (const entity of holders) {
 			const cursor = entity.takeCursorForEdit();
@@ -217,6 +235,10 @@ export class Context implements FlexTreeHydratedContext, IDisposable {
 	 */
 	public addCursorHolder(entity: LazyEntity, listed: boolean): void {
 		this.#cursorHolderCount++;
+		this.#cursorReleaseTimer ??= setTimeout(() => {
+			this.#cursorReleaseTimer = undefined;
+			this.releaseCursors();
+		}, cursorReleaseDelayMs);
 		if (!listed) {
 			const holders = this.#cursorHolders;
 			if (holders.length >= 2 * this.#cursorHolderCount + compactionSlack) {
@@ -271,6 +293,10 @@ export class Context implements FlexTreeHydratedContext, IDisposable {
 	public [disposeSymbol](): void {
 		assert(this.disposed === false, 0x803 /* double dispose */);
 		this.disposed = true;
+		if (this.#cursorReleaseTimer !== undefined) {
+			clearTimeout(this.#cursorReleaseTimer);
+			this.#cursorReleaseTimer = undefined;
+		}
 		this.clear();
 		for (const unregister of this.onDispose) {
 			unregister();
