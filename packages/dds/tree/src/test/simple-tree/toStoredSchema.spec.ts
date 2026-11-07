@@ -256,11 +256,11 @@ describe("toStoredSchema", () => {
 			let reads = 0;
 			for (const node of [Root, Left, Right, Leaf]) {
 				assert(isObjectNodeSchema(node));
-				const fields = node.fields;
-				Object.defineProperty(node, "fields", {
+				const flexKeyMap = node.flexKeyMap;
+				Object.defineProperty(node, "flexKeyMap", {
 					get() {
 						reads++;
-						return fields;
+						return flexKeyMap;
 					},
 				});
 			}
@@ -417,6 +417,40 @@ describe("toStoredSchema", () => {
 			assert.strictEqual(toStoredSchema(Node, StagedSchemaUpgradePolicy.restrictive), stored);
 			assert.strictEqual(toStoredSchema(Node, StagedSchemaUpgradePolicy.permissive), stored);
 			assertDeepEqual(stored, reference(Node, StagedSchemaUpgradePolicy.permissive));
+		});
+		it("converts schema classes without creating their fields", () => {
+			const sf = new SchemaFactoryAlpha("conversionWithoutFields");
+			class Leaf extends sf.object("Leaf", {
+				value: sf.required(sf.number, {
+					key: "v",
+					metadata: { description: "value" },
+					persistedMetadata: { kept: true },
+				}),
+				label: sf.optional(sf.string),
+			}) {}
+			class Node extends sf.object("Node", {
+				leaf: Leaf,
+				other: sf.optional([Leaf, sf.null]),
+			}) {}
+			for (const node of [Node, Leaf]) {
+				Object.defineProperty(node, "fields", {
+					get: () => assert.fail("Conversion must not create fields"),
+					configurable: true,
+				});
+			}
+			const permissive = toStoredSchema(Node, StagedSchemaUpgradePolicy.permissive);
+			const converted = new Map(permissive.nodeSchema);
+			for (const node of [Node, Leaf]) {
+				Reflect.deleteProperty(node, "fields");
+			}
+			assertDeepEqual(
+				converted,
+				reference(Node, StagedSchemaUpgradePolicy.permissive).nodeSchema,
+			);
+			assert.deepEqual(
+				[...getObjectNodeSchema(permissive, Leaf.identifier).objectNodeFields.keys()].sort(),
+				["label", "v"],
+			);
 		});
 		it("shares the stored schema of each node schema across staging-free roots", () => {
 			const sf = new SchemaFactoryAlpha("sharedNodeStoredSchema");
