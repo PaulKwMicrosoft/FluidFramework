@@ -6,7 +6,7 @@
 import { assert, fail, skipInProduction } from "@fluidframework/core-utils/internal";
 import type { IIdCompressor } from "@fluidframework/id-compressor";
 
-import type { CodecWriteOptions, ICodecFamily } from "../codec/index.js";
+import { type CodecWriteOptions, type ICodecFamily, lazyCodecFamily } from "../codec/index.js";
 import {
 	type ChangeEncodingContext,
 	type ChangeDecodingContext,
@@ -31,6 +31,7 @@ import {
 	fieldKinds,
 	isModularChangesetValid,
 	makeModularChangeCodecFamily,
+	fieldBatchCodecBuilder,
 } from "../feature-libraries/index.js";
 import {
 	type Mutable,
@@ -71,28 +72,35 @@ export class SharedTreeChangeFamily
 
 	public readonly validator = debugOnlySharedTreeChangeValidator;
 
+	/**
+	 * @param fieldBatchCodec - The codec for the trees in changes.
+	 * Defaults to the field batch codec for `codecOptions`.
+	 * @remarks
+	 * The codecs are built when they are first used, since a tree which is not collaborative may never encode or decode a change.
+	 */
 	public constructor(
 		revisionTagCodec: RevisionTagCodec,
-		fieldBatchCodec: FieldBatchCodec,
+		fieldBatchCodec: FieldBatchCodec | undefined,
 		codecOptions: CodecWriteOptions,
 		chunkCompressionStrategy?: TreeCompressionStrategy,
 		private readonly idCompressor?: IIdCompressor,
 	) {
-		const modularChangeCodec = makeModularChangeCodecFamily(
-			fieldKindConfigurations,
-			revisionTagCodec,
-			fieldBatchCodec,
-			codecOptions,
-			chunkCompressionStrategy,
+		const modularChangeCodec = lazyCodecFamily(() =>
+			makeModularChangeCodecFamily(
+				fieldKindConfigurations,
+				revisionTagCodec,
+				fieldBatchCodec ?? fieldBatchCodecBuilder.build(codecOptions),
+				codecOptions,
+				chunkCompressionStrategy,
+			),
 		);
 		this.modularChangeFamily = new ModularChangeFamily(
 			fieldKinds,
 			modularChangeCodec,
 			codecOptions,
 		);
-		this.codecs = makeSharedTreeChangeCodecFamily(
-			this.modularChangeFamily.codecs,
-			codecOptions,
+		this.codecs = lazyCodecFamily(() =>
+			makeSharedTreeChangeCodecFamily(this.modularChangeFamily.codecs, codecOptions),
 		);
 	}
 

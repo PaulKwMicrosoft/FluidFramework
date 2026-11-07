@@ -448,6 +448,26 @@ export function makeCodecFamily<TDecoded, TEncodeContext, TDecodeContext = TEnco
 }
 
 /**
+ * Returns a codec family which builds the family returned by `build` when it is first used.
+ * @remarks
+ * Building a family builds a codec for each of its format versions.
+ * Owners of families which may never encode or decode anything, such as the change family of a tree which is not collaborative,
+ * can use this to avoid that cost.
+ * Errors in building the family are thrown by its first use rather than by this function.
+ */
+export function lazyCodecFamily<TDecoded, TEncodeContext, TDecodeContext = TEncodeContext>(
+	build: () => ICodecFamily<TDecoded, TEncodeContext, TDecodeContext>,
+): ICodecFamily<TDecoded, TEncodeContext, TDecodeContext> {
+	let family: ICodecFamily<TDecoded, TEncodeContext, TDecodeContext> | undefined;
+	const get = (): ICodecFamily<TDecoded, TEncodeContext, TDecodeContext> =>
+		(family ??= build());
+	return {
+		resolve: (formatVersion) => get().resolve(formatVersion),
+		getSupportedFormats: () => get().getSupportedFormats(),
+	};
+}
+
+/**
  * Codec for objects which carry no information.
  */
 export const unitCodec: IJsonCodec<

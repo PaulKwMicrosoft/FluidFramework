@@ -16,6 +16,7 @@ export {
 	type IJsonCodec,
 	type JsonValidator,
 	makeCodecFamily,
+	lazyCodecFamily,
 	type SchemaValidationFunction,
 	throwDecodeError,
 	unitCodec,
