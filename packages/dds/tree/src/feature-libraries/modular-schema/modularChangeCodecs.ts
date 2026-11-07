@@ -65,6 +65,19 @@ export function makeModularChangeCodecFamily(
 						),
 					];
 				}
+				case ModularChangeFormatVersion.v6: {
+					return [
+						version,
+						makeModularChangeCodecV2(
+							fieldKinds,
+							revisionTagCodec,
+							fieldsCodec,
+							codecOptions,
+							chunkCompressionStrategy,
+							true,
+						),
+					];
+				}
 				default: {
 					fail(0xcc5 /* Unsupported modular change codec version */);
 				}
@@ -97,5 +110,10 @@ export const ModularChangeFormatVersion = strictEnum("ModularChangeFormatVersion
 	 * Adds support for "no change" constraints.
 	 */
 	v5: 5,
+	/**
+	 * Not yet released: only written when in-place value changes are enabled.
+	 * Adds support for changes to the values of leaf nodes which keep the nodes.
+	 */
+	v6: 6,
 });
 export type ModularChangeFormatVersion = Values<typeof ModularChangeFormatVersion>;

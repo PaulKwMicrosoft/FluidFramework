@@ -4,6 +4,7 @@
  */
 
 import { assert, oob, fail } from "@fluidframework/core-utils/internal";
+import { UsageError } from "@fluidframework/telemetry-utils/internal";
 import type { TSchema } from "typebox";
 
 import {
@@ -25,6 +26,7 @@ import {
 	type RevisionInfo,
 	type RevisionTag,
 	type RevisionTagSchema,
+	type TreeValue,
 	cheapRebaseValidation,
 	strictRebaseValidation,
 } from "../../core/index.js";
@@ -172,7 +174,7 @@ export function encodeNodeChangesForJson(
 ): EncodedNodeChangeset {
 	const encodedChange: EncodedNodeChangeset = {};
 	// Note: revert constraints are ignored for now because they would only be needed if we supported reverting changes made by peers.
-	const { fieldChanges, nodeExistsConstraint } = change;
+	const { fieldChanges, nodeExistsConstraint, valueChange } = change;
 
 	if (fieldChanges !== undefined) {
 		encodedChange.fieldChanges = encodeFieldChangesForJsonI(
@@ -186,7 +188,35 @@ export function encodeNodeChangesForJson(
 		encodedChange.nodeExistsConstraint = nodeExistsConstraint;
 	}
 
+	if (valueChange !== undefined) {
+		encodedChange.valueChange = {
+			old: encodeLeafValue(valueChange.old),
+			new: encodeLeafValue(valueChange.new),
+		};
+	}
+
 	return encodedChange;
+}
+
+function encodeLeafValue(value: TreeValue): number | string | boolean {
+	assert(
+		typeof value === "number" || typeof value === "string" || typeof value === "boolean",
+		"Value changes must change number, string or boolean leaves",
+	);
+	return value;
+}
+
+/**
+ * Throws if `change` has value changes, which formats before {@link ModularChangeFormatVersion.v6} cannot represent.
+ */
+export function assertNoValueChanges(change: ModularChangeset): void {
+	for (const [, node] of change.nodeChanges.entries()) {
+		if (node.valueChange !== undefined) {
+			throw new UsageError(
+				"Value changes require a modular change format which supports them (v6 or later)",
+			);
+		}
+	}
 }
 
 export function decodeFieldChangesFromJson(
@@ -269,7 +299,7 @@ export function decodeNodeChangesetFromJson(
 	fieldChangesetCodecs: FieldChangesetCodecs,
 ): NodeChangeset {
 	const decodedChange: NodeChangeset = {};
-	const { fieldChanges, nodeExistsConstraint } = encodedChange;
+	const { fieldChanges, nodeExistsConstraint, valueChange } = encodedChange;
 
 	if (fieldChanges !== undefined) {
 		decodedChange.fieldChanges = decodeFieldChangesFromJson(
@@ -285,6 +315,10 @@ export function decodeNodeChangesetFromJson(
 
 	if (nodeExistsConstraint !== undefined) {
 		decodedChange.nodeExistsConstraint = nodeExistsConstraint;
+	}
+
+	if (valueChange !== undefined) {
+		decodedChange.valueChange = { old: valueChange.old, new: valueChange.new };
 	}
 
 	return decodedChange;
@@ -663,6 +697,7 @@ export function makeModularChangeCodecV1(
 			strictRebaseValidation("Malformed V1 encode input", () =>
 				isChangesetValid(change, fieldKindsFromConfiguration(fieldKinds)),
 			);
+			assertNoValueChanges(change);
 			const encoded = encodeChange(
 				change,
 				context,
@@ -690,6 +725,7 @@ export function makeModularChangeCodecV1(
 				fieldsCodec,
 				chunkCompressionStrategy,
 			);
+			assertNoValueChanges(decoded);
 			cheapRebaseValidation("Malformed V1 decode output", () =>
 				isChangesetValid(decoded, fieldKindsFromConfiguration(fieldKinds)),
 			);

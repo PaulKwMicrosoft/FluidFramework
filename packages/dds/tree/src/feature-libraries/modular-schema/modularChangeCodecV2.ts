@@ -22,6 +22,7 @@ import { TreeCompressionStrategy } from "../treeCompressionUtils.js";
 
 import type { FieldKindConfiguration } from "./fieldKindConfiguration.js";
 import {
+	assertNoValueChanges,
 	encodeChange,
 	decodeChange,
 	getFieldChangesetCodecs,
@@ -42,6 +43,11 @@ type ModularChangeCodec = IJsonCodec<
 	ChangeDecodingContext
 >;
 
+/**
+ * Makes the codec of modular change format v5, or of v6 when `supportsValueChanges` is true.
+ * @remarks
+ * Both use the same encoding, of which only v6 may contain changes to the values of nodes.
+ */
 export function makeModularChangeCodecV2(
 	fieldKinds: FieldKindConfiguration,
 	revisionTagCodec: JsonCodecPart<
@@ -52,6 +58,7 @@ export function makeModularChangeCodecV2(
 	fieldsCodec: FieldBatchCodec,
 	codecOptions: ICodecOptions,
 	chunkCompressionStrategy: TreeCompressionStrategy = TreeCompressionStrategy.Compressed,
+	supportsValueChanges: boolean = false,
 ): ModularChangeCodec {
 	const fieldChangesetCodecs = getFieldChangesetCodecs(
 		fieldKinds,
@@ -64,6 +71,9 @@ export function makeModularChangeCodecV2(
 			strictRebaseValidation("Malformed V2 encode input", () =>
 				isChangesetValid(change, fieldKindsFromConfiguration(fieldKinds)),
 			);
+			if (!supportsValueChanges) {
+				assertNoValueChanges(change);
+			}
 			const encoded = encodeChange(
 				change,
 				context,
@@ -95,6 +105,9 @@ export function makeModularChangeCodecV2(
 			);
 			if (encodedChange.noChangeConstraint !== undefined) {
 				decoded.noChangeConstraint = encodedChange.noChangeConstraint;
+			}
+			if (!supportsValueChanges) {
+				assertNoValueChanges(decoded);
 			}
 			cheapRebaseValidation("Malformed V2 decode output", () =>
 				isChangesetValid(decoded, fieldKindsFromConfiguration(fieldKinds)),

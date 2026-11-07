@@ -216,6 +216,12 @@ export const EditManagerFormatVersion = strictEnum("editManager.FormatVersion", 
 	 * Only used for testing shared branches.
 	 */
 	vSharedBranches: "shared-branches|v0.2",
+	/**
+	 * Not yet released.
+	 * Only written when in-place value changes are enabled.
+	 * The same as {@link EditManagerFormatVersion.v7}, with a change format which supports in-place value changes.
+	 */
+	vInPlaceValues: "in-place-values|v0.1",
 });
 export type EditManagerFormatVersion = Values<typeof EditManagerFormatVersion>;
 export const supportedEditManagerFormatVersions: ReadonlySet<EditManagerFormatVersion> =
@@ -225,6 +231,7 @@ export const supportedEditManagerFormatVersions: ReadonlySet<EditManagerFormatVe
 		EditManagerFormatVersion.v6,
 		EditManagerFormatVersion.v7,
 		EditManagerFormatVersion.vSharedBranches,
+		EditManagerFormatVersion.vInPlaceValues,
 	]);
 export const editManagerFormatVersions: ReadonlySet<EditManagerFormatVersion> = new Set(
 	Object.values(EditManagerFormatVersion),

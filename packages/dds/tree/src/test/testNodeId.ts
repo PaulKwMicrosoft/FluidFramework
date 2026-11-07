@@ -7,12 +7,11 @@ import { fail } from "node:assert";
 
 import {
 	type ChangeEncodingContext,
-	type DeltaFieldMap,
 	type FieldKey,
 	type FieldKindIdentifier,
 	makeAnonChange,
 } from "../core/index.js";
-import type { NodeId } from "../feature-libraries/index.js";
+import type { ChildDelta, NodeId } from "../feature-libraries/index.js";
 // eslint-disable-next-line import-x/no-internal-modules
 import type { EncodedNodeChangeset } from "../feature-libraries/modular-schema/modularChangeFormatV1.js";
 import { type JsonCompatibleReadOnly, brand } from "../util/index.js";
@@ -73,9 +72,9 @@ function rebaseChild(
 	return rebased;
 }
 
-function deltaFromChild(id: NodeId): DeltaFieldMap {
+function deltaFromChild(id: NodeId): ChildDelta {
 	const testChange = (id as TestNodeId).testChange;
-	return TestChange.toDelta(makeAnonChange(testChange));
+	return { fields: TestChange.toDelta(makeAnonChange(testChange)) };
 }
 
 const fieldKey: FieldKey = brand("");

@@ -545,6 +545,7 @@ export const changeFormatVersionForEditManager = DependentFormatVersion.fromPair
 	[EditManagerFormatVersion.vSharedBranches, SharedTreeChangeFormatVersion.v4],
 	[EditManagerFormatVersion.v6, SharedTreeChangeFormatVersion.v5],
 	[EditManagerFormatVersion.v7, SharedTreeChangeFormatVersion.v5],
+	[EditManagerFormatVersion.vInPlaceValues, SharedTreeChangeFormatVersion.v6],
 ]);
 
 /**
@@ -562,6 +563,7 @@ export const changeFormatVersionForMessage = DependentFormatVersion.fromPairs<
 	[MessageFormatVersion.vSharedBranches, SharedTreeChangeFormatVersion.v4],
 	[MessageFormatVersion.v6, SharedTreeChangeFormatVersion.v5],
 	[MessageFormatVersion.v7, SharedTreeChangeFormatVersion.v5],
+	[MessageFormatVersion.vInPlaceValues, SharedTreeChangeFormatVersion.v6],
 ]);
 
 function getCodecTreeForEditManagerFormat(

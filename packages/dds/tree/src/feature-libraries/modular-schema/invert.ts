@@ -244,6 +244,10 @@ function invertNodeChange(
 ): NodeChangeset {
 	const inverse: NodeChangeset = {};
 
+	if (change.valueChange !== undefined) {
+		inverse.valueChange = { old: change.valueChange.new, new: change.valueChange.old };
+	}
+
 	// Rollbacks are not subject to constraints
 	if (!isRollback) {
 		// If the node has a constraint, it should be inverted to a node-exist-on-revert constraint. This ensure that if

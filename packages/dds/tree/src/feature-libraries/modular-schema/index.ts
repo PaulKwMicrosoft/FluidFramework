@@ -50,6 +50,7 @@ export {
 	type RebaseRevisionMetadata,
 	type RelevantRemovedRootsFromChild,
 	type ToDelta,
+	type ChildDelta,
 	NodeAttachState,
 } from "./fieldChangeHandler.js";
 export type {
@@ -62,6 +63,7 @@ export type {
 	ModularChangeset,
 	NoChangeConstraint,
 	NodeExistsConstraint,
+	NodeValueChange,
 	NodeId,
 } from "./modularChangeTypes.js";
 export {
@@ -76,6 +78,7 @@ export {
 	type EditDescription,
 	type GlobalEditDescription,
 	type FieldEditDescription,
+	type ValueEditDescription,
 	rebaseRevisionMetadataFromInfo,
 	intoDelta,
 	relevantRemovedRoots,

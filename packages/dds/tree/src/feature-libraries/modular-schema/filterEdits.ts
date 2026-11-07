@@ -53,6 +53,7 @@ export function filterEdits(
 	change: ModularChangeset,
 	filterFieldEdits: (fieldChange: FieldChange, fieldId: FieldId) => FieldChange,
 	fieldKinds: ReadonlyMap<FieldKindIdentifier, FlexFieldKind>,
+	keepValueChange: (nodeId: NodeId) => boolean = () => true,
 ): ModularChangeset {
 	strictRebaseValidation("Malformed filterEdits input", () =>
 		isChangesetValid(change, fieldKinds),
@@ -66,7 +67,7 @@ export function filterEdits(
 
 	const filteredNodeChanges: ChangeAtomIdBTree<NodeChangeset> = brand(
 		change.nodeChanges.mapValues((v, k) =>
-			filterNodeEdits(makeChangeAtomId(k[1], k[0]), v, filterFieldEdits),
+			filterNodeEdits(makeChangeAtomId(k[1], k[0]), v, filterFieldEdits, keepValueChange),
 		),
 	);
 
@@ -107,12 +108,14 @@ function filterNodeEdits(
 	nodeId: NodeId,
 	change: NodeChangeset,
 	filterFieldEdits: (fieldChange: FieldChange, fieldId: FieldId) => FieldChange,
+	keepValueChange: (nodeId: NodeId) => boolean,
 ): NodeChangeset {
-	if (change.fieldChanges === undefined) {
-		return change;
+	const filtered: NodeChangeset = { ...change };
+	if (change.fieldChanges !== undefined) {
+		filtered.fieldChanges = filterFieldMapEdits(change.fieldChanges, nodeId, filterFieldEdits);
 	}
-	return {
-		...change,
-		fieldChanges: filterFieldMapEdits(change.fieldChanges, nodeId, filterFieldEdits),
-	};
+	if (change.valueChange !== undefined && !keepValueChange(nodeId)) {
+		delete filtered.valueChange;
+	}
+	return filtered;
 }

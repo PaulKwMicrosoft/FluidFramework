@@ -62,6 +62,12 @@ export const MessageFormatVersion = strictEnum("MessageFormatVersion", {
 	 * Only used for testing shared branches.
 	 */
 	vSharedBranches: "shared-branches|v0.2",
+	/**
+	 * Not yet released.
+	 * Only written when in-place value changes are enabled.
+	 * The same as {@link MessageFormatVersion.v7}, with a change format which supports in-place value changes.
+	 */
+	vInPlaceValues: "in-place-values|v0.1",
 });
 export type MessageFormatVersion = Values<typeof MessageFormatVersion>;
 export const supportedMessageFormatVersions: ReadonlySet<MessageFormatVersion> = new Set([
@@ -70,4 +76,5 @@ export const supportedMessageFormatVersions: ReadonlySet<MessageFormatVersion> =
 	MessageFormatVersion.v6,
 	MessageFormatVersion.v7,
 	MessageFormatVersion.vSharedBranches,
+	MessageFormatVersion.vInPlaceValues,
 ]);

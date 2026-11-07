@@ -23,7 +23,6 @@ import {
 	type DeltaDetachedNodeDestruction,
 	type DeltaDetachedNodeId,
 	type DeltaFieldChanges,
-	type DeltaFieldMap,
 	type DeltaRoot,
 	EditBuilder,
 	type FieldKey,
@@ -76,6 +75,7 @@ import type { TreeChunk } from "../chunked-forest/index.js";
 
 import type { CrossFieldTarget } from "./crossFieldQueries.js";
 import {
+	type ChildDelta,
 	type FieldChangeHandler,
 	NodeAttachState,
 	type RebaseRevisionMetadata,
@@ -95,6 +95,7 @@ import {
 	newCrossFieldKeyTable,
 	type NodeChangeset,
 	type NodeId,
+	type NodeValueChange,
 } from "./modularChangeTypes.js";
 import {
 	CrossFieldManagerI,
@@ -750,6 +751,17 @@ export class ModularChangeFamily
 			composedNodeChange.nodeExistsConstraintOnRevert = nodeExistsConstraintOnRevert;
 		}
 
+		const valueChange =
+			change2.valueChange === undefined
+				? change1.valueChange
+				: {
+						old: change1.valueChange?.old ?? change2.valueChange.old,
+						new: change2.valueChange.new,
+					};
+		if (valueChange !== undefined) {
+			composedNodeChange.valueChange = valueChange;
+		}
+
 		return composedNodeChange;
 	}
 
@@ -1304,6 +1316,15 @@ export class ModularChangeFamily
 			rebasedChange.nodeExistsConstraintOnRevert = change.nodeExistsConstraintOnRevert;
 		}
 
+		if (change?.valueChange !== undefined) {
+			// The last value change wins: rebased over another value change of the node, this one still sets its new value,
+			// over the value the other one set.
+			rebasedChange.valueChange =
+				over?.valueChange === undefined
+					? change.valueChange
+					: { old: over.valueChange.new, new: change.valueChange.new };
+		}
+
 		setInChangeAtomIdMap(
 			crossFieldTable.baseToRebasedNodeId,
 			normalizeNodeId(baseId, crossFieldTable.baseChange.nodeAliases),
@@ -1811,7 +1832,7 @@ function intoDeltaImpl(
 			rename: fieldRename,
 		} = getChangeHandler(fieldKinds, fieldChange.fieldKind).intoDelta(
 			fieldChange.change,
-			(childChange): DeltaFieldMap => {
+			(childChange): ChildDelta => {
 				const nodeChange = nodeChangeFromId(nodeChanges, childChange, nodeAliases);
 				return deltaFromNodeChange(
 					nodeChange,
@@ -1843,19 +1864,22 @@ function deltaFromNodeChange(
 	fieldKinds: ReadonlyMap<FieldKindIdentifier, FlexFieldKind>,
 	global: DeltaDetachedNodeChanges[],
 	rename: DeltaDetachedNodeRename[],
-): DeltaFieldMap {
-	if (change.fieldChanges !== undefined) {
-		return intoDeltaImpl(
-			change.fieldChanges,
-			nodeChanges,
-			nodeAliases,
-			fieldKinds,
-			global,
-			rename,
-		);
-	}
-	// TODO: update the API to allow undefined to be returned here
-	return new Map();
+): ChildDelta {
+	// TODO: update the API to allow undefined fields
+	const fields =
+		change.fieldChanges === undefined
+			? new Map()
+			: intoDeltaImpl(
+					change.fieldChanges,
+					nodeChanges,
+					nodeAliases,
+					fieldKinds,
+					global,
+					rename,
+				);
+	return change.valueChange === undefined
+		? { fields }
+		: { fields, value: { value: change.valueChange.new } };
 }
 
 /**
@@ -2304,6 +2328,19 @@ export class ModularEditBuilder extends EditBuilder<ModularChangeset> {
 		const revisions: Set<RevisionTag> = new Set();
 		const changeMaps = changes.map((change) => {
 			revisions.add(change.revision);
+			if (change.type === "value") {
+				return makeAnonChange(
+					buildModularChangesetFromNode({
+						path: change.node,
+						nodeChange: { valueChange: change.change },
+						nodeChanges: newChangeAtomIdBTree(),
+						nodeToParent: newChangeAtomIdBTree(),
+						crossFieldKeys: newCrossFieldKeyTable(),
+						idAllocator: this.idAllocator,
+						revision: change.revision,
+					}),
+				);
+			}
 			return makeAnonChange(
 				change.type === "global"
 					? makeModularChangeset({
@@ -2547,6 +2584,10 @@ interface NodeUnderConstruction {
 	 * The nodes with changes in each field of the node which is not edited, by their index in the field.
 	 */
 	readonly children: Map<FieldKey, Map<number, NodeUnderConstruction>>;
+	/**
+	 * The change to the node's value, if any.
+	 */
+	valueChange?: NodeValueChange;
 }
 
 /**
@@ -2602,6 +2643,15 @@ function buildModularChangesetFromIndependentEdits(
 			}
 			continue;
 		}
+		if (change.type === "value") {
+			const leaf = nodeAt(change.node, change.revision);
+			assert(
+				leaf.valueChange === undefined,
+				"Independent edits must change the values of distinct nodes",
+			);
+			leaf.valueChange = change.change;
+			continue;
+		}
 		const node =
 			change.field.parent === undefined ? root : nodeAt(change.field.parent, change.revision);
 		assert(
@@ -2637,7 +2687,14 @@ function buildModularChangesetFromIndependentEdits(
 			});
 		}
 		if (node.id !== undefined) {
-			setInChangeAtomIdMap(nodeChanges, node.id, { fieldChanges: node.fieldChanges });
+			const nodeChange: NodeChangeset = {};
+			if (node.fieldChanges.size > 0) {
+				nodeChange.fieldChanges = node.fieldChanges;
+			}
+			if (node.valueChange !== undefined) {
+				nodeChange.valueChange = node.valueChange;
+			}
+			setInChangeAtomIdMap(nodeChanges, node.id, nodeChange);
 		}
 	}
 
@@ -2666,7 +2723,20 @@ export interface GlobalEditDescription {
 	builds?: ChangeAtomIdBTree<TreeChunk>;
 }
 
-export type EditDescription = FieldEditDescription | GlobalEditDescription;
+/**
+ * A change to the value of the leaf node at `node`, which keeps the node.
+ */
+export interface ValueEditDescription {
+	type: "value";
+	node: UpPath;
+	change: NodeValueChange;
+	revision: RevisionTag;
+}
+
+export type EditDescription =
+	| FieldEditDescription
+	| GlobalEditDescription
+	| ValueEditDescription;
 
 function fieldChangeFromId(
 	fields: FieldChangeMap,

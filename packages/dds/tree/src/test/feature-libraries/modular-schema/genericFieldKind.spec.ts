@@ -229,9 +229,9 @@ describe("GenericField", () => {
 		const expected: FieldChangeDelta = {
 			local: {
 				marks: [
-					{ count: 1, fields: TestNodeId.deltaFromChild(nodeChange1) },
+					{ count: 1, fields: TestNodeId.deltaFromChild(nodeChange1).fields },
 					{ count: 1 },
-					{ count: 1, fields: TestNodeId.deltaFromChild(nodeChange2) },
+					{ count: 1, fields: TestNodeId.deltaFromChild(nodeChange2).fields },
 				],
 			},
 		};

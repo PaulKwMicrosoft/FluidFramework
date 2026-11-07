@@ -7,6 +7,7 @@ import { assert, unreachableCase } from "@fluidframework/core-utils/internal";
 
 import {
 	type DeltaDetachedNodeChanges,
+	type DeltaDetachedNodeId,
 	type DeltaDetachedNodeRename,
 	type DeltaMark,
 	areEqualChangeAtomIds,
@@ -40,13 +41,16 @@ export function sequenceFieldToDelta(
 		const changes = mark.changes;
 		if (changes !== undefined) {
 			const nestedDelta = deltaFromChild(changes);
-			if (nestedDelta.size > 0) {
+			if (nestedDelta.fields.size > 0 || nestedDelta.value !== undefined) {
 				if (inputCellId === undefined) {
-					deltaMark.fields = nestedDelta;
+					deltaMark.fields = nestedDelta.fields;
+					if (nestedDelta.value !== undefined) {
+						deltaMark.value = nestedDelta.value;
+					}
 				} else {
 					global.push({
 						id: nodeIdFromChangeAtom(inputCellId),
-						fields: nestedDelta,
+						...nestedDelta,
 					});
 				}
 			}
@@ -85,12 +89,7 @@ export function sequenceFieldToDelta(
 					newId: nodeIdFromChangeAtom(outputId),
 				});
 			}
-			if (deltaMark.fields) {
-				global.push({
-					id: oldId,
-					fields: deltaMark.fields,
-				});
-			}
+			pushNestedChanges(global, oldId, deltaMark);
 		} else {
 			const type = mark.type;
 			// Inline into `switch(mark.type)` once we upgrade to TS 4.7
@@ -118,12 +117,7 @@ export function sequenceFieldToDelta(
 							});
 						}
 						// In all cases, the nested changes apply
-						if (deltaMark.fields) {
-							global.push({
-								id: oldId,
-								fields: deltaMark.fields,
-							});
-						}
+						pushNestedChanges(global, oldId, deltaMark);
 					}
 					break;
 				}
@@ -150,11 +144,10 @@ export function sequenceFieldToDelta(
 					);
 					const buildId = nodeIdFromChangeAtom(inputCellId);
 					deltaMark.attach = buildId;
-					if (deltaMark.fields) {
-						// Nested changes are represented on the node in its starting location
-						global.push({ id: buildId, fields: deltaMark.fields });
-						delete deltaMark.fields;
-					}
+					// Nested changes are represented on the node in its starting location
+					pushNestedChanges(global, buildId, deltaMark);
+					delete deltaMark.fields;
+					delete deltaMark.value;
 					local.push(deltaMark);
 					break;
 				}
@@ -200,4 +193,21 @@ export function sequenceFieldToDelta(
 		delta.rename = rename;
 	}
 	return delta;
+}
+
+/**
+ * Adds the nested changes of `mark`, if any, to `global`, as changes to the detached node `id`.
+ */
+function pushNestedChanges(
+	global: DeltaDetachedNodeChanges[],
+	id: DeltaDetachedNodeId,
+	mark: DeltaMark,
+): void {
+	if (mark.fields !== undefined || mark.value !== undefined) {
+		global.push({
+			id,
+			fields: mark.fields ?? new Map(),
+			...(mark.value === undefined ? {} : { value: mark.value }),
+		});
+	}
 }

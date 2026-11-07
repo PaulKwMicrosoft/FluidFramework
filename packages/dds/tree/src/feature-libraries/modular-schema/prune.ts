@@ -123,6 +123,7 @@ function isEmptyNodeChangeset(change: NodeChangeset): boolean {
 	return (
 		change.fieldChanges === undefined &&
 		change.nodeExistsConstraint === undefined &&
-		change.nodeExistsConstraintOnRevert === undefined
+		change.nodeExistsConstraintOnRevert === undefined &&
+		change.valueChange === undefined
 	);
 }

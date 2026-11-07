@@ -8,7 +8,11 @@ import { strict as assert } from "node:assert";
 import type { EditDescription as AnyEditDescription } from "../../../feature-libraries/modular-schema/index.js";
 
 import type { SessionId } from "@fluidframework/id-compressor";
-import { deepFreeze as deepFreezeBase } from "@fluidframework/test-runtime-utils/internal";
+import {
+	deepFreeze as deepFreezeBase,
+	validateAssertionError,
+	validateUsageError,
+} from "@fluidframework/test-runtime-utils/internal";
 import { BTree } from "@tylerbu/sorted-btree-es6";
 
 import {
@@ -35,6 +39,7 @@ import {
 	type FieldUpPath,
 	type RevisionInfo,
 	RebaseValidation,
+	type TreeValue,
 } from "../../../core/index.js";
 import {
 	type FieldChangeHandler,
@@ -92,6 +97,7 @@ import { fieldJsonCursor } from "../../json/index.js";
 import {
 	type EncodingTestData,
 	assertDeltaEqual,
+	defaultRevisionMetadataFromChanges,
 	chunkFromJsonTrees,
 	makeEncodingTestSuite,
 	mintRevisionTag,
@@ -103,6 +109,8 @@ import {
 
 import { type ValueChangeset, valueField } from "./basicRebasers.js";
 import { assertEqual, Change, removeAliases } from "./modularChangesetUtil.js";
+import type { ChildStateGenerator } from "../../exhaustiveRebaserUtils.js";
+import { runExhaustiveComposeRebaseSuite } from "../../rebaserAxiomaticTests.js";
 
 type SingleNodeChangeset = NodeId | undefined;
 const singleNodeRebaser: FieldChangeRebaser<SingleNodeChangeset> = {
@@ -149,7 +157,11 @@ const singleNodeHandler: FieldChangeHandler<SingleNodeChangeset> = {
 	editor: singleNodeEditor,
 	intoDelta: (change, deltaFromChild): FieldChangeDelta => ({
 		local: {
-			marks: [{ count: 1, fields: change === undefined ? undefined : deltaFromChild(change) }],
+			marks: [
+				change === undefined
+					? { count: 1, fields: undefined }
+					: { count: 1, ...deltaFromChild(change) },
+			],
 		},
 	}),
 	relevantRemovedRoots: (change, relevantRemovedRootsFromChild) =>
@@ -1347,6 +1359,219 @@ describe("ModularChangeFamily", () => {
 		});
 	});
 
+	describe("value changes", () => {
+		function valueChangeAt(
+			node: UpPath,
+			oldValue: TreeValue,
+			newValue: TreeValue,
+			revision: RevisionTag = mintRevisionTag(),
+		): ModularChangeset {
+			return inlineRevision(
+				buildChangeset([
+					{ type: "value", node, change: { old: oldValue, new: newValue }, revision },
+				]),
+				revision,
+			);
+		}
+
+		/**
+		 * The value the delta of `change` sets at `pathA0`, or undefined if it sets none.
+		 */
+		function valueSetAtA0(change: TaggedChange<ModularChangeset>): TreeValue | undefined {
+			const marks = intoDelta(change, family.fieldKinds).fields?.get(fieldA)?.marks;
+			return marks?.[0]?.value?.value;
+		}
+
+		it("are converted to deltas which set the new value", () => {
+			const change = valueChangeAt(pathA0, 1, 2, tag1);
+			assert.equal(valueSetAtA0(tagChange(change, tag1)), 2);
+		});
+
+		it("compose to the first old value and the last new value", () => {
+			const composed = family.compose([
+				tagChange(valueChangeAt(pathA0, 1, 2, tag1), tag1),
+				tagChange(valueChangeAt(pathA0, 2, 3, tag2), tag2),
+			]);
+			assert.equal(valueSetAtA0(makeAnonChange(composed)), 3);
+			const inverse = family.invert(makeAnonChange(composed), false, tag3);
+			assert.equal(valueSetAtA0(tagChange(inverse, tag3)), 1);
+		});
+
+		it("invert to the old value", () => {
+			for (const isRollback of [false, true]) {
+				const inverse = family.invert(
+					tagChange(valueChangeAt(pathA0, "a", "b", tag1), tag1),
+					isRollback,
+					tag2,
+				);
+				assert.equal(valueSetAtA0(tagChange(inverse, tag2)), "a");
+			}
+		});
+
+		it("rebased over a change of the same value have its new value as their old value", () => {
+			const rebased = family.rebase(
+				tagChange(valueChangeAt(pathA0, false, true, tag2), tag2),
+				tagChange(valueChangeAt(pathA0, false, false, tag1), tag1),
+				revisionMetadataSourceFromInfo([{ revision: tag1 }, { revision: tag2 }]),
+			);
+			assert.equal(valueSetAtA0(tagChange(rebased, tag2)), true);
+			const inverse = family.invert(tagChange(rebased, tag2), false, tag3);
+			assert.equal(valueSetAtA0(tagChange(inverse, tag3)), false);
+		});
+
+		it("rebased over changes to other fields are unchanged", () => {
+			const change = valueChangeAt(pathA0, 1, 2, tag2);
+			const rebased = family.rebase(
+				tagChange(change, tag2),
+				tagChange(inlineRevision(rootChange2, tag1), tag1),
+				revisionMetadataSourceFromInfo([{ revision: tag1 }, { revision: tag2 }]),
+			);
+			assert.deepEqual(
+				intoDelta(tagChange(rebased, tag2), family.fieldKinds),
+				intoDelta(tagChange(change, tag2), family.fieldKinds),
+			);
+			const inverse = family.invert(tagChange(rebased, tag2), false, tag3);
+			assert.equal(valueSetAtA0(tagChange(inverse, tag3)), 1);
+		});
+
+		it("are combined with the field changes of the same node by submitIndependentChanges", () => {
+			const edits: AnyEditDescription[] = [
+				{ type: "value", node: pathA0, change: { old: 1, new: 2 }, revision: tag1 },
+				{
+					type: "field",
+					field: pathA0A,
+					fieldKind: valueField.identifier,
+					change: brand(valueChange1a),
+					revision: tag1,
+				},
+			];
+			const submittedChanges: ModularChangeset[] = [];
+			const editor = family.buildEditor(mintRevisionTag, (change) =>
+				submittedChanges.push(change.change),
+			);
+			editor.submitIndependentChanges(edits, tag1);
+			assert.equal(submittedChanges.length, 1);
+			const submitted = submittedChanges[0] ?? assert.fail();
+			assert.deepEqual(
+				intoDelta(makeAnonChange(submitted), family.fieldKinds),
+				intoDelta(makeAnonChange(buildChangeset(edits)), family.fieldKinds),
+			);
+			assert.equal(valueSetAtA0(makeAnonChange(submitted)), 2);
+		});
+
+		it("of the same node are not independent", () => {
+			const editor = family.buildEditor(mintRevisionTag, () => undefined);
+			assert.throws(
+				() =>
+					editor.submitIndependentChanges(
+						[
+							{ type: "value", node: pathA0, change: { old: 1, new: 2 }, revision: tag1 },
+							{ type: "value", node: pathA0, change: { old: 2, new: 3 }, revision: tag1 },
+						],
+						tag1,
+					),
+				validateAssertionError(/Independent edits must change the values of distinct nodes/),
+			);
+		});
+
+		describe("Rebaser axioms", () => {
+			/**
+			 * What a change does to the value at `pathA0`: the value it sets, and the value its inverse sets.
+			 */
+			function effect(change: TaggedChange<ModularChangeset>): {
+				new: TreeValue | undefined;
+				old: TreeValue | undefined;
+			} {
+				const inverse = family.invert(change, false, tag4);
+				return {
+					new: valueSetAtA0(change),
+					old: valueSetAtA0(tagChange(inverse, tag4)),
+				};
+			}
+
+			const generateChildStates: ChildStateGenerator<number, ModularChangeset> = function* (
+				state,
+				tagFromIntention,
+				mintIntention,
+			) {
+				// Each state changes the value to a new one, or sets it to the value it has.
+				for (const newValue of [undefined, state.content]) {
+					const intention = mintIntention();
+					const revision = tagFromIntention(intention);
+					const value = newValue ?? intention;
+					yield {
+						content: value,
+						mostRecentEdit: {
+							changeset: tagChange(
+								valueChangeAt(pathA0, state.content, value, revision),
+								revision,
+							),
+							description: `${state.content}->${value}`,
+							intention,
+						},
+						parent: state,
+					};
+				}
+			};
+
+			runExhaustiveComposeRebaseSuite([{ content: 0 }], generateChildStates, {
+				rebase: (change, base, metadata) =>
+					family.rebase(
+						change,
+						base,
+						metadata ?? defaultRevisionMetadataFromChanges([base, change]),
+					),
+				rebaseComposed: (metadata, change, ...baseChanges) =>
+					family.rebase(change, makeAnonChange(family.compose(baseChanges)), metadata),
+				compose: (change1, change2) => family.compose([change1, change2]),
+				invert: (change, revision, isRollback) =>
+					family.invert(change, isRollback, revision ?? mintRevisionTag()),
+				inlineRevision,
+				createEmpty: () => family.compose([]),
+				isEmpty: (change) => change.fieldChanges.size === 0,
+				assertEqual: (change1, change2) => {
+					assert.deepEqual(
+						change1 === undefined ? undefined : effect(change1),
+						change2 === undefined ? undefined : effect(change2),
+					);
+				},
+				assertChangesetsEquivalent: (change1, change2) => {
+					assert.deepEqual(effect(change1), effect(change2));
+				},
+			});
+		});
+		it("are not encoded or decoded by formats before v6", () => {
+			const context: ChangeEncodingContext = {
+				originatorId: "session1" as SessionId,
+				isSummary: false,
+				revision: tag1,
+				idCompressor: testIdCompressor,
+			};
+			const change = valueChangeAt(pathA0, 1, 2, tag1);
+			// Round-tripped through JSON, as sent, so it has no properties which are undefined.
+			const encoded = JSON.parse(
+				JSON.stringify(
+					family.codecs.resolve(ModularChangeFormatVersion.v6).encode(change, context),
+				),
+			) as EncodedModularChangesetV2;
+			for (const version of [
+				ModularChangeFormatVersion.v3,
+				ModularChangeFormatVersion.v4,
+				ModularChangeFormatVersion.v5,
+			]) {
+				const oldCodec = family.codecs.resolve(version);
+				assert.throws(
+					() => oldCodec.encode(change, context),
+					validateUsageError(/Value changes require/),
+				);
+				assert.throws(
+					() => oldCodec.decode(encoded, context),
+					validateUsageError(/Value changes require/),
+				);
+			}
+		});
+	});
+
 	describe("update refreshers", () => {
 		const aMajor = mintRevisionTag();
 		const a1 = { major: aMajor, minor: 1 };
@@ -1651,6 +1876,52 @@ describe("ModularChangeFamily", () => {
 		]);
 		makeEncodingTestSuite(family.codecs, encodingTestDataV5Only, assertEquivalent, [
 			ModularChangeFormatVersion.v5,
+		]);
+
+		const valueChange = (
+			oldValue: TreeValue,
+			newValue: TreeValue,
+			edits: AnyEditDescription[] = [],
+		): ModularChangeset =>
+			inlineRevision(
+				buildChangeset([
+					{
+						type: "value",
+						node: pathA0,
+						change: { old: oldValue, new: newValue },
+						revision: tag1,
+					},
+					...edits,
+				]),
+				tag1,
+			);
+		const encodingTestDataV6: EncodingTestData<
+			ModularChangeset,
+			EncodedModularChangesetV2,
+			ChangeEncodingContext
+		> = {
+			successes: [
+				...encodingTestDataV5Only.successes,
+				["with a number value change", valueChange(1, -2.5), context],
+				["with a string value change", valueChange("a", ""), context],
+				["with a boolean value change", valueChange(true, false), context],
+				[
+					"with a value change and field changes",
+					valueChange(1, 2, [
+						{
+							type: "field",
+							field: pathB,
+							fieldKind: valueField.identifier,
+							change: brand(valueChange2),
+							revision: tag1,
+						},
+					]),
+					context,
+				],
+			],
+		};
+		makeEncodingTestSuite(family.codecs, encodingTestDataV6, assertEquivalent, [
+			ModularChangeFormatVersion.v6,
 		]);
 	});
 

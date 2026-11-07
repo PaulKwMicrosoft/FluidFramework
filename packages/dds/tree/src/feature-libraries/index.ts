@@ -69,6 +69,8 @@ export {
 	type FieldChange,
 	type FieldChangeset,
 	type ToDelta,
+	type ChildDelta,
+	type NodeValueChange,
 	type ModularChangeset,
 	makeModularChangeCodecFamily,
 	type NodeChangeComposer,
