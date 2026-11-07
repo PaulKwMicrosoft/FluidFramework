@@ -14,7 +14,13 @@ import {
 	TextRunChunk,
 	type TreeChunk,
 } from "../../feature-libraries/index.js";
-import { ForestTypeReference, TreeAlpha, type ForestType } from "../../shared-tree/index.js";
+import {
+	createIndependentTreeAlpha,
+	ForestTypeOptimized,
+	ForestTypeReference,
+	TreeAlpha,
+	type ForestType,
+} from "../../shared-tree/index.js";
 // eslint-disable-next-line import-x/no-internal-modules -- Building forest types for the test
 import { toForestType } from "../../shared-tree/forestType.js";
 import {
@@ -491,4 +497,44 @@ describe("FormattedText runs in plain content", () => {
 			}
 		}
 	});
+});
+
+describe("FormattedText runs in plain content are checked", () => {
+	const verbose = (node: TreeNode): VerboseTree =>
+		TreeAlpha.exportVerbose(node, { keys: KeyEncodingOptions.allStoredKeys });
+
+	for (const forest of [ForestTypeReference, ForestTypeOptimized]) {
+		it("rejects a run whose format is out of schema, changing nothing", () => {
+			const view = createIndependentTreeAlpha({ forest }).viewWith(paragraphsConfig);
+			view.initialize(new Paragraphs([]));
+			const format = verbose(new Format({ ...plain, size: 20 }));
+			assert(typeof format === "object" && format !== null && "fields" in format);
+			const fields = { ...(format.fields as Record<string, VerboseTree>) };
+			delete fields.size;
+			const badFormat: VerboseTree = { type: format.type, fields };
+			assert.throws(() =>
+				TreeAlpha.insertVerbose(view.root, 0, [
+					Text.verboseFromRuns([
+						{ text: "fine", format: verbose(red()) },
+						{ text: "bad", format: badFormat },
+					]),
+				]),
+			);
+			assert.equal(view.root.length, 0);
+			view.dispose();
+		});
+
+		it("inserts every character of a run, including ones outside the basic plane", () => {
+			const view = createIndependentTreeAlpha({ forest }).viewWith(paragraphsConfig);
+			view.initialize(new Paragraphs([]));
+			const text = "a\u{1F600}b\u{20000}c";
+			TreeAlpha.insertVerbose(view.root, 0, [
+				Text.verboseFromRuns([{ text, format: verbose(red()) }]),
+			]);
+			const [inserted] = view.root;
+			assert(inserted !== undefined);
+			assert.equal(inserted.fullString(), text);
+			view.dispose();
+		});
+	}
 });

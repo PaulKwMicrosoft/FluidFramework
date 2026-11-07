@@ -409,8 +409,11 @@ class VerboseContentChecker {
 	}
 
 	/**
-	 * Checks each atom a text run stands for as a node of type `type`, as if the atoms were inserted one by one,
+	 * Checks the atoms a text run stands for as nodes of type `type`, as if the atoms were inserted one by one,
 	 * so every inserted node is checked, including each atom's copy of the run's format.
+	 * @remarks
+	 * The atoms of a run differ only in their character, which is a string, and the checks do not depend on which string it is:
+	 * every atom has the same result, so checking the first checks them all.
 	 */
 	private checkTextRunAtoms(
 		type: string,
@@ -418,19 +421,21 @@ class VerboseContentChecker {
 		format: VerboseTree | undefined,
 	): void {
 		const { layout } = textRun;
-		for (const character of textRun.text) {
-			const characterFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
-			defineField(characterFields, layout.characterKey, character);
-			const atomFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
-			defineField(atomFields, layout.contentKey, {
-				type: layout.characterType,
-				fields: characterFields,
-			});
-			if (format !== undefined) {
-				defineField(atomFields, layout.formatKey, format);
-			}
-			this.checkNode({ type: layout.atomType, fields: atomFields }, type);
+		const character = textRun.text.codePointAt(0);
+		if (character === undefined) {
+			return;
 		}
+		const characterFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
+		defineField(characterFields, layout.characterKey, String.fromCodePoint(character));
+		const atomFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
+		defineField(atomFields, layout.contentKey, {
+			type: layout.characterType,
+			fields: characterFields,
+		});
+		if (format !== undefined) {
+			defineField(atomFields, layout.formatKey, format);
+		}
+		this.checkNode({ type: layout.atomType, fields: atomFields }, type);
 	}
 
 	private checkNode(node: VerboseTree, type: string): VerboseTree {
