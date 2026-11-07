@@ -85,6 +85,11 @@ export interface TransitiveSchemaInfo {
 }
 
 /**
+ * The dependencies of the many components which have none.
+ */
+const noDependencies: readonly SchemaComponent[] = Object.freeze([]);
+
+/**
  * Shared derived data for a {@link SchemaVisitor.stronglyConnectedComponent}).
  * @remarks
  * Does not certify identifier uniqueness or configuration-specific union validity.
@@ -106,22 +111,31 @@ export class SchemaComponent implements TransitiveSchemaInfo {
 	#context: Context | undefined;
 
 	/**
+	 * Every schema identity in this unfiltered component, including non-class leaf schemas.
+	 * Member order is unspecified.
+	 */
+	public readonly members: readonly TreeNodeSchema[];
+	/**
+	 * Completed components directly referenced by members, excluding this component, each listed once.
+	 * Includes staged references and retains no reverse dependents.
+	 */
+	public readonly dependencies: readonly SchemaComponent[];
+
+	/**
 	 * Creates a completed component without materializing its reachable definitions.
+	 * @remarks
+	 * Keeps copies of `members` and `dependencies` without spare capacity, since a schema can have thousands of components.
 	 */
 	public constructor(
-		/**
-		 * Every schema identity in this unfiltered component, including non-class leaf schemas.
-		 * Member order is unspecified.
-		 */
-		public readonly members: readonly TreeNodeSchema[],
-		/**
-		 * Completed components directly referenced by members, excluding this component.
-		 * Includes staged references and retains no reverse dependents.
-		 */
-		public readonly dependencies: ReadonlySet<SchemaComponent>,
+		members: readonly TreeNodeSchema[],
+		dependencies: Iterable<SchemaComponent>,
 		public readonly hasStagedSchema: boolean,
 	) {
 		assert(members.length > 0, 0xd9e /* A schema component must contain at least one node */);
+		// Spreading a packed array copies it at its exact length.
+		this.members = [...members];
+		const dependencyList = [...new Set(dependencies)];
+		this.dependencies = dependencyList.length === 0 ? noDependencies : [...dependencyList];
 	}
 
 	/**
