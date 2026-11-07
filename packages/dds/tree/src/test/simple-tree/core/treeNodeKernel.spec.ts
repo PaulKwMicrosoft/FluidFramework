@@ -268,6 +268,29 @@ describe("withBufferedTreeEvents", () => {
 				});
 				assert.deepEqual(eventLog, ['nodeChanged: ["foo","baz"]', "treeChanged"]);
 			});
+
+			it("buffers each window's changes separately", () => {
+				const myObject = init(MyObject, new MyObject({ foo: "hi", bar: true }));
+				const changes: ReadonlySet<string>[] = [];
+				TreeBeta.on(myObject, "nodeChanged", ({ changedProperties }) => {
+					changes.push(changedProperties);
+				});
+
+				withBufferedTreeEvents(() => {
+					myObject.foo = "hello";
+					myObject.baz = 5;
+				});
+				withBufferedTreeEvents(() => {
+					// A window with no changes to the node emits nothing.
+				});
+				withBufferedTreeEvents(() => {
+					myObject.bar = false;
+				});
+				assert.deepEqual(
+					changes.map((changed) => [...changed]),
+					[["foo", "baz"], ["bar"]],
+				);
+			});
 		},
 	);
 

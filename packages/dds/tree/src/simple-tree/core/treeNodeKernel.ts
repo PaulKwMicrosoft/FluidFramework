@@ -496,6 +496,32 @@ export function TEST_activeBufferCount(): number {
 }
 
 /**
+ * The `childrenChangedAfterBatch` changes a {@link KernelEventBuffer} has buffered.
+ */
+interface ChildrenChangedBuffer {
+	/**
+	 * The fields that have changed since events were paused.
+	 * When events are flushed, a single {@link AnchorEvents.childrenChangedAfterBatch} event will be emitted
+	 * containing the accumulated set of changed fields.
+	 */
+	readonly changedFields: Set<FieldKey>;
+
+	/**
+	 * The field marks accumulated since events were paused.
+	 * Emitted alongside the buffered changed-fields set when flushed.
+	 */
+	readonly fieldMarks: Map<FieldKey, readonly DeltaMark[]>;
+
+	/**
+	 * Fields whose marks have been permanently invalidated within the current buffer window due to
+	 * two or more separate delta batches touching the same field.
+	 * Once a key is in this set it must never be re-added to the marks buffer, even if
+	 * a third (or later) batch arrives for that field.
+	 */
+	readonly invalidatedFieldMarkKeys: Set<FieldKey>;
+}
+
+/**
  * Event emitter for {@link TreeNodeKernel}, which optionally buffers events based on {@link bufferTreeEvents}.
  * @remarks When buffering is active, this adds itself to {@link activeBuffers} so that
  * {@link withBufferedTreeEvents} can flush it at the end of the buffering window.
@@ -506,28 +532,23 @@ class KernelEventBuffer implements Listenable<KernelEvents> {
 	readonly #events = createEmitter<KernelEvents>();
 
 	#eventSource: Listenable<KernelEvents> & HasListeners<KernelEvents>;
-	readonly #disposeSourceListeners: Map<keyof KernelEvents, Off> = new Map();
+	/**
+	 * Unsubscribes this buffer from the source's `childrenChangedAfterBatch` event, while it has listeners for it.
+	 */
+	#offSourceChildrenChanged: Off | undefined;
 
 	/**
-	 * Buffer of fields that have changed since events were paused.
-	 * When events are flushed, a single {@link AnchorEvents.childrenChangedAfterBatch} event will be emitted
-	 * containing the accumulated set of changed fields.
+	 * Unsubscribes this buffer from the source's `subtreeChangedAfterBatch` event, while it has listeners for it.
 	 */
-	readonly #childrenChangedBuffer: Set<FieldKey> = new Set();
+	#offSourceSubtreeChanged: Off | undefined;
 
 	/**
-	 * Buffer of field marks accumulated since events were paused.
-	 * Emitted alongside the buffered changed-fields set when flushed.
+	 * The `childrenChangedAfterBatch` changes buffered since events were paused, or undefined if there are none.
+	 * @remarks
+	 * Allocated when a change is first buffered and released when it is flushed,
+	 * since most nodes with listeners never have changes buffered.
 	 */
-	readonly #fieldMarksBuffer: Map<FieldKey, readonly DeltaMark[]> = new Map();
-
-	/**
-	 * Fields whose marks have been permanently invalidated within the current buffer window due to
-	 * two or more separate delta batches touching the same field.
-	 * Once a key is in this set it must never be re-added to the marks buffer, even if
-	 * a third (or later) batch arrives for that field.
-	 */
-	readonly #invalidatedFieldMarkKeys: Set<FieldKey> = new Set();
+	#childrenChangedBuffer: ChildrenChangedBuffer | undefined;
 
 	/**
 	 * Whether or not the subtree has changed since events were paused.
@@ -558,27 +579,32 @@ class KernelEventBuffer implements Listenable<KernelEvents> {
 		newSource: Listenable<KernelEvents> & HasListeners<KernelEvents>,
 	): void {
 		// Unsubscribe from the old source
-		for (const off of this.#disposeSourceListeners.values()) {
-			off();
-		}
-		this.#disposeSourceListeners.clear();
+		this.#offSource();
 
 		this.#eventSource = newSource;
 
 		if (this.#events.hasListeners("childrenChangedAfterBatch")) {
-			const off = this.#eventSource.on(
+			this.#offSourceChildrenChanged = this.#eventSource.on(
 				"childrenChangedAfterBatch",
 				({ changedFields, fieldMarks }) =>
 					this.#emit("childrenChangedAfterBatch", { changedFields, fieldMarks }),
 			);
-			this.#disposeSourceListeners.set("childrenChangedAfterBatch", off);
 		}
 		if (this.#events.hasListeners("subtreeChangedAfterBatch")) {
-			const off = this.#eventSource.on("subtreeChangedAfterBatch", () =>
+			this.#offSourceSubtreeChanged = this.#eventSource.on("subtreeChangedAfterBatch", () =>
 				this.#emit("subtreeChangedAfterBatch"),
 			);
-			this.#disposeSourceListeners.set("subtreeChangedAfterBatch", off);
 		}
+	}
+
+	/**
+	 * Unsubscribes this buffer from all events of its source.
+	 */
+	#offSource(): void {
+		this.#offSourceChildrenChanged?.();
+		this.#offSourceChildrenChanged = undefined;
+		this.#offSourceSubtreeChanged?.();
+		this.#offSourceSubtreeChanged = undefined;
 	}
 
 	public on(eventName: keyof KernelEvents, listener: KernelEvents[typeof eventName]): Off {
@@ -587,16 +613,23 @@ class KernelEventBuffer implements Listenable<KernelEvents> {
 		// Lazily bind event listeners to the source.
 		// If we do not have any existing listeners for this event, then we need to bind to the source.
 		if (!this.#events.hasListeners(eventName)) {
-			assert(
-				!this.#disposeSourceListeners.has(eventName),
-				0xc4f /* Should not have a dispose function without listeners */,
-			);
-
-			const off: Off =
-				eventName === "childrenChangedAfterBatch"
-					? this.#eventSource.on(eventName, (args) => this.#emit(eventName, args))
-					: this.#eventSource.on(eventName, () => this.#emit(eventName));
-			this.#disposeSourceListeners.set(eventName, off);
+			if (eventName === "childrenChangedAfterBatch") {
+				assert(
+					this.#offSourceChildrenChanged === undefined,
+					0xc4f /* Should not have a dispose function without listeners */,
+				);
+				this.#offSourceChildrenChanged = this.#eventSource.on(eventName, (args) =>
+					this.#emit(eventName, args),
+				);
+			} else {
+				assert(
+					this.#offSourceSubtreeChanged === undefined,
+					0xc4f /* Should not have a dispose function without listeners */,
+				);
+				this.#offSourceSubtreeChanged = this.#eventSource.on(eventName, () =>
+					this.#emit(eventName),
+				);
+			}
 		}
 
 		this.#events.on(eventName, listener);
@@ -611,9 +644,13 @@ class KernelEventBuffer implements Listenable<KernelEvents> {
 
 		// If there are no remaining listeners for the event, unbind from the source
 		if (!this.#events.hasListeners(eventName)) {
-			const off = this.#disposeSourceListeners.get(eventName);
-			off?.();
-			this.#disposeSourceListeners.delete(eventName);
+			if (eventName === "childrenChangedAfterBatch") {
+				this.#offSourceChildrenChanged?.();
+				this.#offSourceChildrenChanged = undefined;
+			} else {
+				this.#offSourceSubtreeChanged?.();
+				this.#offSourceSubtreeChanged = undefined;
+			}
 		}
 	}
 
@@ -649,24 +686,29 @@ class KernelEventBuffer implements Listenable<KernelEvents> {
 	): void {
 		if (bufferTreeEvents) {
 			activeBuffers.add(this);
+			const buffer = (this.#childrenChangedBuffer ??= {
+				changedFields: new Set(),
+				fieldMarks: new Map(),
+				invalidatedFieldMarkKeys: new Set(),
+			});
 			for (const fieldKey of changedFields) {
-				this.#childrenChangedBuffer.add(fieldKey);
+				buffer.changedFields.add(fieldKey);
 			}
 			for (const [key, marks] of fieldMarks) {
-				if (this.#invalidatedFieldMarkKeys.has(key)) {
+				if (buffer.invalidatedFieldMarkKeys.has(key)) {
 					// Already permanently invalidated by an earlier collision; ignore this batch too.
 					// TODO: Once the eventing stack is rewritten to walk the composed delta at flush
 					// time, this collision path will be unreachable and can be removed entirely.
 					continue;
 				}
-				if (this.#fieldMarksBuffer.has(key)) {
+				if (buffer.fieldMarks.has(key)) {
 					// A second batch of marks arrived for the same field before the buffer was flushed.
 					// We have no delta composition logic, so permanently invalidate this field so that
 					// any further batches are also discarded rather than incorrectly surfaced.
-					this.#fieldMarksBuffer.delete(key);
-					this.#invalidatedFieldMarkKeys.add(key);
+					buffer.fieldMarks.delete(key);
+					buffer.invalidatedFieldMarkKeys.add(key);
 				} else {
-					this.#fieldMarksBuffer.set(key, marks);
+					buffer.fieldMarks.set(key, marks);
 				}
 			}
 		} else {
@@ -689,14 +731,13 @@ class KernelEventBuffer implements Listenable<KernelEvents> {
 	public flush(): void {
 		this.#assertNotDisposed();
 
-		if (this.#childrenChangedBuffer.size > 0) {
+		const buffer = this.#childrenChangedBuffer;
+		this.#childrenChangedBuffer = undefined;
+		if (buffer !== undefined && buffer.changedFields.size > 0) {
 			this.#events.emit("childrenChangedAfterBatch", {
-				changedFields: this.#childrenChangedBuffer,
-				fieldMarks: this.#fieldMarksBuffer,
+				changedFields: buffer.changedFields,
+				fieldMarks: buffer.fieldMarks,
 			});
-			this.#childrenChangedBuffer.clear();
-			this.#fieldMarksBuffer.clear();
-			this.#invalidatedFieldMarkKeys.clear();
 		}
 
 		if (this.#subTreeChangedBuffer) {
@@ -716,21 +757,17 @@ class KernelEventBuffer implements Listenable<KernelEvents> {
 
 		debugAssert(
 			() =>
-				(this.#childrenChangedBuffer.size === 0 && !this.#subTreeChangedBuffer) ||
+				((this.#childrenChangedBuffer?.changedFields.size ?? 0) === 0 &&
+					!this.#subTreeChangedBuffer) ||
 				"Buffered kernel events should have been flushed before disposing.",
 		);
 		debugAssert(
 			() => !activeBuffers.has(this) || "Disposed buffer should not be in activeBuffers.",
 		);
 
-		for (const off of this.#disposeSourceListeners.values()) {
-			off();
-		}
-		this.#disposeSourceListeners.clear();
+		this.#offSource();
 
-		this.#childrenChangedBuffer.clear();
-		this.#fieldMarksBuffer.clear();
-		this.#invalidatedFieldMarkKeys.clear();
+		this.#childrenChangedBuffer = undefined;
 		this.#subTreeChangedBuffer = false;
 
 		this.#disposed = true;
