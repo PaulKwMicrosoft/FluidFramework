@@ -436,9 +436,7 @@ class VerboseContentChecker {
 			return;
 		}
 		const character = textRun.text.codePointAt(0);
-		if (character === undefined) {
-			return;
-		}
+		assert(character !== undefined, "A text run is checked to be non-empty before its atoms");
 		const characterFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
 		defineField(characterFields, layout.characterKey, String.fromCodePoint(character));
 		const atomFields: Exclude<VerboseTreeNode["fields"], unknown[]> = {};
