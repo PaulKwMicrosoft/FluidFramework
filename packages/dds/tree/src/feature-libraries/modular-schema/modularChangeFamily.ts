@@ -2291,6 +2291,16 @@ export class ModularEditBuilder extends EditBuilder<ModularChangeset> {
 	}
 
 	public buildChanges(changes: EditDescription[]): ModularChangeset {
+		// With at most one field edit, no edit can change the path of another,
+		// so the changeset is built directly rather than by composing one for each edit.
+		if (changes.filter((change) => change.type === "field").length <= 1) {
+			return buildModularChangesetFromIndependentEdits(
+				changes,
+				this.idAllocator,
+				(fieldKind, change) =>
+					getChangeHandler(this.fieldKinds, fieldKind).getCrossFieldKeys(change),
+			);
+		}
 		const revisions: Set<RevisionTag> = new Set();
 		const changeMaps = changes.map((change) => {
 			revisions.add(change.revision);
