@@ -31,6 +31,7 @@ import {
 	forestKeepsChunks,
 	verboseTextRun,
 	type VerboseTextRun,
+	type TextRunLayout,
 	combineChunks,
 	compliesWithMultiplicity,
 	FieldKinds,
@@ -287,6 +288,12 @@ class VerboseContentChecker {
 	 */
 	private readonly path: (string | number)[] = [];
 
+	/**
+	 * For each text run layout, the atom types (with "+" or "-" for whether the run has a format) whose atoms have been checked
+	 * (see {@link VerboseContentChecker.checkTextRunAtoms}): the check gives the same result for every run of the same kind.
+	 */
+	private readonly checkedTextRunAtoms = new Map<TextRunLayout, Set<string>>();
+
 	public constructor(private readonly context: FlexTreeHydratedContext) {
 		this.schemaAndPolicy = getSchemaAndPolicy(context);
 	}
@@ -421,6 +428,13 @@ class VerboseContentChecker {
 		format: VerboseTree | undefined,
 	): void {
 		const { layout } = textRun;
+		// The result does not depend on the run's format either, beyond whether it has one:
+		// the format is checked, against the same field schema, before this.
+		const checkedKey = `${format === undefined ? "-" : "+"}${type}`;
+		let checked = this.checkedTextRunAtoms.get(layout);
+		if (checked?.has(checkedKey) === true) {
+			return;
+		}
 		const character = textRun.text.codePointAt(0);
 		if (character === undefined) {
 			return;
@@ -436,6 +450,11 @@ class VerboseContentChecker {
 			defineField(atomFields, layout.formatKey, format);
 		}
 		this.checkNode({ type: layout.atomType, fields: atomFields }, type);
+		if (checked === undefined) {
+			checked = new Set();
+			this.checkedTextRunAtoms.set(layout, checked);
+		}
+		checked.add(checkedKey);
 	}
 
 	private checkNode(node: VerboseTree, type: string): VerboseTree {
