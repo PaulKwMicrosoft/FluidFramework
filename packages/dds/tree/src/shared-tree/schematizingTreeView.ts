@@ -95,7 +95,7 @@ import {
 } from "../util/index.js";
 
 import { canInitialize, initialize, initializerFromChunk } from "./schematizeTree.js";
-import { exportSimpleSchema } from "./sharedTree.js";
+import { exportSimpleSchema } from "./exportSimpleSchema.js";
 import { type CheckoutBase, TreeCheckout } from "./treeCheckout.js";
 
 /**

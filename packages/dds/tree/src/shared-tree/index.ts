@@ -11,14 +11,13 @@ export {
 	SharedTreeKernel,
 	type SharedTreeContentSnapshot,
 	type SharedTreeFormatOptions,
-	defaultSharedTreeOptions,
 	type ForestOptions,
 	type ITreeInternal,
-	exportSimpleSchema,
 	type SharedTreeKernelView,
-	persistedToSimpleSchema,
 	getCodecTreeForSharedTreeFormat,
 } from "./sharedTree.js";
+export { defaultSharedTreeOptions } from "./defaultSharedTreeOptions.js";
+export { exportSimpleSchema, persistedToSimpleSchema } from "./exportSimpleSchema.js";
 
 export { type ForestType, buildConfiguredForest } from "./forestType.js";
 export { ForestTypeReference } from "./forestTypeReference.js";
