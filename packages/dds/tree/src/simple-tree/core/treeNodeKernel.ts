@@ -903,6 +903,20 @@ export function getInnerNode(treeNode: TreeNode): InnerNode {
 }
 
 /**
+ * {@link getInnerNode} for a node implemented as a proxy, called from one of the proxy's traps.
+ * @remarks
+ * Reads the kernel from the proxy's target, which holds it, so the proxy's traps do not run again.
+ * @param target - The proxy's target.
+ * @param node - The node (the proxy) the trap was called for.
+ */
+export function getInnerNodeFromTarget(target: object, node: TreeNode): InnerNode {
+	const kernel = (target as { [kernelSlot]?: unknown })[kernelSlot];
+	return kernel instanceof TreeNodeKernel && kernel.node === node
+		? kernel.getInnerNode()
+		: getInnerNode(node);
+}
+
+/**
  * Gets a flex node from an anchor node
  */
 function flexNodeFromAnchor(anchorNode: AnchorNode): HydratedFlexTreeNode {

@@ -36,6 +36,7 @@ import {
 	typeSchemaSymbol,
 	getSimpleNodeSchemaFromInnerNode,
 	getInnerNode,
+	getInnerNodeFromTarget,
 	type TreeNodeSchemaClass,
 	getKernel,
 	type UnhydratedFlexTreeNode,
@@ -921,7 +922,9 @@ function createArrayNodeProxy(
 			if (key === kernelSlot) {
 				return Reflect.get(target, key);
 			}
-			const field = getSequenceField(receiver);
+			const field = getInnerNodeFromTarget(target, receiver).getBoxed(
+				EmptyKey,
+			) as FlexTreeSequenceField;
 			const maybeIndex = asIndexWithinBounds(key, field);
 
 			if (maybeIndex === undefined) {

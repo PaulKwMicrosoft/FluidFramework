@@ -55,6 +55,32 @@ describe("simple-tree proxies", () => {
 		assert(isTreeNode(hydrate(ChildSchema, new ChildSchema({ content: 5 }))));
 	});
 
+	describeHydration("reading content through the proxy", (init) => {
+		class Items extends sb.array("items", ChildSchema) {}
+		class Root extends sb.object("root", { object: ChildSchema, items: Items }) {}
+
+		it("reads object properties and array items of the node itself", () => {
+			const root = init(Root, { object: { content: 1 }, items: [{ content: 2 }] });
+			assert.equal(root.object.content, 1);
+			assert.equal(root.items[0]?.content, 2);
+			assert.equal(root.items.length, 1);
+		});
+
+		it("rejects reads through objects which inherit from a node", () => {
+			const root = init(Root, { object: { content: 1 }, items: [{ content: 2 }] });
+			const inheritsObject = Object.create(root.object) as ChildSchema;
+			assert.throws(
+				() => inheritsObject.content,
+				validateAssertionError(/Expected tree node to have kernel/),
+			);
+			const inheritsArray = Object.create(root.items) as Items;
+			assert.throws(
+				() => inheritsArray[0],
+				validateAssertionError(/Expected tree node to have kernel/),
+			);
+		});
+	});
+
 	it("isTreeNode - inserted", () => {
 		const config = new TreeViewConfiguration({ schema: Schema });
 

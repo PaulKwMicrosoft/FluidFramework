@@ -14,6 +14,7 @@ export {
 	releaseTreeNode,
 	runReadScope,
 	getInnerNode,
+	getInnerNodeFromTarget,
 	treeNodeFromAnchor,
 	getSimpleNodeSchemaFromInnerNode,
 	SimpleContextSlot,
