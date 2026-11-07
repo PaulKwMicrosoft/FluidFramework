@@ -45,7 +45,7 @@ import { createViewableTreeAlpha } from "./viewableTree.js";
 import { buildConfiguredForest } from "./forestType.js";
 import { defaultSharedTreeOptions } from "./defaultSharedTreeOptions.js";
 import { exportSimpleSchema } from "./exportSimpleSchema.js";
-import type { ForestOptions } from "./sharedTree.js";
+import type { ForestOptions, InPlaceValueChangeOptions } from "./sharedTree.js";
 import { createTreeCheckout, type TreeCheckout } from "./treeCheckout.js";
 
 /**
@@ -110,6 +110,7 @@ export interface IndependentTreeHistoryOptions {
  */
 export interface IndependentViewOptions
 	extends ForestOptions,
+		InPlaceValueChangeOptions,
 		Partial<CodecWriteOptions>,
 		IndependentViewTelemetryOptions,
 		IndependentTreeHistoryOptions {
@@ -125,6 +126,7 @@ export interface IndependentViewOptions
  * @alpha
  */
 export type CreateIndependentTreeAlphaOptions = ForestOptions &
+	InPlaceValueChangeOptions &
 	IndependentViewTelemetryOptions &
 	IndependentTreeHistoryOptions &
 	(
@@ -353,6 +355,7 @@ export function createIndependentTreeCheckout(
 		codecOptions: options,
 		maxRevertibles,
 		enableBaseContent: options?.enableBaseContent,
+		inPlaceValueChanges: options?.enableInPlaceValueChanges,
 	});
 
 	if (options?.content !== undefined) {

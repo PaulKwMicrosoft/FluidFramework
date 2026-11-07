@@ -40,6 +40,8 @@ export {
 
 export { disposeHydratedFlexTreeNode, getOrCreateHydratedFlexTreeNode } from "./lazyNode.js";
 
+export { inPlaceValueChange, trySetValueInPlace } from "./lazyField.js";
+
 export { getSchemaAndPolicy, indexForAt } from "./utilities.js";
 
 export { treeStatusFromAnchorCache } from "./utilities.js";

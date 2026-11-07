@@ -265,6 +265,7 @@ export class SharedTreeKernel
 			options,
 			options.treeEncodeType,
 			idCompressor,
+			options.enableInPlaceValueChanges,
 		);
 		const changeFamily = makeMitigatedChangeFamily(
 			innerChangeFamily,
@@ -601,7 +602,8 @@ export interface SharedTreeOptionsBeta extends ForestOptions, Partial<CodecWrite
 export interface SharedTreeOptions
 	extends SharedTreeOptionsBeta,
 		Partial<CodecWriteOptions>,
-		Partial<SharedTreeFormatOptions> {
+		Partial<SharedTreeFormatOptions>,
+		InPlaceValueChangeOptions {
 	/**
 	 * Experimental feature flag to enable shared branches.
 	 * This feature is not yet complete and should not be used in production.
@@ -671,6 +673,26 @@ export interface SharedTreeOptions
 export interface SharedTreeOptionsInternal
 	extends SharedTreeOptions,
 		Partial<SharedTreeCoreOptionsInternal> {}
+
+/**
+ * Options for changing the values of leaves in place.
+ * @alpha @input
+ */
+export interface InPlaceValueChangeOptions {
+	/**
+	 * Experimental: whether setting a required field, whose only allowed type is a number, string or boolean leaf,
+	 * changes the value of its leaf in place, rather than replacing the leaf with a new one.
+	 *
+	 * @defaultValue `false`
+	 *
+	 * @remarks
+	 * Changing a value in place is cheaper to apply, revert and retain the history of than replacing the leaf,
+	 * and gives the same tree and the same events.
+	 * The edits are written in persisted formats which are not yet released,
+	 * so documents edited with this enabled can only be opened by clients which support those formats.
+	 */
+	readonly enableInPlaceValueChanges?: boolean;
+}
 
 /**
  * Configuration options for SharedTree's internal tree storage.

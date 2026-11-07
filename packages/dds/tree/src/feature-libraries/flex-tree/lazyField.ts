@@ -15,8 +15,11 @@ import {
 	type FieldKindIdentifier,
 	type ITreeCursorSynchronous,
 	type ITreeSubscriptionCursor,
+	LeafNodeStoredSchema,
 	type NormalizedFieldUpPath,
+	type TreeFieldStoredSchema,
 	type TreeNavigationResult,
+	ValueSchema,
 	inCursorNode,
 	iterateCursorField,
 	mapCursorField,
@@ -32,8 +35,9 @@ import {
 	type SequenceFieldEditBuilder,
 	type ValueFieldEditBuilder,
 } from "../default-schema/index.js";
-import { cursorForMapTreeField } from "../mapTreeCursor.js";
-import type { FlexFieldKind } from "../modular-schema/index.js";
+import { cursorForMapTreeField, type MinimalMapTreeNodeView } from "../mapTreeCursor.js";
+import { isTreeValue } from "../valueUtilities.js";
+import type { FlexFieldKind, NodeValueChange } from "../modular-schema/index.js";
 
 import type { Context } from "./context.js";
 import {
@@ -513,6 +517,16 @@ export class LazyValueField extends LazyField implements FlexTreeRequiredField {
 		},
 	};
 
+	/**
+	 * Changes the value of the leaf in this field in place.
+	 * @param change - A change from {@link inPlaceValueChange} for this field.
+	 */
+	public setValueInPlace(change: NodeValueChange): void {
+		this.getEditor().setFields([
+			{ kind: "value", field: this.getFieldPathForEditing(), change },
+		]);
+	}
+
 	private valueFieldEditor(): ValueFieldEditBuilder<ITreeCursorSynchronous> {
 		const fieldPath = this.getFieldPathForEditing();
 		const fieldEditor = this.getEditor().valueField(fieldPath);
@@ -547,6 +561,71 @@ export class LazyOptionalField extends LazyField implements FlexTreeOptionalFiel
 }
 
 export class LazyForbiddenField extends LazyField {}
+
+/**
+ * The kinds of leaf values which can be changed in place.
+ */
+const inPlaceValueSchemas: ReadonlySet<ValueSchema> = new Set([
+	ValueSchema.Number,
+	ValueSchema.String,
+	ValueSchema.Boolean,
+]);
+
+/**
+ * Returns the change which sets `field` to `newContent` by changing the value of its leaf in place,
+ * or undefined if the field is set by replacing its content.
+ * @param fieldSchema - The stored schema of `field`.
+ * @remarks
+ * Only required fields whose only allowed type is a number, string or boolean leaf are set in place, when the editor supports it.
+ * Every set of such a field changes the value of its leaf in place,
+ * since an in-place change and a concurrent replacement of the same leaf would not be ordered by when they were sequenced.
+ */
+export function inPlaceValueChange(
+	field: FlexTreeField,
+	fieldSchema: TreeFieldStoredSchema,
+	newContent: MinimalMapTreeNodeView,
+): NodeValueChange | undefined {
+	if (
+		!(field instanceof LazyValueField) ||
+		fieldSchema.kind !== FieldKinds.required.identifier ||
+		fieldSchema.types.size !== 1 ||
+		!field.context.checkout.editor.inPlaceValueChanges
+	) {
+		return undefined;
+	}
+	const leafSchema = field.context.schema.nodeSchema.get(newContent.type);
+	if (
+		!(leafSchema instanceof LeafNodeStoredSchema) ||
+		!inPlaceValueSchemas.has(leafSchema.leafValue) ||
+		!fieldSchema.types.has(newContent.type)
+	) {
+		return undefined;
+	}
+	const oldValue = field.content;
+	const newValue = newContent.value;
+	assert(
+		isTreeValue(oldValue) && newValue !== undefined && typeof oldValue === typeof newValue,
+		"A leaf changed in place must have a value of the same type",
+	);
+	return { old: oldValue, new: newValue };
+}
+
+/**
+ * Sets `field` to `newContent` by changing the value of its leaf in place, if {@link inPlaceValueChange} allows.
+ * @returns Whether the field was set.
+ */
+export function trySetValueInPlace(
+	field: FlexTreeField,
+	fieldSchema: TreeFieldStoredSchema,
+	newContent: MinimalMapTreeNodeView,
+): boolean {
+	const change = inPlaceValueChange(field, fieldSchema, newContent);
+	if (change === undefined) {
+		return false;
+	}
+	(field as LazyValueField).setValueInPlace(change);
+	return true;
+}
 
 type Builder = new (
 	context: Context,

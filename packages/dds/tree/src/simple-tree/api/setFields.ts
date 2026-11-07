@@ -17,8 +17,10 @@ import {
 	combineChunks,
 	cursorForMapTreeField,
 	FieldKinds,
+	inPlaceValueChange,
 	TreeStatus,
 	type FieldSet,
+	type FlexTreeField,
 	type FlexTreeHydratedContext,
 	type HydratedFlexTreeNode,
 } from "../../feature-libraries/index.js";
@@ -117,6 +119,7 @@ export function setFields(assignments: readonly FieldAssignment[]): void {
 	const items: {
 		readonly assignment: ResolvedAssignment;
 		readonly destinationSchema: TreeFieldStoredSchema;
+		readonly field: FlexTreeField | undefined;
 		readonly wasEmpty: boolean;
 	}[] = [];
 	for (const assignment of resolved) {
@@ -125,16 +128,19 @@ export function setFields(assignments: readonly FieldAssignment[]): void {
 		assert(storedSchema instanceof ObjectNodeStoredSchema, "Expected ObjectNodeStoredSchema");
 		const destinationSchema = storedSchema.getFieldSchema(storedKey);
 		const kind = destinationSchema.kind;
-		// A required field is never empty, so it is not read.
-		const wasEmpty =
-			kind !== FieldKinds.required.identifier && inner.tryGetField(storedKey) === undefined;
+		// A required field is never empty, so it is only read when its leaf may be changed in place.
+		const field =
+			kind !== FieldKinds.required.identifier || context.checkout.editor.inPlaceValueChanges
+				? inner.tryGetField(storedKey)
+				: undefined;
+		const wasEmpty = kind !== FieldKinds.required.identifier && field === undefined;
 		if (value === undefined && wasEmpty) {
 			continue;
 		}
 		if (kind !== FieldKinds.required.identifier && kind !== FieldKinds.optional.identifier) {
 			throw new UsageError(`The property ${JSON.stringify(storedKey)} cannot be set.`);
 		}
-		items.push({ assignment, destinationSchema, wasEmpty });
+		items.push({ assignment, destinationSchema, field, wasEmpty });
 	}
 
 	const prepared = prepareForInsertionBatch(
@@ -148,13 +154,22 @@ export function setFields(assignments: readonly FieldAssignment[]): void {
 
 	const { editor, forest } = context.checkout;
 	const sets = items.map(
-		({ assignment: { inner, storedKey }, destinationSchema, wasEmpty }, index) => {
+		(
+			{ assignment: { inner, storedKey }, destinationSchema, field: currentField, wasEmpty },
+			index,
+		): FieldSet<TreeChunk> => {
 			const content = prepared[index];
+			const field = { parent: inner.anchorNode, field: storedKey };
+			if (content !== undefined && currentField !== undefined) {
+				const change = inPlaceValueChange(currentField, destinationSchema, content);
+				if (change !== undefined) {
+					return { kind: "value", field, change };
+				}
+			}
 			const chunk: TreeChunk | undefined =
 				content === undefined
 					? undefined
 					: combineChunks(forest.chunkField(cursorForMapTreeField([content])));
-			const field = { parent: inner.anchorNode, field: storedKey };
 			if (destinationSchema.kind === FieldKinds.required.identifier) {
 				assert(chunk !== undefined, "A required field must have been checked to have content");
 				return { kind: "required", field, content: chunk } satisfies FieldSet<TreeChunk>;

@@ -48,6 +48,7 @@ export {
 	TreeBeta,
 	type RunTransaction,
 	type ForestOptions,
+	type InPlaceValueChangeOptions,
 	independentInitializedView,
 	type ViewContent,
 	TreeAlpha,

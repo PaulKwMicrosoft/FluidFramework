@@ -12,6 +12,7 @@ export {
 	type SharedTreeContentSnapshot,
 	type SharedTreeFormatOptions,
 	type ForestOptions,
+	type InPlaceValueChangeOptions,
 	type ITreeInternal,
 	type SharedTreeKernelView,
 	getCodecTreeForSharedTreeFormat,

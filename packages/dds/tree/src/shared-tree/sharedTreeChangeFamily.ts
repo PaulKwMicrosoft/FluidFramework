@@ -84,6 +84,12 @@ export class SharedTreeChangeFamily
 		codecOptions: CodecWriteOptions,
 		chunkCompressionStrategy?: TreeCompressionStrategy,
 		private readonly idCompressor?: IIdCompressor,
+		/**
+		 * Whether the editors of this family change the values of leaves in place where they can.
+		 * @remarks
+		 * In-place value changes must only be enabled when the change format written supports them.
+		 */
+		private readonly inPlaceValueChanges: boolean = false,
 	) {
 		const modularChangeCodec = lazyCodecFamily(() =>
 			makeModularChangeCodecFamily(
@@ -112,6 +118,7 @@ export class SharedTreeChangeFamily
 			this.modularChangeFamily,
 			mintRevisionTag,
 			changeReceiver,
+			this.inPlaceValueChanges,
 		);
 	}
 
