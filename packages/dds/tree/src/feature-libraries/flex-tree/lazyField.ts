@@ -195,6 +195,13 @@ export abstract class LazyField extends LazyEntity<FieldAnchor> implements FlexT
 	 */
 	private readonly offAfterDestroy?: () => void;
 
+	/**
+	 * The anchor node of the node which contains this field, or undefined for a root field.
+	 * @remarks
+	 * The field holds an anchor to it, so it stays the same object, following the node through edits, for the field's lifetime.
+	 */
+	private readonly parentAnchorNode: AnchorNode | undefined;
+
 	public constructor(
 		context: Context,
 		public readonly schema: FieldKindIdentifier,
@@ -210,6 +217,7 @@ export abstract class LazyField extends LazyEntity<FieldAnchor> implements FlexT
 			const anchorNode =
 				context.checkout.forest.anchors.locate(fieldAnchor.parent) ??
 				fail(0xb11 /* parent anchor node should always exist since field is under a node */);
+			this.parentAnchorNode = anchorNode;
 			this.offAfterDestroy = anchorNode.events.on("afterDestroy", () => {
 				this[disposeSymbol]();
 			});
@@ -303,9 +311,9 @@ export abstract class LazyField extends LazyEntity<FieldAnchor> implements FlexT
 	}
 
 	public atIndex(index: number): FlexTreeUnknownUnboxed {
-		const cached = this.cachedChild(index);
-		if (cached !== undefined) {
-			return cached;
+		const known = this.knownNodeAt(index);
+		if (known !== undefined) {
+			return known;
 		}
 		return inCursorNode(this.cursor, index, (cursor) =>
 			unboxedFlexNode(this.context, cursor, this.anchor, index),
@@ -316,17 +324,15 @@ export abstract class LazyField extends LazyEntity<FieldAnchor> implements FlexT
 	 * The {@link LazyTreeNode} already created for the node at `index`, if there is one and it is not a leaf.
 	 * @remarks
 	 * Such a node is found through the anchors, so reading it needs no cursor at this field.
+	 * A node anchored at `index` is in the field, so this does not need the field's length.
 	 */
-	private cachedChild(index: number): LazyTreeNode | undefined {
-		if (this.anchor.parent === undefined) {
+	public knownNodeAt(index: number): LazyTreeNode | undefined {
+		const parent = this.parentAnchorNode;
+		if (parent === undefined) {
 			return undefined;
 		}
 		this.ensureValidForAccess();
-		return LazyTreeNode.cachedNonLeaf(
-			this.context.checkout.forest.anchors
-				.locate(this.anchor.parent)
-				?.childIfAnchored(this.key, index),
-		);
+		return LazyTreeNode.cachedNonLeaf(parent.childIfAnchored(this.key, index));
 	}
 
 	public boxedAt(index: number): HydratedFlexTreeNode | undefined {

@@ -922,10 +922,17 @@ function createArrayNodeProxy(
 			if (key === kernelSlot) {
 				return Reflect.get(target, key);
 			}
+			const index = asIndex(key);
 			const field = getInnerNodeFromTarget(target, receiver).getBoxed(
 				EmptyKey,
 			) as FlexTreeSequenceField;
-			const maybeIndex = asIndexWithinBounds(key, field);
+			if (index !== undefined) {
+				const known = field.knownNodeAt?.(index);
+				if (known !== undefined) {
+					return getOrCreateNodeFromInnerUnboxedNode(known);
+				}
+			}
+			const maybeIndex = index !== undefined && index < field.length ? index : undefined;
 
 			if (maybeIndex === undefined) {
 				if (key === "length") {

@@ -373,6 +373,25 @@ describe("LazyNode", () => {
 				view.dispose();
 			});
 
+			it("find known nodes of a sequence only in bounds and only for nodes already read", () => {
+				const view = createSlide(3);
+				const field = lazy(view.root.shapes).getBoxed(EmptyKey);
+				assert(field instanceof LazyField);
+				assert.equal(field.knownNodeAt(0), undefined);
+				const first = view.root.shapes[0];
+				const third = view.root.shapes[2];
+				assert(first !== undefined && third !== undefined);
+				assert.equal(field.knownNodeAt(0), lazy(first));
+				assert.equal(field.knownNodeAt(1), undefined);
+				assert.equal(field.knownNodeAt(3), undefined);
+				view.root.shapes.removeAt(1);
+				assert.equal(field.knownNodeAt(1), lazy(third));
+				assert.equal(field.knownNodeAt(2), undefined);
+				assert.equal(view.root.shapes[2], undefined);
+				assert.equal(view.root.shapes[1], third);
+				view.dispose();
+			});
+
 			it("read leaves with flex tree nodes as values", () => {
 				const view = createSlide(2);
 				const shape = view.root.shapes[0];
