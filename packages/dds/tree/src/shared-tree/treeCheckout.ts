@@ -1779,6 +1779,17 @@ export abstract class CheckoutBase implements ITreeCheckout {
 				parent = { parent, parentField: field, parentIndex: index };
 				field = undefined;
 			},
+			setValue: (value) => {
+				visitor.setValue(value);
+				// Setting a node's value edits the field containing it, as replacing the node would.
+				const node = parent;
+				assert(node !== undefined && field === undefined, "A value can only be set on a node");
+				parent = node.parent;
+				field = node.parentField;
+				record();
+				parent = node;
+				field = undefined;
+			},
 			exitNode: (index) => {
 				visitor.exitNode(index);
 				assert(parent !== undefined, "Must be in a node to exit it");

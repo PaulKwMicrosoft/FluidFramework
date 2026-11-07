@@ -12,6 +12,7 @@ import type { DetachedNodeId, Root } from "./delta.js";
 import { DetachedFieldIndex } from "./detachedFieldIndex.js";
 import type { ForestRootId } from "./detachedFieldIndexTypes.js";
 import type { PlaceIndex, Range } from "./pathTree.js";
+import type { TreeValue } from "./types.js";
 import { type DeltaVisitor, visitDelta } from "./visitDelta.js";
 
 export function makeDetachedFieldIndex(prefix: string = "Temp"): DetachedFieldIndex {
@@ -68,6 +69,7 @@ export function makeBreakingVisitor(
 		destroy: (...args) => breaker.run(() => visitor.destroy(...args)),
 		attach: (...args) => breaker.run(() => visitor.attach(...args)),
 		detach: (...args) => breaker.run(() => visitor.detach(...args)),
+		setValue: (...args) => breaker.run(() => visitor.setValue(...args)),
 		enterNode: (...args) => breaker.run(() => visitor.enterNode(...args)),
 		exitNode: (...args) => breaker.run(() => visitor.exitNode(...args)),
 		enterField: (...args) => breaker.run(() => visitor.enterField(...args)),
@@ -140,6 +142,14 @@ export function combineVisitors(visitors: readonly CombinableVisitor[]): Combine
 				v.afterDetach(source.start, source.end - source.start, destination, isReplaced);
 			}
 		},
+		setValue: (value: TreeValue) => {
+			for (const v of allVisitors) {
+				v.setValue(value);
+			}
+			for (const v of announcedVisitors) {
+				v.afterSetValue();
+			}
+		},
 		enterNode: (...args) => {
 			for (const v of allVisitors) {
 				v.enterNode(...args);
@@ -188,6 +198,10 @@ export interface AnnouncedVisitor extends DeltaVisitor {
 		destination: FieldKey,
 		isReplaced: boolean,
 	): void;
+	/**
+	 * A hook that is called after the value of the current node has been set by {@link DeltaVisitor.setValue}.
+	 */
+	afterSetValue(): void;
 }
 
 const noOp = (): void => {};
@@ -212,6 +226,8 @@ export function createAnnouncedVisitor(
 		beforeDetach: visitorFunctions.beforeDetach ?? noOp,
 		detach: visitorFunctions.detach ?? noOp,
 		afterDetach: visitorFunctions.afterDetach ?? noOp,
+		setValue: visitorFunctions.setValue ?? noOp,
+		afterSetValue: visitorFunctions.afterSetValue ?? noOp,
 		enterNode: visitorFunctions.enterNode ?? noOp,
 		exitNode: visitorFunctions.exitNode ?? noOp,
 		enterField: visitorFunctions.enterField ?? noOp,

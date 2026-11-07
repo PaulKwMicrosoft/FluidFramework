@@ -33,7 +33,7 @@ import {
 	type Range,
 	type UpPath,
 } from "./pathTree.js";
-import { EmptyKey } from "./types.js";
+import { EmptyKey, type TreeValue } from "./types.js";
 import type { DeltaVisitor } from "./visitDelta.js";
 
 /**
@@ -942,6 +942,21 @@ export class AnchorSet implements AnchorLocator {
 					},
 					count,
 				);
+			},
+			setValue(value: TreeValue): void {
+				// The node keeps its anchors. For events, the change is a change to the field containing it, as replacing it would be.
+				const node = this.parent;
+				assert(
+					node !== undefined && this.parentField === undefined,
+					"A value can only be set on a node",
+				);
+				this.parent = node.parent;
+				this.parentField = node.parentField;
+				this.notifyChildrenChanging();
+				this.notifyChildrenChanged();
+				this.parent = node;
+				this.parentField = undefined;
+				this.depthThresholdForSubtreeChanged = this.currentDepth;
 			},
 			create(content: ITreeCursorSynchronous[], destination: FieldKey): void {
 				// Nothing to do since content can only be created in a new detached field,

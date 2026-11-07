@@ -176,6 +176,14 @@ export class AnchorTreeIndex<TKey, TValue> implements TreeIndex<TKey, TValue> {
 						this.reIndexSpine(parent);
 					}
 				}),
+			// Setting the value of a node changes the node containing it, as replacing the node would.
+			afterSetValue: () =>
+				run(() => {
+					assert(parent !== undefined, "must be in a node to set its value");
+					if (parent.parent !== undefined) {
+						this.reIndexSpine(parent.parent);
+					}
+				}),
 			// the methods below are used to keep track of the path that has been traversed by the visitor
 			// this is required so that cursors can be moved to the correct location when index updates are required
 			enterNode: (index: number): void =>

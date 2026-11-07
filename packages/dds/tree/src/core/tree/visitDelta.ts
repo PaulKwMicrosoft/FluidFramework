@@ -16,6 +16,7 @@ import { areDetachedNodeIdsEqual, offsetDetachId } from "./deltaUtil.js";
 import type { DetachedFieldIndex } from "./detachedFieldIndex.js";
 import type { ForestRootId, Major, Minor } from "./detachedFieldIndexTypes.js";
 import type { NodeIndex, PlaceIndex, Range } from "./pathTree.js";
+import type { TreeValue } from "./types.js";
 
 /**
  * Implementation notes:
@@ -58,8 +59,8 @@ export function visitDelta(
 	detachedFieldIndex: DetachedFieldIndex,
 	latestRevision: RevisionTag | undefined,
 ): void {
-	const detachPassRoots: Map<ForestRootId, Delta.FieldMap> = new Map();
-	const attachPassRoots: Map<ForestRootId, Delta.FieldMap> = new Map();
+	const detachPassRoots: Map<ForestRootId, Delta.NodeChanges> = new Map();
+	const attachPassRoots: Map<ForestRootId, Delta.NodeChanges> = new Map();
 	const rootTransfers: Delta.DetachedNodeRename[] = [];
 	const rootDestructions: Delta.DetachedNodeDestruction[] = [];
 	const refreshers: NestedMap<Major, Minor, ITreeCursorSynchronous> = new Map();
@@ -130,7 +131,7 @@ export function visitDelta(
  */
 function fixedPointVisitOfRoots(
 	visitor: DeltaVisitor,
-	roots: Map<ForestRootId, Delta.FieldMap>,
+	roots: Map<ForestRootId, Delta.NodeChanges>,
 	config: PassConfig,
 ): void {
 	while (roots.size > 0) {
@@ -279,6 +280,14 @@ export interface DeltaVisitor {
 	): void;
 
 	/**
+	 * Sets the value of the node which is the "current location", which keeps its identity and type.
+	 * @param value - The node's new value.
+	 *
+	 * @remarks This should only be called when the "current location" is a Node.
+	 */
+	setValue(value: TreeValue): void;
+
+	/**
 	 * Tells the visitor that it should update its "current location" to be the Node at the specified index
 	 * within the Field that is the current "current location".
 	 * Future calls to methods of {@link DeltaVisitor} will assume that's the location where their effects are happening.
@@ -350,7 +359,7 @@ interface PassConfig {
 	 * Nested changes on roots that need to be visited as part of the detach pass.
 	 * Each entry is removed when its associated changes are visited.
 	 */
-	readonly detachPassRoots: Map<ForestRootId, Delta.FieldMap>;
+	readonly detachPassRoots: Map<ForestRootId, Delta.NodeChanges>;
 	/**
 	 * Nested changes on roots that need to be visited as part of the attach pass.
 	 * Each entry is removed when its associated changes are visited.
@@ -360,7 +369,7 @@ interface PassConfig {
 	 * the attach pass. Note that such a visit might lead to more nodes being attached, including nodes were visited as
 	 * roots.
 	 */
-	readonly attachPassRoots: Map<ForestRootId, Delta.FieldMap>;
+	readonly attachPassRoots: Map<ForestRootId, Delta.NodeChanges>;
 	/**
 	 * Represents transfers of roots from one detached field to another.
 	 */
@@ -389,15 +398,24 @@ function visitFieldMarks(
 	}
 }
 
+/**
+ * Visits the changes to the node at `index`.
+ * @remarks
+ * Every node with changes is visited in the detach pass, before it is detached, so its new value (if any) is set then.
+ */
 function visitNode(
 	index: number,
-	fields: Delta.FieldMap | undefined,
+	changes: Delta.NodeChanges,
 	visitor: DeltaVisitor,
 	config: PassConfig,
 ): void {
-	if (fields !== undefined) {
+	const value = config.func === detachPass ? changes.value : undefined;
+	if (changes.fields !== undefined || value !== undefined) {
 		visitor.enterNode(index);
-		visitFieldMarks(fields, visitor, config);
+		if (value !== undefined) {
+			visitor.setValue(value.value);
+		}
+		visitFieldMarks(changes.fields, visitor, config);
 		visitor.exitNode(index);
 	}
 }
@@ -415,19 +433,19 @@ function detachPass(
 	visitor.fieldMarks?.(fieldChanges.marks);
 	let index = 0;
 	for (const mark of fieldChanges.marks) {
-		if (mark.fields !== undefined) {
+		if (mark.fields !== undefined || mark.value !== undefined) {
 			assert(
 				mark.attach === undefined || mark.detach !== undefined,
 				0x7d0 /* Invalid nested changes on an additive mark */,
 			);
-			visitNode(index, mark.fields, visitor, config);
+			visitNode(index, mark, visitor, config);
 		}
 		if (mark.detach !== undefined) {
 			for (let i = 0; i < mark.count; i += 1) {
 				const id = offsetDetachId(mark.detach, i);
 				const root = config.detachedFieldIndex.createEntry(id, config.latestRevision);
 				if (mark.fields !== undefined) {
-					config.attachPassRoots.set(root, mark.fields);
+					config.attachPassRoots.set(root, { fields: mark.fields });
 				}
 				const field = config.detachedFieldIndex.toFieldKey(root);
 				visitor.detach({ start: index, end: index + 1 }, field, id, mark.attach !== undefined);
@@ -480,7 +498,7 @@ function processGlobal(
 	visitor: DeltaVisitor,
 ): void {
 	if (global !== undefined) {
-		for (const { id, fields } of global) {
+		for (const { id, fields, value } of global) {
 			let root = config.detachedFieldIndex.tryGetEntry(id);
 			if (root === undefined) {
 				const tree = tryGetFromNestedMap(config.refreshers, id.major, id.minor);
@@ -490,8 +508,8 @@ function processGlobal(
 			}
 			// the revision is updated for any refresher data included in the delta that is used
 			config.detachedFieldIndex.updateLatestRevision(id, config.latestRevision);
-			config.detachPassRoots.set(root, fields);
-			config.attachPassRoots.set(root, fields);
+			config.detachPassRoots.set(root, { fields, value });
+			config.attachPassRoots.set(root, { fields });
 		}
 	}
 }
@@ -549,15 +567,15 @@ function attachPass(
 				const offsetIndex = index + i;
 				visitor.attach(sourceField, 1, offsetIndex);
 				config.detachedFieldIndex.deleteEntry(offsetAttachId);
-				const fields = config.attachPassRoots.get(sourceRoot);
-				if (fields !== undefined) {
+				const changes = config.attachPassRoots.get(sourceRoot);
+				if (changes !== undefined) {
 					config.attachPassRoots.delete(sourceRoot);
-					visitNode(offsetIndex, fields, visitor, config);
+					visitNode(offsetIndex, changes, visitor, config);
 				}
 			}
 		}
 		if (mark.detach === undefined && mark.fields !== undefined) {
-			visitNode(index, mark.fields, visitor, config);
+			visitNode(index, { fields: mark.fields }, visitor, config);
 		}
 		if (mark.detach === undefined || mark.attach !== undefined) {
 			index += mark.count;

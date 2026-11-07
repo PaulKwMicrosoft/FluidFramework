@@ -38,6 +38,8 @@ export type {
 	DetachedNodeId as DeltaDetachedNodeId,
 	FieldMap as DeltaFieldMap,
 	DetachedNodeChanges as DeltaDetachedNodeChanges,
+	NodeChanges as DeltaNodeChanges,
+	ValueChange as DeltaValueChange,
 	DetachedNodeBuild as DeltaDetachedNodeBuild,
 	DetachedNodeDestruction as DeltaDetachedNodeDestruction,
 	DetachedNodeRename as DeltaDetachedNodeRename,

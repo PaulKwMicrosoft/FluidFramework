@@ -33,6 +33,7 @@ import {
 	TreeNavigationResult,
 	type TreeNodeSchemaIdentifier,
 	type TreeStoredSchemaSubscription,
+	type TreeValue,
 	type UpPath,
 	type Value,
 	aboveRootPlaceholder,
@@ -48,6 +49,7 @@ import {
 	brand,
 	breakingMethod,
 	type Breakable,
+	type Mutable,
 	type WithBreakable,
 } from "../../util/index.js";
 import { chunkField, defaultChunkPolicy } from "../chunked-forest/index.js";
@@ -255,6 +257,12 @@ export class ObjectForest implements IEditableForest, WithBreakable {
 			public detach(source: Range, destination: FieldKey, id: DeltaDetachedNodeId): void {
 				preEdit();
 				this.detachEdit(source, destination);
+			}
+			public setValue(value: TreeValue): void {
+				preEdit();
+				const node: Mutable<MutableMapTree> = cursor.getNode();
+				assert(node.value !== undefined, "Only a node with a value can have its value set");
+				node.value = value;
 			}
 			/**
 			 * Attaches the nodes from the given source field into the current field.

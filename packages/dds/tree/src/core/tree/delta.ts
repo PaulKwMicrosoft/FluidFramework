@@ -7,6 +7,7 @@ import type { RevisionTag } from "../rebase/index.js";
 import type { FieldKey } from "../schema-stored/index.js";
 
 import type { TreeChunk } from "./chunk.js";
+import type { TreeValue } from "./types.js";
 
 /**
  * This format describes changes that must be applied to a forest in order to update it.
@@ -170,6 +171,14 @@ export interface Mark {
 	readonly fields?: FieldMap;
 
 	/**
+	 * A new value for the pre-existing node, which keeps its identity and type.
+	 * @remarks
+	 * Like {@link Mark.fields}, applies to the node being detached if {@link Mark.detach} is set, and otherwise to the retained node,
+	 * and may only be set when this mark applies to exactly one pre-existing node.
+	 */
+	readonly value?: ValueChange;
+
+	/**
 	 * When set, detaches {@link Mark.count} pre-existing nodes and assigns them consecutive
 	 * {@link DetachedNodeId}s starting at this ID, in field order.
 	 */
@@ -206,6 +215,21 @@ export interface DetachedNodeId {
 export type FieldMap = ReadonlyMap<FieldKey, FieldChanges>;
 
 /**
+ * A new value for a node, which keeps its identity and type.
+ */
+export interface ValueChange {
+	readonly value: TreeValue;
+}
+
+/**
+ * Changes to a single node: to its fields, and to its value.
+ */
+export interface NodeChanges {
+	readonly fields?: FieldMap;
+	readonly value?: ValueChange;
+}
+
+/**
  * Changes made to a detached node.
  */
 export interface DetachedNodeChanges {
@@ -213,6 +237,8 @@ export interface DetachedNodeChanges {
 	readonly id: DetachedNodeId;
 	/** Changes to the node's fields. */
 	readonly fields: FieldMap;
+	/** A new value for the node. */
+	readonly value?: ValueChange;
 }
 
 /**
