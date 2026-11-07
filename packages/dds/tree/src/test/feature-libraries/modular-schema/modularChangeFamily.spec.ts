@@ -4,6 +4,8 @@
  */
 
 import { strict as assert } from "node:assert";
+// eslint-disable-next-line import-x/no-internal-modules
+import type { EditDescription as AnyEditDescription } from "../../../feature-libraries/modular-schema/index.js";
 
 import type { SessionId } from "@fluidframework/id-compressor";
 import { deepFreeze as deepFreezeBase } from "@fluidframework/test-runtime-utils/internal";
@@ -50,7 +52,6 @@ import {
 	type EncodedModularChangesetV2,
 	type FieldChangeRebaser,
 	type FieldEditor,
-	type EditDescription,
 	DefaultRevisionReplacer,
 	fieldKindConfigurations,
 	newChangeAtomIdBTree,
@@ -1258,6 +1259,94 @@ describe("ModularChangeFamily", () => {
 		});
 	});
 
+	describe("submitIndependentChanges", () => {
+		const fieldC: FieldKey = brand("c");
+		const nodeC2: UpPath = { parent: undefined, parentField: fieldC, parentIndex: 2 };
+		const nodeA0C1: UpPath = { parent: pathA0, parentField: fieldC, parentIndex: 1 };
+		const valueEdit = (field: FieldUpPath, change: ValueChangeset): AnyEditDescription => ({
+			type: "field",
+			field,
+			fieldKind: valueField.identifier,
+			change: brand(change),
+			revision: tag1,
+		});
+		const edits: AnyEditDescription[] = [
+			valueEdit(pathB, valueChange2),
+			valueEdit(pathA0A, valueChange1a),
+			// A path equal to, but not the same object as, one of the others' ancestors.
+			valueEdit({ parent: { ...pathA0 }, field: fieldB }, valueChange1b),
+			valueEdit({ parent: nodeC2, field: fieldA }, valueChange1a),
+			valueEdit({ parent: { ...nodeC2, parentIndex: 0 }, field: fieldA }, valueChange2),
+			valueEdit({ parent: nodeA0C1, field: fieldA }, valueChange2),
+			{
+				type: "global",
+				revision: tag1,
+				builds: newChangeAtomIdBTree<TreeChunk>([
+					[[tag1 as RevisionTag | undefined, brand(5)], node1Chunk],
+				]),
+			},
+		];
+
+		function submitted(changes: readonly AnyEditDescription[]): ModularChangeset {
+			const submittedChanges: ModularChangeset[] = [];
+			const editor = family.buildEditor(mintRevisionTag, (change) =>
+				submittedChanges.push(change.change),
+			);
+			editor.submitIndependentChanges(changes, tag1);
+			assert.equal(submittedChanges.length, 1);
+			return submittedChanges[0] ?? assert.fail();
+		}
+
+		/**
+		 * `change` normalized, without its `maxId`, which composing can make higher by allocating IDs for nodes it then aliases.
+		 */
+		function normalized(change: ModularChangeset): ModularChangeset {
+			const { maxId: _, ...rest } = normalizeChangeset(
+				change,
+				fieldKinds,
+				false,
+				false,
+				(chunk) => chunk,
+			);
+			return rest;
+		}
+
+		it("gives the change composing the edits gives", () => {
+			const direct = submitted(edits);
+			const composed = buildChangeset(edits);
+			assert.equal(direct.nodeAliases.size, 0);
+			assert((direct.maxId ?? -1) <= (composed.maxId ?? -1));
+			assertEqual(normalized(direct), normalized(composed));
+			assertEqual(normalized(submitted([])), normalized(buildChangeset([])));
+			assertEqual(
+				normalized(submitted(edits.slice(0, 1))),
+				normalized(buildChangeset(edits.slice(0, 1))),
+			);
+		});
+
+		it("gives a change with the same effect as composing the edits", () => {
+			assert.deepEqual(
+				intoDelta(makeAnonChange(submitted(edits)), family.fieldKinds),
+				intoDelta(makeAnonChange(buildChangeset(edits)), family.fieldKinds),
+			);
+		});
+
+		it("rejects edits which are not independent", () => {
+			assert.throws(() =>
+				submitted([valueEdit(pathB, valueChange2), valueEdit(pathB, valueChange1a)]),
+			);
+			assert.throws(() =>
+				submitted([
+					valueEdit(pathA0A, valueChange2),
+					valueEdit({ parent: pathA0, field: fieldA }, valueChange1a),
+				]),
+			);
+			assert.throws(() =>
+				submitted([valueEdit(pathB0A, valueChange2), valueEdit(pathB, valueChange1a)]),
+			);
+		});
+	});
+
 	describe("update refreshers", () => {
 		const aMajor = mintRevisionTag();
 		const a1 = { major: aMajor, minor: 1 };
@@ -1633,7 +1722,7 @@ function deepFreeze(object: object) {
 	});
 }
 
-function buildChangeset(edits: EditDescription[]): ModularChangeset {
+function buildChangeset(edits: AnyEditDescription[]): ModularChangeset {
 	const editor = family.buildEditor(mintRevisionTag, () => undefined);
 	return editor.buildChanges(edits);
 }

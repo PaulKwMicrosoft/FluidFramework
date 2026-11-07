@@ -2265,6 +2265,31 @@ export class ModularEditBuilder extends EditBuilder<ModularChangeset> {
 		this.applyChange(tagChange(modularChange, revision));
 	}
 
+	/**
+	 * Submits, as one change, edits to distinct fields, none of which is in the content of another edit's field, and the builds they use.
+	 * @remarks
+	 * Since no edit changes the path of another, applying them in any order gives the same result,
+	 * so the change is built directly from all of them rather than by composing a change for each,
+	 * which {@link ModularEditBuilder.submitChanges} does.
+	 * The change is equivalent to the one `submitChanges` would make from the same edits.
+	 */
+	public submitIndependentChanges(
+		changes: readonly EditDescription[],
+		revision: RevisionTag,
+	): void {
+		this.applyChange(
+			tagChange(
+				buildModularChangesetFromIndependentEdits(
+					changes,
+					this.idAllocator,
+					(fieldKind, change) =>
+						getChangeHandler(this.fieldKinds, fieldKind).getCrossFieldKeys(change),
+				),
+				revision,
+			),
+		);
+	}
+
 	public buildChanges(changes: EditDescription[]): ModularChangeset {
 		const revisions: Set<RevisionTag> = new Set();
 		const changeMaps = changes.map((change) => {
@@ -2493,6 +2518,127 @@ function buildModularChangesetFromNode(props: {
 		fieldChange,
 		localCrossFieldKeys: [],
 		childId: nodeId,
+	});
+}
+
+/**
+ * A node with changes in a changeset being built by {@link buildModularChangesetFromIndependentEdits}, or the root.
+ */
+interface NodeUnderConstruction {
+	/**
+	 * The node's ID, or undefined for the root.
+	 */
+	readonly id: NodeId | undefined;
+	/**
+	 * The changes to the node's fields which are edits.
+	 */
+	readonly fieldChanges: FieldChangeMap;
+	/**
+	 * The nodes with changes in each field of the node which is not edited, by their index in the field.
+	 */
+	readonly children: Map<FieldKey, Map<number, NodeUnderConstruction>>;
+}
+
+/**
+ * Builds the changeset of {@link ModularEditBuilder.submitIndependentChanges}.
+ * @remarks
+ * The ancestors of the edited fields are found by path (not by the identity of path objects),
+ * and each gets one node ID and one node changeset, whose generic field changes list its descendants with changes,
+ * as composing the changesets of the edits would give (once node aliases are resolved).
+ */
+function buildModularChangesetFromIndependentEdits(
+	changes: readonly EditDescription[],
+	idAllocator: IdAllocator,
+	getCrossFieldKeys: (
+		fieldKind: FieldKindIdentifier,
+		change: FieldChangeset,
+	) => CrossFieldKeyRange[],
+): ModularChangeset {
+	const revisions = new Set<RevisionTag>();
+	const builds = newChangeAtomIdBTree<TreeChunk>();
+	const crossFieldKeys = newCrossFieldKeyTable();
+	const root: NodeUnderConstruction = {
+		id: undefined,
+		fieldChanges: new Map(),
+		children: new Map(),
+	};
+	const nodes: NodeUnderConstruction[] = [];
+	const nodeAt = (path: UpPath, revision: RevisionTag): NodeUnderConstruction => {
+		const parent = path.parent === undefined ? root : nodeAt(path.parent, revision);
+		const field = getOrCreate(
+			parent.children,
+			path.parentField,
+			() => new Map<number, NodeUnderConstruction>(),
+		);
+		let node = field.get(path.parentIndex);
+		if (node === undefined) {
+			node = {
+				id: { localId: brand<ChangesetLocalId>(idAllocator.allocate()), revision },
+				fieldChanges: new Map(),
+				children: new Map(),
+			};
+			field.set(path.parentIndex, node);
+			nodes.push(node);
+		}
+		return node;
+	};
+
+	for (const change of changes) {
+		revisions.add(change.revision);
+		if (change.type === "global") {
+			for (const [key, chunk] of change.builds?.entries() ?? []) {
+				assert(!builds.has(key), "Independent edits must not build the same content");
+				builds.set(key, chunk);
+			}
+			continue;
+		}
+		const node =
+			change.field.parent === undefined ? root : nodeAt(change.field.parent, change.revision);
+		assert(
+			!node.fieldChanges.has(change.field.field),
+			"Independent edits must edit distinct fields",
+		);
+		node.fieldChanges.set(change.field.field, {
+			fieldKind: change.fieldKind,
+			change: change.change,
+		});
+		for (const { key, count } of getCrossFieldKeys(change.fieldKind, change.change)) {
+			crossFieldKeys.set(key, count, { nodeId: node.id, field: change.field.field });
+		}
+	}
+
+	const nodeChanges = newChangeAtomIdBTree<NodeChangeset>();
+	const nodeToParent = newChangeAtomIdBTree<FieldId>();
+	for (const node of [root, ...nodes]) {
+		for (const [field, children] of node.children) {
+			assert(
+				!node.fieldChanges.has(field),
+				"Independent edits must not edit a field containing another edited field",
+			);
+			const entries: [number, NodeId][] = [];
+			for (const [index, child] of children) {
+				const childId = child.id ?? fail("A child node has an ID");
+				entries.push([index, childId]);
+				setInChangeAtomIdMap(nodeToParent, childId, { nodeId: node.id, field });
+			}
+			node.fieldChanges.set(field, {
+				fieldKind: genericFieldKind.identifier,
+				change: brand(genericFieldKind.changeHandler.editor.buildChildChanges(entries)),
+			});
+		}
+		if (node.id !== undefined) {
+			setInChangeAtomIdMap(nodeChanges, node.id, { fieldChanges: node.fieldChanges });
+		}
+	}
+
+	return makeModularChangeset({
+		fieldChanges: root.fieldChanges,
+		nodeChanges,
+		nodeToParent,
+		crossFieldKeys,
+		maxId: idAllocator.getMaxId(),
+		revisions: [...revisions].map((revision) => ({ revision })),
+		builds,
 	});
 }
 

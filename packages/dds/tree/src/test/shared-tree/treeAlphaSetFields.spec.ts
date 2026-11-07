@@ -152,6 +152,43 @@ describe("TreeAlpha.setFields", () => {
 				unsubscribe();
 			});
 
+			it("rebases over concurrent edits, and concurrent edits rebase over it", () => {
+				const main = createView(forest);
+				const branch = main.fork();
+				TreeAlpha.setFields([
+					...moves(branch, (index) => new Offset({ x: index + 100, y: 0 })),
+					[shapeAt(branch, 1), "fill", "blue"],
+					[branch.root, "title", "branch"],
+				]);
+				const other = main.fork();
+				other.root.shapes.insertAt(
+					0,
+					new Shape({ name: "inserted", offset: { x: -1, y: -1 } }),
+				);
+				shapeAt(other, 3).fill = "green";
+
+				main.merge(other, false);
+				branch.rebaseOnto(main);
+				assert.equal(shapeAt(branch, 0).name, "inserted");
+				assert.equal(shapeAt(branch, 0).offset.x, -1);
+				for (let index = 1; index <= 5; index++) {
+					assert.equal(shapeAt(branch, index).offset.x, index - 1 + 100);
+				}
+				assert.equal(shapeAt(branch, 2).fill, "blue");
+				assert.equal(shapeAt(branch, 3).fill, "green");
+				assert.equal(branch.root.title, "branch");
+
+				const late = createView(forest);
+				const lateOther = late.fork();
+				TreeAlpha.setFields(moves(late, (index) => new Offset({ x: index * 2, y: 1 })));
+				lateOther.root.shapes.removeAt(1);
+				late.merge(lateOther);
+				assert.deepEqual(
+					late.root.shapes.map((shape) => shape.offset.x),
+					[0, 4, 6, 8],
+				);
+			});
+
 			it("hydrates the new nodes", () => {
 				const view = createView(forest);
 				const offsets = view.root.shapes.map((_, index) => new Offset({ x: index, y: 7 }));

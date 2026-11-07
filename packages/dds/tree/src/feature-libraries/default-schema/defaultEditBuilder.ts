@@ -152,6 +152,7 @@ export interface IDefaultEditBuilder<TContent = TreeChunk> {
 	 * but as a single edit, so the tree is updated, and change events are raised, once for all of them.
 	 * The fields are identified by their paths in the tree as it is before any of them is set,
 	 * so no field may be under the content of another field set by the same call.
+	 * Each field may be set at most once.
 	 */
 	setFields(sets: readonly FieldSet<TContent>[]): void;
 
@@ -296,7 +297,7 @@ export class DefaultEditBuilder implements ChangeFamilyEditor, IDefaultEditBuild
 				this.addOptionalFieldSet(edits, set.field, set.content, set.wasEmpty, revision);
 			}
 		}
-		this.modularBuilder.submitChanges(edits, revision);
+		this.modularBuilder.submitIndependentChanges(edits, revision);
 	}
 
 	/**
