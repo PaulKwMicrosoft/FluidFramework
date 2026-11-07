@@ -201,16 +201,28 @@ export function lazyStoredSchema(schema: TreeSchema): TreeStoredSchema {
 	const definitions = schema.definitions;
 	return {
 		rootFieldSchema: toStoredFieldSchema(schema.root, policy),
-		nodeSchema: LazyNodeStoredSchemaMap.create(definitions, (identifier) =>
-			getStoredSchema(
-				transformSimpleNodeSchema(
-					definitions.get(identifier) ?? fail("Lazy stored schema has no view schema"),
-					policy,
-				),
-			),
-		),
+		nodeSchema: LazyNodeStoredSchemaMap.create(definitions, (identifier) => {
+			const definition =
+				definitions.get(identifier) ?? fail("Lazy stored schema has no view schema");
+			return getOrCreate(sharedNodeStoredSchemas, definition, () =>
+				getStoredSchema(transformSimpleNodeSchema(definition, policy)),
+			);
+		}),
 	};
 }
+
+/**
+ * The stored node schema {@link lazyStoredSchema} derives, by view node schema, shared by all roots.
+ * @remarks
+ * A root without staged upgrades reaches no node schema with staged allowed types,
+ * so the stored schema of each node schema it reaches is the same whichever root, and whichever policy, it is derived for.
+ * Sharing them means that many roots of one schema (such as the roots content is imported under, and the root of a view)
+ * hold one stored schema for each node schema, rather than one each.
+ */
+const sharedNodeStoredSchemas = new WeakMap<
+	SimpleNodeSchema<SchemaType.View>,
+	TreeNodeStoredSchema
+>();
 
 /**
  * Converts a view {@link SimpleFieldSchema} into a {@link TreeFieldStoredSchema}, as {@link toStoredSchema} does for the root field.

@@ -418,6 +418,32 @@ describe("toStoredSchema", () => {
 			assert.strictEqual(toStoredSchema(Node, StagedSchemaUpgradePolicy.permissive), stored);
 			assertDeepEqual(stored, reference(Node, StagedSchemaUpgradePolicy.permissive));
 		});
+		it("shares the stored schema of each node schema across staging-free roots", () => {
+			const sf = new SchemaFactoryAlpha("sharedNodeStoredSchema");
+			class Leaf extends sf.object("Leaf", { value: sf.number }) {}
+			class Middle extends sf.object("Middle", { leaf: Leaf }) {}
+			class Top extends sf.object("Top", { middle: Middle, leaf: sf.optional(Leaf) }) {}
+			const leaf = brand<TreeNodeSchemaIdentifier>(Leaf.identifier);
+			const middle = brand<TreeNodeSchemaIdentifier>(Middle.identifier);
+			const roots = [
+				toStoredSchema(Leaf, StagedSchemaUpgradePolicy.permissive),
+				toStoredSchema(Middle, StagedSchemaUpgradePolicy.restrictive),
+				toStoredSchema(Top, StagedSchemaUpgradePolicy.permissive),
+				toStoredSchema(sf.optional([Top, Leaf]), StagedSchemaUpgradePolicy.restrictive),
+			];
+			const leafSchema = roots[0]?.nodeSchema.get(leaf) ?? assert.fail();
+			const middleSchema = roots[1]?.nodeSchema.get(middle) ?? assert.fail();
+			for (const root of roots.slice(1)) {
+				assert.strictEqual(root.nodeSchema.get(leaf), leafSchema);
+			}
+			assert.strictEqual(roots[2]?.nodeSchema.get(middle), middleSchema);
+			assert.strictEqual(roots[3]?.nodeSchema.get(middle), middleSchema);
+			assertDeepEqual(roots[2], reference(Top, StagedSchemaUpgradePolicy.permissive));
+			assertDeepEqual(
+				roots[3]?.nodeSchema,
+				reference(Top, StagedSchemaUpgradePolicy.permissive).nodeSchema,
+			);
+		});
 		// Lazily derived stored schemas defer conversion (and its reentrancy checks and errors) to the first lookup.
 		it.skip("preserves root field kind and metadata in separate root caches", () => {
 			const sf = new SchemaFactoryAlpha("rootCaches");
