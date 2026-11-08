@@ -247,6 +247,51 @@ describe("TreeAlpha.replaceAsBase", () => {
 		assert.equal(view.root.notes.get("b"), "other");
 	});
 
+	it("rejects filling or emptying any of several fields of a node changed by one edit, and releases them with it", () => {
+		class Fields extends sf.object("Fields", {
+			a: sf.optional(sf.string),
+			b: sf.optional(sf.string),
+			c: sf.optional(sf.string),
+			d: sf.optional(sf.string),
+		}) {}
+		const checkout = createIndependentTreeCheckout({
+			enableBaseContent: true,
+			maxRevertibles: 1,
+		});
+		const view = checkout.viewWith(new TreeViewConfiguration({ schema: Fields }));
+		view.initialize(new Fields({ c: "c" }));
+		const fields = view.root;
+		// One edit, which changes three fields of the node in one visit of it.
+		TreeAlpha.setFields([
+			[fields, "a", "a"],
+			[fields, "b", "b"],
+			[fields, "c", undefined],
+		]);
+		for (const [key, content] of [
+			["a", undefined],
+			["b", undefined],
+			["c", "c"],
+		] as const) {
+			assert.throws(
+				() => TreeAlpha.replaceAsBase(fields, key, content),
+				validateUsageError(/changed by a commit retained in the history/),
+			);
+		}
+		// A field the edit did not change can be filled.
+		TreeAlpha.replaceAsBase(fields, "d", "d");
+		assert.deepEqual({ ...fields }, { a: "a", b: "b", d: "d" });
+
+		// Once the edit leaves the retained history, its fields can be emptied.
+		// The retained commit replaces the root, which records no fields.
+		view.root = new Fields({ a: "a", b: "b" });
+		TreeAlpha.replaceAsBase(view.root, "a", undefined);
+		TreeAlpha.replaceAsBase(view.root, "b", undefined);
+		assert.deepEqual({ ...view.root }, {});
+
+		// Every anchor recorded for the edits was released.
+		view.dispose();
+		assert(checkout.forest.anchors.isEmpty());
+	});
 	it("ignores the edits of aborted transactions", () => {
 		const { view } = createDeck();
 		view.runTransaction(() => {
