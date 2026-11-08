@@ -23,6 +23,7 @@ import {
 	checkGeneratedSchemaCompatibility,
 	checkSchemaCompatibility,
 	getSchemaIncompatibilityDetails,
+	getRootSchemaDerivedData,
 	hasStagedSchemaUpgrades,
 	type ImplicitFieldSchema,
 	type SchemaCompatibilityStatus,
@@ -36,6 +37,7 @@ import {
 } from "../../../simple-tree/index.js";
 import { SchemaFactoryAlpha } from "../../../simple-tree/index.js";
 import { brand } from "../../../util/index.js";
+import { testSchema } from "../../testTrees.js";
 import { TestSchemaRepository } from "../../utils.js";
 
 const emptySchema: TreeStoredSchema = {
@@ -1008,5 +1010,22 @@ describe("checkGeneratedSchemaCompatibility", () => {
 			hasStagedSchemaUpgrades(new TreeViewConfigurationAlpha({ schema: WithStagedOptional })),
 			true,
 		);
+	});
+
+	// TreeView.initialize reads whether the schema has staged upgrades from the root's derived data.
+	describe("root derived data agrees with hasStagedSchemaUpgrades", () => {
+		for (const testCase of testSchema) {
+			it(testCase.name, () => {
+				const config = new TreeViewConfigurationAlpha({ schema: testCase.schema });
+				assert.equal(
+					getRootSchemaDerivedData(config.root).hasStagedSchema,
+					hasStagedSchemaUpgrades(config),
+				);
+				assert.equal(
+					getRootSchemaDerivedData(config.root).hasStagedSchema,
+					testCase.hasStagedSchema === true,
+				);
+			});
+		}
 	});
 });

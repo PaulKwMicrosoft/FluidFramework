@@ -362,6 +362,7 @@ export {
 	type TreeSchema,
 	type TransitiveSchemaInfo,
 	createTreeSchema,
+	getRootSchemaDerivedData,
 	SchemaComponent,
 	toStoredSchema,
 	toUpgradeSchema,

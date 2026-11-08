@@ -41,7 +41,7 @@ import {
 	normalizeFieldSchema,
 	checkSchemaCompatibility,
 	checkGeneratedSchemaCompatibility,
-	hasStagedSchemaUpgrades,
+	getRootSchemaDerivedData,
 	type InsertableContent,
 	type StagedSchemaUpgradePolicy,
 	type TreeViewConfiguration,
@@ -400,7 +400,10 @@ export class SchematizingSimpleTreeView<
 			);
 
 			this.runTransaction(() => {
-				this.initializingSchema = hasStagedSchemaUpgrades(this.viewSchema)
+				// Read from the root's derived data (cached under the same key as `schema`),
+				// which knows whether the schema has staged upgrades without evaluating each field's allowed types.
+				this.initializingSchema = getRootSchemaDerivedData(this.viewSchema.root)
+					.hasStagedSchema
 					? undefined
 					: schema;
 				try {
