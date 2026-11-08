@@ -680,12 +680,14 @@ class IndexedDefinitions implements ReadonlyMap<string, DefinedSchema> {
 	 * @throws A {@link UsageError} if a schema with the same identifier was added.
 	 */
 	public add(schema: TreeNodeSchema): void {
-		if (this.#positions.has(schema.identifier)) {
+		// Read once: reading a schema class's properties is slow in schemas with many classes.
+		const identifier = schema.identifier;
+		if (this.#positions.has(identifier)) {
 			throw new UsageError(
-				`Multiple schema encountered with the identifier ${JSON.stringify(schema.identifier)}. Remove or rename them to avoid the collision.`,
+				`Multiple schema encountered with the identifier ${JSON.stringify(identifier)}. Remove or rename them to avoid the collision.`,
 			);
 		}
-		this.#positions.set(schema.identifier, this.#schemas.length);
+		this.#positions.set(identifier, this.#schemas.length);
 		this.#schemas.push(schema as DefinedSchema);
 	}
 

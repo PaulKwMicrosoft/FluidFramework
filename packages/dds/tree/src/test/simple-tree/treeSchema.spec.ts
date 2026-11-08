@@ -9,6 +9,7 @@ import { validateUsageError } from "@fluidframework/test-runtime-utils/internal"
 
 import {
 	getTreeNodeSchemaPrivateData,
+	markSchemaMostDerived,
 	// eslint-disable-next-line import-x/no-internal-modules
 } from "../../simple-tree/core/index.js";
 import { normalizeFieldSchema, SchemaFactoryAlpha } from "../../simple-tree/index.js";
@@ -289,6 +290,22 @@ describe("treeSchema", () => {
 			getRootSchemaDerivedData(A);
 			assert.throws(
 				() => getRootSchemaDerivedData(B),
+				validateUsageError(/Two schema classes were used/),
+			);
+		});
+		it("rejects a base class after its subclass was marked, and accepts marked schemas again", () => {
+			const sf = new SchemaFactoryAlpha("mostDerivedBase");
+			const Base = sf.object("Base", {});
+			class Derived extends Base {}
+			markSchemaMostDerived(Derived);
+			markSchemaMostDerived(Derived);
+			markSchemaMostDerived(sf.number);
+			assert.throws(
+				() => markSchemaMostDerived(Base),
+				validateUsageError(/Two schema classes were used/),
+			);
+			assert.throws(
+				() => getRootSchemaDerivedData(Base),
 				validateUsageError(/Two schema classes were used/),
 			);
 		});
