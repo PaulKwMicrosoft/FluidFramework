@@ -21,6 +21,7 @@ export {
 	isTreeNode,
 	tryDisposeTreeNode,
 	releaseTreeNode,
+	releaseTreeNodeDescendants,
 	runReadScope,
 	HydratedContext,
 	SimpleContextSlot,

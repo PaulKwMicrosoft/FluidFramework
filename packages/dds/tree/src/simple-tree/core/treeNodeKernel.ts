@@ -905,6 +905,68 @@ export function releaseTreeNode(node: TreeNode): void {
 }
 
 /**
+ * Releases the objects created for reading the nodes under a hydrated `node`, as {@link releaseTreeNode} does, keeping `node` itself.
+ * Nodes with event listeners are kept, along with the nodes between them and `node`.
+ * @remarks
+ * See {@link (TreeAlpha:interface).releaseDescendants} for details.
+ */
+export function releaseTreeNodeDescendants(node: TreeNode): void {
+	const kernel = getKernel(node);
+	if (kernel.isReleased()) {
+		return;
+	}
+	const status = kernel.getStatus();
+	if (status === TreeStatus.New) {
+		throw new UsageError(
+			"Only nodes in a tree can have their descendants released. Unhydrated nodes hold nothing from a tree: drop references to them instead.",
+		);
+	}
+	if (status === TreeStatus.Deleted) {
+		return;
+	}
+	assert(kernel.isHydrated(), "Nodes which are not new must be hydrated");
+	const root = kernel.anchorNode;
+	if (root.anchorSet.isUpdating()) {
+		throw new UsageError("Nodes cannot be released while the tree is being changed.");
+	}
+
+	// Each anchor node follows its parent, whose index is in `parents` (-1 for children of `root`).
+	const anchorNodes: AnchorNode[] = [];
+	const parents: number[] = [];
+	for (const child of root.anchoredChildren()) {
+		anchorNodes.push(child);
+		parents.push(-1);
+	}
+	for (let index = 0; index < anchorNodes.length; index++) {
+		for (const child of (anchorNodes[index] ?? oob()).anchoredChildren()) {
+			anchorNodes.push(child);
+			parents.push(index);
+		}
+	}
+
+	// Visiting in reverse reaches every anchor node after its descendants, so `kept` is final for it.
+	const kept: boolean[] = Array.from({ length: anchorNodes.length }, () => false);
+	for (let index = anchorNodes.length - 1; index >= 0; index--) {
+		const anchorNode = anchorNodes[index] ?? oob();
+		const treeNode = anchorNode.slots.get(simpleTreeNodeSlot);
+		if (
+			kept[index] === true ||
+			(treeNode !== undefined && getKernel(treeNode).hasEventListeners())
+		) {
+			const parent = parents[index] ?? oob();
+			if (parent >= 0) {
+				kept[parent] = true;
+			}
+			continue;
+		}
+		if (treeNode !== undefined) {
+			getKernel(treeNode).release();
+		}
+		disposeHydratedFlexTreeNode(anchorNode);
+	}
+}
+
+/**
  * Gets the {@link TreeNodeSchema} for the {@link InnerNode}.
  */
 export function getSimpleNodeSchemaFromInnerNode(innerNode: InnerNode): TreeNodeSchema {

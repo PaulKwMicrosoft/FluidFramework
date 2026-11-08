@@ -12,6 +12,7 @@ export {
 	type InnerNode,
 	tryDisposeTreeNode,
 	releaseTreeNode,
+	releaseTreeNodeDescendants,
 	runReadScope,
 	getInnerNode,
 	getInnerNodeFromTarget,
