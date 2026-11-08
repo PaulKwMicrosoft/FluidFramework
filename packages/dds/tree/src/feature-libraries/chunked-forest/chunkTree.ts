@@ -782,7 +782,7 @@ export function chunkRange(
 					output,
 				);
 			} else if (shape instanceof TreeShape) {
-				const nodesPerTopLevelNode = shape.positions.length;
+				const nodesPerTopLevelNode = shape.nodeCount;
 				const maxTopLevelLength = Math.max(
 					1,
 					Math.floor(chunkCompressor.policy.uniformChunkNodeCount / nodesPerTopLevelNode),
@@ -888,7 +888,7 @@ export function chunkFieldFromAdapter<TNode>(
 		} else if (shape instanceof TreeShape) {
 			const maxTopLevelLength = Math.max(
 				1,
-				Math.floor(policy.uniformChunkNodeCount / shape.positions.length),
+				Math.floor(policy.uniformChunkNodeCount / shape.nodeCount),
 			);
 			const values: TreeValue[] = [];
 			let topLevelLength = 0;
@@ -1435,7 +1435,7 @@ class ContentChunkingWalk {
 				// Same limit as chunkRange uses for schema-derived shapes.
 				const maxTopLevelLength = Math.max(
 					1,
-					Math.floor(uniformChunkNodeCount / item.positions.length),
+					Math.floor(uniformChunkNodeCount / item.nodeCount),
 				);
 				while (remaining > 0) {
 					const topLevelLength = Math.min(remaining, maxTopLevelLength);

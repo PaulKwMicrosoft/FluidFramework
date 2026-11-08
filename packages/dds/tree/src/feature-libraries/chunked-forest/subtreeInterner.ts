@@ -248,7 +248,7 @@ export class SubtreeInterner {
 			return chunk;
 		}
 		if (chunk instanceof UniformChunk) {
-			if (chunk.shape.treeShape.positions.length === 1) {
+			if (chunk.shape.treeShape.nodeCount === 1) {
 				return chunk;
 			}
 		} else if (!(chunk instanceof BasicChunk)) {
@@ -289,7 +289,7 @@ export class SubtreeInterner {
 		const end = start + shape.valuesPerTopLevelNode;
 		if (
 			shape.valuesPerTopLevelNode < this.limits.minSharedValues ||
-			shape.positions.length > this.limits.maxSubtreeNodes
+			shape.nodeCount > this.limits.maxSubtreeNodes
 		) {
 			return undefined;
 		}
@@ -319,7 +319,7 @@ export class SubtreeInterner {
 			values.slice(start, end),
 			idCompressor,
 		);
-		return this.add(chunk, { hash, nodes: shape.positions.length }) ? chunk : undefined;
+		return this.add(chunk, { hash, nodes: shape.nodeCount }) ? chunk : undefined;
 	}
 
 	/**
@@ -452,7 +452,7 @@ export class SubtreeInterner {
 		}
 		if (chunk instanceof UniformChunk) {
 			const treeShape = chunk.shape.treeShape;
-			this.hashedNodes += treeShape.positions.length * chunk.topLevelLength;
+			this.hashedNodes += treeShape.nodeCount * chunk.topLevelLength;
 			if (this.hashedNodes > this.limits.maxSubtreeNodes) {
 				return undefined;
 			}

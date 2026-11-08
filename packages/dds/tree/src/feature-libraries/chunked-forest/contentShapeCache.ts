@@ -263,7 +263,7 @@ export class ContentShapeCache {
 		}
 		this.layoutCount++;
 		typeRoot.typeLayouts++;
-		const positions = layout.positions + length * childShape.positions.length;
+		const positions = layout.positions + length * childShape.nodeCount;
 		const extended =
 			positions > this.maxShapeNodes || this.isIncremental(type, key)
 				? false
@@ -304,7 +304,7 @@ export class ContentShapeCache {
 		fields.reverse();
 		const shape = new TreeShape(type, false, fields);
 		this.shapeCount++;
-		this.positionCount += shape.positions.length;
+		this.positionCount += shape.nodeCount;
 		typeRoot.typeShapes++;
 		layout.shape = shape;
 		return shape;
