@@ -133,6 +133,7 @@ const field0: FieldKey = brand("-0");
 const field1: FieldKey = brand("-1");
 const field2: FieldKey = brand("-2");
 const field3: FieldKey = brand("-3");
+const field4: FieldKey = brand("-4");
 
 describe("visitDelta", () => {
 	it("empty delta", () => {
@@ -255,11 +256,8 @@ describe("visitDelta", () => {
 			["exitField", fooKey],
 			["exitNode", 0],
 			["exitField", rootKey],
+			// The attach pass has nothing to do under the node, so it does not enter it.
 			["enterField", rootKey],
-			["enterNode", 0],
-			["enterField", fooKey],
-			["exitField", fooKey],
-			["exitNode", 0],
 			["exitField", rootKey],
 		];
 		testTreeVisit({ marks: [mark] }, expected, { detachedFieldIndex: index });
@@ -641,18 +639,80 @@ describe("visitDelta", () => {
 		const expected: VisitScript = [
 			["create", mapTreeX, field0],
 			["create", mapTreeY, field1],
+			// Built content replaces each node in the detach pass, right after the node is detached.
 			["enterField", rootKey],
 			["detach", { start: 0, end: 1 }, field2, { minor: 2 }, true],
-			["detach", { start: 0, end: 1 }, field3, { minor: 3 }, true],
+			["attach", field0, 1, 0],
+			["detach", { start: 1, end: 2 }, field3, { minor: 3 }, true],
+			["attach", field1, 1, 1],
 			["exitField", rootKey],
 			["enterField", rootKey],
-			["attach", field0, 1, 0],
-			["attach", field1, 1, 1],
 			["exitField", rootKey],
 		];
 
 		const index = makeDetachedFieldIndex("");
 		testDeltaVisit(delta, expected, index);
+	});
+
+	it("replace nodes under a node, and attach other content in the attach pass", () => {
+		const replace1: DeltaMark = { count: 1, detach: { minor: 2 }, attach: { minor: 0 } };
+		const insert: DeltaMark = { count: 1, attach: { minor: 1 } };
+		const replace2: DeltaMark = { count: 1, detach: { minor: 4 }, attach: { minor: 3 } };
+		const delta: DeltaRoot = {
+			build: [
+				{ id: { minor: 0 }, trees: chunkX },
+				{ id: { minor: 1 }, trees: chunkY },
+				{ id: { minor: 3 }, trees: chunkX },
+			],
+			fields: new Map([
+				[
+					rootKey,
+					{
+						marks: [
+							{
+								count: 1,
+								fields: new Map([[fooKey, { marks: [{ count: 1 }, replace1] }]]),
+							},
+							{ count: 1, fields: new Map([[fooKey, { marks: [insert, replace2] }]]) },
+						],
+					},
+				],
+			]),
+		};
+		const expected: VisitScript = [
+			["create", mapTreeX, field0],
+			["create", mapTreeY, field1],
+			["create", mapTreeX, field2],
+			["enterField", rootKey],
+			["enterNode", 0],
+			["enterField", fooKey],
+			["detach", { start: 1, end: 2 }, field3, { minor: 2 }, true],
+			["attach", field0, 1, 1],
+			["exitField", fooKey],
+			["exitNode", 0],
+			["enterNode", 1],
+			["enterField", fooKey],
+			["detach", { start: 0, end: 1 }, field4, { minor: 4 }, true],
+			["attach", field2, 1, 0],
+			["exitField", fooKey],
+			["exitNode", 1],
+			["exitField", rootKey],
+			// Only the node with an insert is visited by the attach pass.
+			["enterField", rootKey],
+			["enterNode", 1],
+			["enterField", fooKey],
+			["attach", field1, 1, 0],
+			["exitField", fooKey],
+			["exitNode", 1],
+			["exitField", rootKey],
+		];
+
+		const index = makeDetachedFieldIndex("");
+		testDeltaVisit(delta, expected, index);
+		assert.deepEqual(
+			[...index.entries()].map(({ id }) => id.minor),
+			[2, 4],
+		);
 	});
 
 	it("changes under replaced node", () => {

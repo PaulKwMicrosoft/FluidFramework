@@ -27,6 +27,8 @@ import type { NodeIndex, PlaceIndex, Range } from "./pathTree.js";
  * 4. root destructions
  *
  * The core idea is that before content can be attached, it must first exist and be in a detached field.
+ * Content which already exists in a detached field and replaces nodes is attached in the detach pass, right after they are detached,
+ * if nothing else in the delta involves it (see {@link replaceInDetachPass}): the attach pass then skips the nodes above it.
  *
  * While the detach pass ensures that nodes to be attached are in a detached state, it does not guarantee that they
  * reside in the correct detached field. That is the responsibility of the root transfers phase.
@@ -38,7 +40,7 @@ import type { NodeIndex, PlaceIndex, Range } from "./pathTree.js";
  *
  * The details of the delta visit algorithm can impact how/when events are emitted by the objects that own the visitors.
  * For example, as of 2024-03-27, the subtreeChanged event of an AnchorNode is emitted when exiting a node during a
- * delta visit, and thus the two-pass nature of the algorithm means the event fires twice for any given change.
+ * delta visit, and thus the two-pass nature of the algorithm means the event can fire twice for a given change.
  */
 
 /**
@@ -62,6 +64,7 @@ export function visitDelta(
 	const attachPassRoots: Map<ForestRootId, Delta.FieldMap> = new Map();
 	const rootTransfers: Delta.DetachedNodeRename[] = [];
 	const rootDestructions: Delta.DetachedNodeDestruction[] = [];
+	const doneInDetachPass = new Set<Delta.Mark | Delta.FieldMap>();
 	const refreshers: NestedMap<Major, Minor, ITreeCursorSynchronous> = new Map();
 	for (const {
 		id: { major, minor },
@@ -82,6 +85,7 @@ export function visitDelta(
 		attachPassRoots,
 		rootTransfers,
 		rootDestructions,
+		doneInDetachPass,
 	};
 	processBuilds(delta.build, detachConfig, visitor);
 	processGlobal(delta.global, detachConfig, visitor);
@@ -105,6 +109,7 @@ export function visitDelta(
 		attachPassRoots,
 		rootTransfers,
 		rootDestructions,
+		doneInDetachPass,
 	};
 	visitFieldMarks(delta.fields, visitor, attachConfig);
 	fixedPointVisitOfRoots(visitor, attachPassRoots, attachConfig);
@@ -371,22 +376,38 @@ interface PassConfig {
 	 * Carried out at the end of the attach pass.
 	 */
 	readonly rootDestructions: Delta.DetachedNodeDestruction[];
+	/**
+	 * Replacing marks whose attaches the detach pass carried out (see {@link replaceInDetachPass}),
+	 * and nested changes which the detach pass found need no attach pass.
+	 * The attach pass skips both.
+	 */
+	readonly doneInDetachPass: Set<Delta.Mark | Delta.FieldMap>;
 }
 
-type Pass = (delta: Delta.FieldChanges, visitor: DeltaVisitor, config: PassConfig) => void;
+/**
+ * @returns For the detach pass, whether the field changes need the attach pass.
+ */
+type Pass = (delta: Delta.FieldChanges, visitor: DeltaVisitor, config: PassConfig) => boolean;
 
+/**
+ * @returns For the detach pass, whether the fields need the attach pass.
+ */
 function visitFieldMarks(
 	fields: Delta.FieldMap | undefined,
 	visitor: DeltaVisitor,
 	config: PassConfig,
-): void {
+): boolean {
+	let needsAttachPass = false;
 	if (fields !== undefined) {
 		for (const [key, field] of fields) {
 			visitor.enterField(key);
-			config.func(field, visitor, config);
+			if (config.func(field, visitor, config)) {
+				needsAttachPass = true;
+			}
 			visitor.exitField(key);
 		}
 	}
+	return needsAttachPass;
 }
 
 function visitNode(
@@ -396,9 +417,15 @@ function visitNode(
 	config: PassConfig,
 ): void {
 	if (fields !== undefined) {
+		if (config.func === attachPass && config.doneInDetachPass.has(fields)) {
+			return;
+		}
 		visitor.enterNode(index);
-		visitFieldMarks(fields, visitor, config);
+		const needsAttachPass = visitFieldMarks(fields, visitor, config);
 		visitor.exitNode(index);
+		if (config.func === detachPass && !needsAttachPass) {
+			config.doneInDetachPass.add(fields);
+		}
 	}
 }
 
@@ -411,8 +438,9 @@ function detachPass(
 	fieldChanges: Delta.FieldChanges,
 	visitor: DeltaVisitor,
 	config: PassConfig,
-): void {
+): boolean {
 	visitor.fieldMarks?.(fieldChanges.marks);
+	let needsAttachPass = false;
 	let index = 0;
 	for (const mark of fieldChanges.marks) {
 		if (mark.fields !== undefined) {
@@ -421,6 +449,16 @@ function detachPass(
 				0x7d0 /* Invalid nested changes on an additive mark */,
 			);
 			visitNode(index, mark.fields, visitor, config);
+			if (mark.detach === undefined && !config.doneInDetachPass.has(mark.fields)) {
+				needsAttachPass = true;
+			}
+		}
+		if (replaceInDetachPass(mark, index, visitor, config)) {
+			index += mark.count;
+			continue;
+		}
+		if (mark.attach !== undefined) {
+			needsAttachPass = true;
 		}
 		if (mark.detach !== undefined) {
 			for (let i = 0; i < mark.count; i += 1) {
@@ -437,6 +475,59 @@ function detachPass(
 			index += mark.count;
 		}
 	}
+	return needsAttachPass;
+}
+
+/**
+ * Carries out a mark which replaces nodes in the detach pass, attaching each new node right after detaching the node it replaces,
+ * if the new nodes are already in detached fields and nothing else in the delta involves them or the replaced nodes.
+ * @remarks
+ * This is the case for nodes the delta builds, and for nodes restored from repair data.
+ * Attaching them in the attach pass would give the same result,
+ * but the attach pass would then have to visit every node above them again.
+ * @returns Whether the mark was carried out.
+ */
+function replaceInDetachPass(
+	mark: Delta.Mark,
+	index: number,
+	visitor: DeltaVisitor,
+	config: PassConfig,
+): boolean {
+	const { attach, detach } = mark;
+	if (
+		attach === undefined ||
+		detach === undefined ||
+		mark.fields !== undefined ||
+		config.rootTransfers.length > 0
+	) {
+		return false;
+	}
+	const sources: ForestRootId[] = [];
+	for (let i = 0; i < mark.count; i += 1) {
+		const source = config.detachedFieldIndex.tryGetEntry(offsetDetachId(attach, i));
+		if (
+			source === undefined ||
+			config.detachPassRoots.has(source) ||
+			config.attachPassRoots.has(source)
+		) {
+			return false;
+		}
+		sources.push(source);
+	}
+	for (const [i, source] of sources.entries()) {
+		const id = offsetDetachId(detach, i);
+		const root = config.detachedFieldIndex.createEntry(id, config.latestRevision);
+		visitor.detach(
+			{ start: index + i, end: index + i + 1 },
+			config.detachedFieldIndex.toFieldKey(root),
+			id,
+			true,
+		);
+		visitor.attach(config.detachedFieldIndex.toFieldKey(source), 1, index + i);
+		config.detachedFieldIndex.deleteEntry(offsetDetachId(attach, i));
+	}
+	config.doneInDetachPass.add(mark);
+	return true;
 }
 
 function buildTrees(
@@ -522,9 +613,13 @@ function attachPass(
 	fieldChanges: Delta.FieldChanges,
 	visitor: DeltaVisitor,
 	config: PassConfig,
-): void {
+): boolean {
 	let index = 0;
 	for (const mark of fieldChanges.marks) {
+		if (config.doneInDetachPass.has(mark)) {
+			index += mark.count;
+			continue;
+		}
 		if (mark.attach !== undefined) {
 			for (let i = 0; i < mark.count; i += 1) {
 				const offsetAttachId = offsetDetachId(mark.attach, i);
@@ -563,6 +658,7 @@ function attachPass(
 			index += mark.count;
 		}
 	}
+	return false;
 }
 
 /**
