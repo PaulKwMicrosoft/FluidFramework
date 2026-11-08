@@ -1677,13 +1677,18 @@ export abstract class CheckoutBase implements ITreeCheckout {
 				// ensure that these data changes are muted if they would render some trees invalid under the
 				// original (reinstated) schema.
 				const newSchema = innerChange.innerChange.schema.new;
-				const telemetryMetrics = getSchemaChangeTelemetryMetrics(
-					this.storedSchema,
-					newSchema,
-					innerChange.innerChange.isInverse,
-				);
+				const logger = this.logger;
+				// Computed before the schema changes, and only when it is logged, as it compares the whole schemas.
+				const telemetryMetrics =
+					logger === undefined
+						? undefined
+						: getSchemaChangeTelemetryMetrics(
+								this.storedSchema,
+								newSchema,
+								innerChange.innerChange.isInverse,
+							);
 				this.storedSchema.apply(newSchema);
-				this.logger?.sendTelemetryEvent({
+				logger?.sendTelemetryEvent({
 					eventName: CheckoutBase.schemaChangeTelemetryEventName,
 					...tagCodeArtifacts({
 						details: JSON.stringify({
