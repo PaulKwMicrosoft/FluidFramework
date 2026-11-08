@@ -1499,7 +1499,10 @@ function replaceAsBase(
 	}
 
 	const schema = treeNodeApi.schema(parent);
-	let current: TreeNode | TreeLeafValue | undefined;
+	// Reads the content the edit replaces. Called for an array element only when needed, as reading it creates its node.
+	let readCurrent: () => TreeNode | TreeLeafValue | undefined;
+	// Whether the field the edit writes has no content before the edit.
+	let wasEmpty: boolean;
 	let storedKey: FieldKey;
 	let edit: () => void = () => writer.setField();
 	switch (schema.kind) {
@@ -1516,7 +1519,8 @@ function replaceAsBase(
 			if (isEmpty) {
 				throw new UsageError("An array element cannot be replaced with undefined.");
 			}
-			current = TreeAlpha.child(parent, key);
+			readCurrent = () => TreeAlpha.child(parent, key);
+			wasEmpty = false;
 			storedKey = EmptyKey;
 			edit = () => {
 				array.removeAt(key);
@@ -1528,7 +1532,9 @@ function replaceAsBase(
 			if (typeof key !== "string") {
 				throw new UsageError("Map keys must be strings.");
 			}
-			current = (parent as TreeMapNode).get(key);
+			const current = (parent as TreeMapNode).get(key);
+			readCurrent = () => current;
+			wasEmpty = current === undefined;
 			storedKey = brand(key);
 			break;
 		}
@@ -1536,7 +1542,9 @@ function replaceAsBase(
 			if (typeof key !== "string") {
 				throw new UsageError("Record keys must be strings.");
 			}
-			current = TreeAlpha.child(parent, key);
+			const current = TreeAlpha.child(parent, key);
+			readCurrent = () => current;
+			wasEmpty = current === undefined;
 			storedKey = brand(key);
 			break;
 		}
@@ -1546,7 +1554,9 @@ function replaceAsBase(
 			if (fieldSchema === undefined) {
 				throw new UsageError(`${String(key)} is not a property of ${schema.identifier}.`);
 			}
-			current = TreeAlpha.child(parent, key);
+			const current = TreeAlpha.child(parent, key);
+			readCurrent = () => current;
+			wasEmpty = current === undefined;
 			storedKey = brand(fieldSchema.storedKey);
 			break;
 		}
@@ -1558,17 +1568,18 @@ function replaceAsBase(
 		}
 	}
 
-	let target: AnchorNode | undefined;
-	if (isTreeNode(current)) {
+	const getTarget = (): AnchorNode | undefined => {
+		const current = readCurrent();
+		if (!isTreeNode(current)) {
+			return undefined;
+		}
 		const currentFlexNode = getInnerNode(current);
 		assert(currentFlexNode.isHydrated(), "A node in the document must be hydrated");
-		target = currentFlexNode.anchorNode;
-	}
+		return currentFlexNode.anchorNode;
+	};
 	const field =
-		current === undefined || isEmpty
-			? { parent: flexNode.anchorNode, key: storedKey }
-			: undefined;
-	checkout.applyAsBaseContent(target, field, edit);
+		wasEmpty || isEmpty ? { parent: flexNode.anchorNode, key: storedKey } : undefined;
+	checkout.applyAsBaseContent(getTarget, field, edit);
 }
 
 /**

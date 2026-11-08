@@ -2473,11 +2473,12 @@ export abstract class CheckoutBase implements ITreeCheckout {
 
 	/**
 	 * Applies an edit as part of the base state of the history, rather than as a commit.
-	 * @param target - The node whose content the edit replaces, if any.
+	 * @param getTarget - Gets the node whose content the edit replaces, if any.
 	 * No retained commit may have changed anything inside it.
+	 * Called before the edit, only if a retained commit changed the content of the tree.
 	 * @param field - The field whose content the edit replaces, if the edit fills or empties it.
 	 * No retained commit may have changed this field.
-	 * @param edit - Makes the edit. It must only replace `target` or the content of `field`,
+	 * @param edit - Makes the edit. It must only replace the target or the content of `field`,
 	 * leaving the number of nodes in the field it edits unchanged unless that field is `field`.
 	 * @remarks
 	 * The edit is applied as a transaction, so the forest, anchors and node events behave as for any edit.
@@ -2487,11 +2488,11 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	 *
 	 * This is valid because the retained commits do not change anything the edit replaces,
 	 * so they are unaffected by whether the edit is applied before them or after them.
-	 * @throws A `UsageError` if base content is not enabled for this checkout, if a retained commit changed `target` or `field`,
+	 * @throws A `UsageError` if base content is not enabled for this checkout, if a retained commit changed the target or `field`,
 	 * during a transaction or a change event, or while the branch has forks.
 	 */
 	public applyAsBaseContent(
-		target: AnchorNode | undefined,
+		getTarget: () => AnchorNode | undefined,
 		field: { readonly parent: AnchorNode; readonly key: FieldKey } | undefined,
 		edit: () => void,
 	): void {
@@ -2508,7 +2509,7 @@ export abstract class CheckoutBase implements ITreeCheckout {
 		if (this.liveForks.size > 0) {
 			throw new UsageError("Base content cannot be applied while the tree has forks.");
 		}
-		if (this.historyChanged(target, field)) {
+		if (this.historyChanged(getTarget, field)) {
 			throw new UsageError(
 				"Base content cannot replace content changed by a commit retained in the history, as reverting that commit would no longer be possible.",
 			);
@@ -2548,10 +2549,10 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	}
 
 	/**
-	 * Whether a commit retained in the history changed anything inside `target` or changed `field`.
+	 * Whether a commit retained in the history changed anything inside the node `getTarget` gets or changed `field`.
 	 */
 	private historyChanged(
-		target: AnchorNode | undefined,
+		getTarget: () => AnchorNode | undefined,
 		field: { readonly parent: AnchorNode; readonly key: FieldKey } | undefined,
 	): boolean {
 		const editedFields = this.editedFields;
@@ -2559,6 +2560,7 @@ export abstract class CheckoutBase implements ITreeCheckout {
 			return false;
 		}
 		const anchors = this.forest.anchors;
+		const target = getTarget();
 		for (
 			let commit: GraphCommit<SharedTreeChange> | undefined =
 				this.#transaction.branch.getHead();
