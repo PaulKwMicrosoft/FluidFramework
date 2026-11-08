@@ -10,8 +10,9 @@ import {
 	type DeltaVisitor,
 	type FieldKey,
 	combineVisitors,
+	makeBreakingVisitor,
 } from "../../../core/index.js";
-import { brand } from "../../../util/index.js";
+import { Breakable, brand } from "../../../util/index.js";
 
 class LoggingVisitor implements DeltaVisitor {
 	public readonly name: string;
@@ -163,5 +164,43 @@ describe("combineVisitors", () => {
 			"av2: afterAttach",
 		];
 		assert.deepEqual(actual, expected);
+	});
+});
+
+describe("makeBreakingVisitor", () => {
+	it("forwards calls to the visitor", () => {
+		const actual: string[] = [];
+		const visitor = makeBreakingVisitor(
+			new LoggingVisitor("v", actual),
+			new Breakable("test"),
+		);
+		visitor.enterField(fieldKey);
+		visitor.enterNode(0);
+		visitor.exitNode(0);
+		visitor.exitField(fieldKey);
+		visitor.free();
+		assert.deepEqual(actual, [
+			"v: enterField",
+			"v: enterNode",
+			"v: exitNode",
+			"v: exitField",
+			"v: free",
+		]);
+	});
+
+	it("breaks its scope when the visitor throws, after which calls fail", () => {
+		const breaker = new Breakable("test");
+		const error = new Error("visitor failed");
+		const throwing = new LoggingVisitor("v");
+		throwing.enterNode = () => {
+			throw error;
+		};
+		const visitor = makeBreakingVisitor(throwing, breaker);
+		assert.throws(
+			() => visitor.enterNode(0),
+			(thrown) => thrown === error,
+		);
+		assert.throws(() => visitor.exitNode(0), /invalid state by another error/);
+		assert.throws(() => breaker.use(), /invalid state by another error/);
 	});
 });

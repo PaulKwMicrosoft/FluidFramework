@@ -78,10 +78,10 @@ export class Breakable {
 
 	/**
 	 * {@link Breakable.break}, except tolerates `unknown` to be more easily used by catch blocks.
-	 * @privateRemarks
-	 * If there is a use-case, this should be made public.
+	 * @remarks
+	 * Lets code which calls often, such as a delta visitor, do what {@link Breakable.run} does without allocating a callback per call.
 	 */
-	private rethrowCaught(brokenBy: unknown): never {
+	public rethrowCaught(brokenBy: unknown): never {
 		if (nonBreakingErrors.has(brokenBy as object)) {
 			throw brokenBy;
 		}
