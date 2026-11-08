@@ -1415,7 +1415,7 @@ class ContentChunkingWalk {
 			if (shared === undefined) {
 				return result;
 			}
-			this.values.length = valueStart;
+			truncateArray(this.values, valueStart);
 			return shared;
 		}
 		return interner.intern(result);
@@ -1496,12 +1496,25 @@ class ContentChunkingWalk {
 	}
 
 	private truncate(valueLength: number, runLength: number, fieldLength: number): void {
-		this.values.length = valueLength;
-		this.runItems.length = runLength;
-		this.runValueStarts.length = runLength;
-		this.runLengths.length = runLength;
-		this.fieldKeys.length = fieldLength;
-		this.fieldRunStarts.length = fieldLength;
+		truncateArray(this.values, valueLength);
+		truncateArray(this.runItems, runLength);
+		truncateArray(this.runValueStarts, runLength);
+		truncateArray(this.runLengths, runLength);
+		truncateArray(this.fieldKeys, fieldLength);
+		truncateArray(this.fieldRunStarts, fieldLength);
+	}
+}
+
+/**
+ * Removes the elements of `array` from index `length` on.
+ *
+ * @remarks
+ * Pops the elements: assigning `array.length` is a slow runtime call in V8, even when it does not change the length,
+ * while each pop is cheap and pops are bounded by the pushes they undo.
+ */
+function truncateArray(array: unknown[], length: number): void {
+	while (array.length > length) {
+		array.pop();
 	}
 }
 
