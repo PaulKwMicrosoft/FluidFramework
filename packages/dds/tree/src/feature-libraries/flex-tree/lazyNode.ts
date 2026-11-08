@@ -176,6 +176,12 @@ export class LazyTreeNode extends LazyEntity<Anchor> implements HydratedFlexTree
 
 		const cached = getCachedField(this, fieldKey);
 		if (cached !== undefined) {
+			// Anchors follow edits, so a node anchored at index 0 of the field shows that the field is not empty,
+			// without getting a cursor to read its length.
+			this.ensureValidForAccess();
+			if (this.anchorNode.childIfAnchored(fieldKey, 0) !== undefined) {
+				return cached;
+			}
 			return cached.length === 0 ? undefined : cached;
 		}
 

@@ -541,7 +541,8 @@ export class LazyOptionalField extends LazyField implements FlexTreeOptionalFiel
 	}
 
 	public get content(): FlexTreeUnknownUnboxed | undefined {
-		return this.length === 0 ? undefined : this.atIndex(0);
+		// A known node at index 0 is in the field, so it needs no cursor to read the field's length.
+		return this.knownNodeAt(0) ?? (this.length === 0 ? undefined : this.atIndex(0));
 	}
 }
 

@@ -612,6 +612,33 @@ describe("LazyNode", () => {
 				view.dispose();
 			});
 
+			it("reads an optional field holding a known node without a cursor at the field", () => {
+				const { view, node } = setup();
+				const item = view.root.item;
+				assert(item !== undefined);
+				const field = node.getBoxed(brand("item"));
+				assert(field instanceof LazyField);
+				// Edits release cursors.
+				view.root.items.insertAtEnd({ value: 4 });
+				assert.equal(field.holdsCursor, false);
+				assert.equal(node.tryGetField(brand("item")), field);
+				assert.equal(view.root.item, item);
+				assert.equal(field.holdsCursor, false);
+
+				// Emptying, filling, and replacing the field are seen.
+				view.root.item = undefined;
+				assert.equal(node.tryGetField(brand("item")), undefined);
+				assert.equal(view.root.item, undefined);
+				const replacement = new Item({ value: 5 });
+				view.root.item = replacement;
+				assert.equal(node.tryGetField(brand("item")), field);
+				assert.equal(view.root.item, replacement);
+				view.root.item = new Item({ value: 6 });
+				assert.equal(view.root.item?.value, 6);
+				assert.equal(Tree.status(replacement), TreeStatus.Removed);
+				view.dispose();
+			});
+
 			it("anchors new fields and child nodes from the parent's anchor node", () => {
 				const { view, anchors } = setup();
 				const arrayNode = getInnerNode(view.root.items);
