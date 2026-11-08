@@ -309,10 +309,14 @@ export function createIndependentTreeAlpha(
 export function createIndependentTreeCheckout(
 	options?: CreateIndependentTreeAlphaOptions,
 ): TreeCheckout {
-	const logger = createChildLogger({
-		logger: options?.logger,
-		namespace: "independentView",
-	});
+	// Without a logger, telemetry is not computed at all (rather than computed and dropped by a logger which sends nothing).
+	const logger =
+		options?.logger === undefined
+			? undefined
+			: createChildLogger({
+					logger: options.logger,
+					namespace: "independentView",
+				});
 	const breaker = new Breakable("independentView", logger);
 	const idCompressor: IIdCompressor =
 		options?.idCompressor ??

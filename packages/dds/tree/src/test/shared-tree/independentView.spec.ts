@@ -65,6 +65,21 @@ function retainedCommitCount(checkout: TreeCheckout): number {
 	return count;
 }
 describe("independentView", () => {
+	it("has a logger only when one is provided, and sends telemetry to it", () => {
+		const config = new TreeViewConfiguration({ schema: SchemaFactory.number });
+		const withoutLogger = createIndependentTreeCheckout();
+		assert.equal(withoutLogger.breaker.logger, undefined);
+		withoutLogger.viewWith(config).initialize(1);
+
+		const events: string[] = [];
+		const withLogger = createIndependentTreeCheckout({
+			logger: { send: (event) => events.push(event.eventName) },
+		});
+		assert.notEqual(withLogger.breaker.logger, undefined);
+		withLogger.viewWith(config).initialize(1);
+		assert(events.some((name) => name.startsWith("independentView:")));
+	});
+
 	it("createIndependentTreeViewAlpha", () => {
 		const config = new TreeViewConfiguration({ schema: SchemaFactory.number });
 		// Keep this deprecated call to verify compatibility with the previous API name.
