@@ -4,6 +4,8 @@
  */
 
 import { strict as assert } from "node:assert";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 
 import { validateUsageError } from "@fluidframework/test-runtime-utils/internal";
 
@@ -11,11 +13,14 @@ import { validateUsageError } from "@fluidframework/test-runtime-utils/internal"
 import { createIndependentTreeAlpha } from "../../shared-tree/independentView.js";
 import { ForestTypeOptimized, TreeAlpha, TreeBeta } from "../../shared-tree/index.js";
 import {
+	asTreeViewAlpha,
 	getInnerNode,
 	SchemaFactoryAlpha,
 	TreeViewConfigurationAlpha,
 	type TreeViewAlpha,
 } from "../../simple-tree/index.js";
+
+import { createTestUndoRedoStacks } from "../utils.js";
 
 const sf = new SchemaFactoryAlpha("test.treeAlphaReadScope");
 class Point extends sf.object("Point", { x: sf.number, y: sf.number }) {}
@@ -43,6 +48,45 @@ function anchorCount(view: ReturnType<typeof makeView>): number {
 }
 
 describe("TreeAlpha.readScope", () => {
+	it("does not keep the nodes it releases alive, after an edit and its undo", async () => {
+		// The test runner does not expose gc, so expose it here.
+		setFlagsFromString("--expose-gc");
+		const gc = runInNewContext("gc") as () => void;
+		const view = makeView(2000);
+		const root = view.root;
+		const context = getInnerNode(root).context as unknown as {
+			readonly cursorHolderCount: number;
+			readonly listedCursorHolderCount: number;
+		};
+		const { undoStack, unsubscribe } = createTestUndoRedoStacks(asTreeViewAlpha(view).events);
+		const read = (): WeakRef<object>[] =>
+			TreeAlpha.readScope(root, () => {
+				const released: WeakRef<object>[] = [];
+				for (const item of root.items) {
+					released.push(new WeakRef(getInnerNode(item)), new WeakRef(getInnerNode(item.pos)));
+				}
+				return released;
+			});
+
+		read();
+		const edited = root.items[0] ?? assert.fail();
+		edited.pos.x = 100;
+		undoStack.pop()?.revert();
+		assert.equal(root.items[0]?.pos.x, 0);
+		const released = read();
+		unsubscribe();
+
+		// Released entities do not stay listed as cursor holders until the next edit.
+		assert(context.listedCursorHolderCount <= 2 * context.cursorHolderCount + 64);
+		// WeakRef targets are kept until the current job ends.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		gc();
+		// At most the list's slack of entries for released entities is kept, out of the thousands released.
+		const alive = released.filter((ref) => ref.deref() !== undefined).length;
+		assert(alive <= 2 * context.cursorHolderCount + 64, `${alive} released nodes kept`);
+		view.dispose();
+	});
+
 	it("returns the result of reading and releases nodes first read in it", () => {
 		const view = makeView();
 		const root = view.root;

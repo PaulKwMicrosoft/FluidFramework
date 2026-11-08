@@ -218,19 +218,31 @@ export class Context implements FlexTreeHydratedContext, IDisposable {
 	public addCursorHolder(entity: LazyEntity, listed: boolean): void {
 		this.#cursorHolderCount++;
 		if (!listed) {
-			const holders = this.#cursorHolders;
-			if (holders.length >= 2 * this.#cursorHolderCount + compactionSlack) {
-				this.compactCursorHolders();
-			}
-			holders.push(entity);
+			this.#compactIfMostlyStale();
+			this.#cursorHolders.push(entity);
 		}
 	}
 
 	/**
 	 * Records that a listed entity gave up its cursor between edits.
+	 * @remarks
+	 * Compacts the list once most of its entries no longer hold a cursor,
+	 * so entities which are no longer used (for example nodes released after a read) are not kept alive until the next edit.
 	 */
 	public removeCursorHolder(): void {
 		this.#cursorHolderCount--;
+		this.#compactIfMostlyStale();
+	}
+
+	/**
+	 * Compacts the list of cursor holders if at least half its entries (beyond some slack) no longer hold a cursor.
+	 * @remarks
+	 * Each compaction at least halves the list, so the work is amortized over the cursors taken and given up since the last one.
+	 */
+	#compactIfMostlyStale(): void {
+		if (this.#cursorHolders.length >= 2 * this.#cursorHolderCount + compactionSlack) {
+			this.compactCursorHolders();
+		}
 	}
 
 	/**

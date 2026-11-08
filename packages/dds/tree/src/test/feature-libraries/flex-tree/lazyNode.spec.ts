@@ -117,6 +117,31 @@ describe("LazyNode", () => {
 			view.dispose();
 		});
 
+		it(`entities which give up their cursor are not kept listed until the next add (${name})`, () => {
+			const sf = new SchemaFactory("cursor-holders-disposed");
+			class Item extends sf.object("Item", { value: sf.number }) {}
+			class Items extends sf.array("Items", Item) {}
+			const view = createIndependentTreeAlpha({ forest }).viewWith(
+				new TreeViewConfiguration({ schema: Items }),
+			);
+			view.initialize(Array.from({ length: 200 }, (_, i) => ({ value: i })));
+			const root = getInnerNode(view.root);
+			assert(root instanceof LazyTreeNode);
+			const context = root.context;
+			const field = root.getBoxed(EmptyKey);
+			const items = Array.from({ length: 200 }, (_, i) => field.boxedAt(i));
+			for (const item of items) {
+				assert(item instanceof LazyTreeNode);
+				assert(item.holdsCursor);
+			}
+			for (const item of items) {
+				assert(item instanceof LazyTreeNode);
+				item[disposeSymbol]();
+			}
+			assert(context.listedCursorHolderCount <= 2 * context.cursorHolderCount + 64);
+			view.dispose();
+		});
+
 		it(`cached parents follow moves and removal without cursor recovery (${name})`, () => {
 			const sf = new SchemaFactory("cached-parents");
 			class Item extends sf.object("Item", { value: sf.number }) {}
