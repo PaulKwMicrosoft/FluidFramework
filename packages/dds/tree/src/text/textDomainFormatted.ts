@@ -1162,6 +1162,18 @@ export namespace FormattedText {
 			return (other) => comparator(other) === true;
 		}
 
+		/**
+		 * Builds a function which returns whether the format the cursor it is given is at equals `format`, the format chunk of a {@link TextRunChunk}.
+		 */
+		function buildChunkFormatComparator(
+			format: TreeChunk,
+		): (other: ITreeCursorSynchronous) => boolean {
+			const cursor = format.cursor();
+			cursor.firstNode();
+			const comparator = buildNodeComparator(cursor);
+			return (other) => comparator(other) === true;
+		}
+
 		class StringArray extends sf.array("StringArray", [() => StringAtom]) {
 			public withBorrowedSequenceCursor<T>(f: (cursor: ITreeCursorSynchronous) => T): T {
 				const innerNode = getInnerNode(this);
@@ -1276,9 +1288,16 @@ export namespace FormattedText {
 								break;
 							}
 						}
-						if (compareFormat === undefined) {
-							compareFormat = buildFormatComparator(cursor);
+						if (length === 0) {
+							// A run starting in a run chunk has that chunk's format, so a comparator is only built,
+							// from that format, once an atom outside such chunks is reached.
+							if (runChunk === undefined) {
+								compareFormat = buildFormatComparator(cursor);
+							}
 						} else if (runChunk === undefined || runChunk.format !== sharedFormat) {
+							compareFormat ??= buildChunkFormatComparator(
+								sharedFormat ?? fail("a run without a comparator starts in a run chunk"),
+							);
 							cursor.enterField(formatKey);
 							cursor.enterNode(0);
 							const matches = compareFormat(cursor);

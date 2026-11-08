@@ -408,6 +408,22 @@ describe("FormattedText built as runs", () => {
 			second.formatRange(20, 24, { italic: true });
 		});
 	});
+
+	it("a run starting in a run chunk extends over atoms outside it with the same format", async () => {
+		const content = await checkScenario((first, second) => {
+			// Inside the run "Hello world, ": the inserted atoms have the run's format, so its runs stay whole.
+			first.insertAt(5, "QR", red());
+			first.insertAt(1, "S", red());
+			// Inside the run "hello shared text.", with another format: its run ends there.
+			second.insertAt(20, "Z", { ...plain, bold: true });
+		});
+		assert.equal(
+			formats(content)
+				.map((atom) => atom.char)
+				.join(""),
+			"HSelloQR world, hello sZhared text.\nBye.",
+		);
+	});
 });
 
 class Paragraphs extends sf.array("Paragraphs", Text) {}
