@@ -20,6 +20,7 @@ import {
 	type FieldKey,
 	type IForestSubscription,
 	type SchemaAndPolicy,
+	type SchemaPolicy,
 	type TreeChunk,
 	type TreeFieldStoredSchema,
 	type TreeNodeStoredSchema,
@@ -42,7 +43,7 @@ import {
 	type FlexTreeHydratedContext,
 	type HydratedFlexTreeNode,
 } from "../../feature-libraries/index.js";
-import { brand, validateIndex } from "../../util/index.js";
+import { brand, getOrCreate, validateIndex } from "../../util/index.js";
 import { getInnerNode, getKernel, NodeKind, type TreeNode } from "../core/index.js";
 import { isObjectNodeSchema } from "../node-kinds/index.js";
 
@@ -503,11 +504,16 @@ class VerboseContentChecker {
 		// Fields whose checked content differs from the node's.
 		let replaced: Map<FieldKey, readonly VerboseTree[]> | undefined;
 		let nonEmptyFieldCount = 0;
-		for (const [key, fieldSchema] of schema.objectNodeFields) {
+		for (const { key, schema: fieldSchema, checkWhenEmpty } of getObjectFieldChecks(
+			this.schemaAndPolicy.policy,
+			schema,
+		)) {
 			const children = getChildren(node, key);
 			let content = children;
 			if (children.length > 0) {
 				nonEmptyFieldCount++;
+			} else if (!checkWhenEmpty) {
+				continue;
 			} else if (fieldSchema.kind === identifierFieldKindIdentifier) {
 				const { nodeKeyManager } = this.context;
 				content = [
@@ -593,6 +599,49 @@ class VerboseContentChecker {
 			telemetryProperties: { ...tagSchemaArtifacts(schemaArtifacts), ...properties },
 		});
 	}
+}
+
+/**
+ * A field of an object node's stored schema, as {@link VerboseContentChecker} checks it.
+ */
+interface ObjectFieldCheck {
+	readonly key: FieldKey;
+	readonly schema: TreeFieldStoredSchema;
+	/**
+	 * Whether the field is checked when a node has no content for it.
+	 * @remarks
+	 * Checking an empty field can only fail (when its kind is not in the schema policy or requires content)
+	 * or give it content (an identifier field gets a new identifier): other empty fields are skipped.
+	 */
+	readonly checkWhenEmpty: boolean;
+}
+
+/**
+ * For each schema policy, the {@link ObjectFieldCheck}s of each object node stored schema, in the order of its fields.
+ */
+const objectFieldChecks = new WeakMap<
+	SchemaPolicy,
+	WeakMap<ObjectNodeStoredSchema, readonly ObjectFieldCheck[]>
+>();
+
+function getObjectFieldChecks(
+	policy: SchemaPolicy,
+	schema: ObjectNodeStoredSchema,
+): readonly ObjectFieldCheck[] {
+	const bySchema = getOrCreate(objectFieldChecks, policy, () => new WeakMap());
+	return getOrCreate(bySchema, schema, () =>
+		Array.from(schema.objectNodeFields, ([key, fieldSchema]): ObjectFieldCheck => {
+			const kind = policy.fieldKinds.get(fieldSchema.kind);
+			return {
+				key,
+				schema: fieldSchema,
+				checkWhenEmpty:
+					kind === undefined ||
+					fieldSchema.kind === identifierFieldKindIdentifier ||
+					compliesWithMultiplicity(0, kind.multiplicity) !== undefined,
+			};
+		}),
+	);
 }
 
 /**
