@@ -213,6 +213,7 @@ export {
 	getOrCreateHydratedFlexTreeNode,
 	disposeHydratedFlexTreeNode,
 	inPlaceValueChange,
+	isInPlaceValueField,
 	trySetValueInPlace,
 	currentObserver,
 	withObservation,

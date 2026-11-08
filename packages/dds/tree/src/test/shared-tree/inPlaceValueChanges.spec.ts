@@ -19,7 +19,8 @@ import {
 } from "@fluidframework/test-runtime-utils/internal";
 
 import { FormatValidatorBasic } from "../../external-utilities/index.js";
-import type { NodeValueChange } from "../../feature-libraries/index.js";
+import { ObjectNodeStoredSchema } from "../../core/index.js";
+import { isInPlaceValueField, type NodeValueChange } from "../../feature-libraries/index.js";
 import {
 	createIndependentTreeAlpha,
 	type ForestType,
@@ -45,6 +46,7 @@ import {
 	type TreeIndexKey,
 } from "../../simple-tree/index.js";
 import { asAlpha } from "../../api.js";
+import { brand } from "../../util/index.js";
 import { configuredSharedTree } from "../../treeFactory.js";
 import { createTestUndoRedoStacks, TestTreeProviderLite } from "../utils.js";
 
@@ -155,6 +157,34 @@ describe("In-place value changes", () => {
 		const disabled = independentView(false);
 		(disabled.root[0] ?? assert.fail()).x = 5;
 		assert.deepEqual(headEdits(disabled), { valueChanges: [], builds: 1 });
+	});
+
+	it("are only used for fields whose stored schema allows them", () => {
+		class Holder extends sf.object("Holder", { point: Point, points: Points }) {}
+		const view = createIndependentTreeAlpha({ enableInPlaceValueChanges: true }).viewWith(
+			new TreeViewConfiguration({ schema: Holder }),
+		);
+		assert(view instanceof SchematizingSimpleTreeView);
+		view.initialize(new Holder({ point: initialPoints(1)[0] ?? assert.fail(), points: [] }));
+		const schema = view.checkout.storedSchema;
+		const fieldSchema = (type: { identifier: string }, key: string) => {
+			const node = schema.nodeSchema.get(brand(type.identifier));
+			assert(node instanceof ObjectNodeStoredSchema);
+			return node.getFieldSchema(brand(key));
+		};
+		const inPlace = (type: { identifier: string }, key: string) =>
+			isInPlaceValueField(fieldSchema(type, key), schema);
+		assert.deepEqual(
+			["x", "label", "visible", "maybe", "either"].map((key) => inPlace(Point, key)),
+			[true, true, true, false, false],
+		);
+		// Required fields of nodes which are not leaves are replaced.
+		assert.deepEqual(
+			["point", "points"].map((key) => inPlace(Holder, key)),
+			[false, false],
+		);
+		TreeAlpha.setFields([[view.root, "point", initialPoints(1)[0] ?? assert.fail()]]);
+		assert.deepEqual(headEdits(view).valueChanges, []);
 	});
 
 	it("are used by setFields", () => {

@@ -16,6 +16,7 @@ import {
 	type ITreeCursorSynchronous,
 	type ITreeSubscriptionCursor,
 	LeafNodeStoredSchema,
+	type TreeStoredSchema,
 	type NormalizedFieldUpPath,
 	type TreeFieldStoredSchema,
 	type TreeNavigationResult,
@@ -572,11 +573,29 @@ const inPlaceValueSchemas: ReadonlySet<ValueSchema> = new Set([
 ]);
 
 /**
+ * Whether a field with the stored schema `fieldSchema` is set by changing the value of its leaf in place, when the editor supports it:
+ * whether it is a required field whose only allowed type is a number, string or boolean leaf.
+ */
+export function isInPlaceValueField(
+	fieldSchema: TreeFieldStoredSchema,
+	schema: TreeStoredSchema,
+): boolean {
+	if (fieldSchema.kind !== FieldKinds.required.identifier || fieldSchema.types.size !== 1) {
+		return false;
+	}
+	const [type] = fieldSchema.types;
+	const leafSchema = type === undefined ? undefined : schema.nodeSchema.get(type);
+	return (
+		leafSchema instanceof LeafNodeStoredSchema && inPlaceValueSchemas.has(leafSchema.leafValue)
+	);
+}
+
+/**
  * Returns the change which sets `field` to `newContent` by changing the value of its leaf in place,
  * or undefined if the field is set by replacing its content.
  * @param fieldSchema - The stored schema of `field`.
  * @remarks
- * Only required fields whose only allowed type is a number, string or boolean leaf are set in place, when the editor supports it.
+ * Only fields for which {@link isInPlaceValueField} is true are set in place, when the editor supports it.
  * Every set of such a field changes the value of its leaf in place,
  * since an in-place change and a concurrent replacement of the same leaf would not be ordered by when they were sequenced.
  */
@@ -587,16 +606,8 @@ export function inPlaceValueChange(
 ): NodeValueChange | undefined {
 	if (
 		!(field instanceof LazyValueField) ||
-		fieldSchema.kind !== FieldKinds.required.identifier ||
-		fieldSchema.types.size !== 1 ||
-		!field.context.checkout.editor.inPlaceValueChanges
-	) {
-		return undefined;
-	}
-	const leafSchema = field.context.schema.nodeSchema.get(newContent.type);
-	if (
-		!(leafSchema instanceof LeafNodeStoredSchema) ||
-		!inPlaceValueSchemas.has(leafSchema.leafValue) ||
+		!field.context.checkout.editor.inPlaceValueChanges ||
+		!isInPlaceValueField(fieldSchema, field.context.schema) ||
 		!fieldSchema.types.has(newContent.type)
 	) {
 		return undefined;

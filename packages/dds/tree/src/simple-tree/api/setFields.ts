@@ -18,6 +18,7 @@ import {
 	cursorForMapTreeField,
 	FieldKinds,
 	inPlaceValueChange,
+	isInPlaceValueField,
 	TreeStatus,
 	type FieldSet,
 	type FlexTreeField,
@@ -130,7 +131,9 @@ export function setFields(assignments: readonly FieldAssignment[]): void {
 		const kind = destinationSchema.kind;
 		// A required field is never empty, so it is only read when its leaf may be changed in place.
 		const field =
-			kind !== FieldKinds.required.identifier || context.checkout.editor.inPlaceValueChanges
+			kind !== FieldKinds.required.identifier ||
+			(context.checkout.editor.inPlaceValueChanges &&
+				isInPlaceValueField(destinationSchema, context.schema))
 				? inner.tryGetField(storedKey)
 				: undefined;
 		const wasEmpty = kind !== FieldKinds.required.identifier && field === undefined;

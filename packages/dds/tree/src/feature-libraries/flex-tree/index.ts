@@ -40,7 +40,7 @@ export {
 
 export { disposeHydratedFlexTreeNode, getOrCreateHydratedFlexTreeNode } from "./lazyNode.js";
 
-export { inPlaceValueChange, trySetValueInPlace } from "./lazyField.js";
+export { inPlaceValueChange, isInPlaceValueField, trySetValueInPlace } from "./lazyField.js";
 
 export { getSchemaAndPolicy, indexForAt } from "./utilities.js";
 
