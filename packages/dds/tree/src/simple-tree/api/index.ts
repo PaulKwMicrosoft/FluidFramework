@@ -155,7 +155,12 @@ export {
 	verboseFromCursor,
 	replaceVerboseTreeHandles,
 } from "./verboseTree.js";
-export { insertVerbose, setVerbose } from "./verboseInsertion.js";
+export {
+	insertVerbose,
+	setVerbose,
+	setFieldsVerbose,
+	type VerboseFieldAssignment,
+} from "./verboseInsertion.js";
 export { setFields, type FieldAssignment } from "./setFields.js";
 
 export {

@@ -2116,6 +2116,7 @@ export interface TreeAlpha {
     replaceAsBase(parent: TreeNode, key: string | number, newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined): void;
     replaceAsBaseVerbose(parent: TreeNode, key: string | number, newContent: VerboseTree | undefined): void;
     setFields(assignments: readonly FieldAssignment[]): void;
+    setFieldsVerbose(assignments: readonly VerboseFieldAssignment[]): void;
     setVerbose(parent: TreeNode, key: string, content: VerboseTree | undefined): void;
     tagContentSchema<TSchema extends TreeNodeSchema, TContent extends InsertableField<TSchema>>(schema: TSchema, content: TContent): TContent;
     trackObservations<TResult>(onInvalidation: () => void, trackDuring: () => TResult): ObservationResults<TResult>;

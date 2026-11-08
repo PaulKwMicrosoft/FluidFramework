@@ -40,23 +40,41 @@ export type FieldAssignment = readonly [
 ];
 
 /**
- * A resolved {@link FieldAssignment}.
+ * A resolved assignment of a value of type `TValue` to a property of an object node.
  */
-interface ResolvedAssignment {
+interface ResolvedAssignment<TValue> {
 	readonly inner: HydratedFlexTreeNode;
 	readonly storedKey: FieldKey;
 	readonly schema: FieldSchema;
-	readonly value: InsertableContent | undefined;
+	readonly value: TValue | undefined;
 }
 
 /**
- * Implementation of {@link (TreeAlpha:interface).setFields}.
+ * An assignment to a property which changes the tree, with the property's stored schema.
  */
-export function setFields(assignments: readonly FieldAssignment[]): void {
+export interface FieldSetItem<TValue> {
+	readonly assignment: ResolvedAssignment<TValue>;
+	readonly destinationSchema: TreeFieldStoredSchema;
+	readonly wasEmpty: boolean;
+}
+
+/**
+ * Checks assignments of values to properties of object nodes in the document of one tree, as {@link (TreeAlpha:interface).setFields} does,
+ * and finds the fields they change.
+ * @returns The context of the tree and the assignments which change it, in order, or undefined if there are no assignments.
+ */
+export function resolveFieldAssignments<TValue>(
+	assignments: readonly (readonly [node: TreeNode, key: string, value: TValue | undefined])[],
+):
+	| {
+			readonly context: FlexTreeHydratedContext;
+			readonly items: readonly FieldSetItem<TValue>[];
+	  }
+	| undefined {
 	let context: FlexTreeHydratedContext | undefined;
 	// The fields set, by the anchor of their parent node.
 	const targets = new Map<UpPath, Set<FieldKey>>();
-	const resolved: ResolvedAssignment[] = [];
+	const resolved: ResolvedAssignment<TValue>[] = [];
 	for (const [node, key, value] of assignments) {
 		const kernel = getKernel(node);
 		const schema = kernel.schema;
@@ -93,7 +111,7 @@ export function setFields(assignments: readonly FieldAssignment[]): void {
 		resolved.push({ inner, storedKey, schema: fieldSchema, value });
 	}
 	if (context === undefined) {
-		return;
+		return undefined;
 	}
 
 	// Fields are identified by their paths before the edit, so no node whose property is set may be in content replaced by the same edit.
@@ -114,11 +132,7 @@ export function setFields(assignments: readonly FieldAssignment[]): void {
 		}
 	}
 
-	const items: {
-		readonly assignment: ResolvedAssignment;
-		readonly destinationSchema: TreeFieldStoredSchema;
-		readonly wasEmpty: boolean;
-	}[] = [];
+	const items: FieldSetItem<TValue>[] = [];
 	for (const assignment of resolved) {
 		const { inner, storedKey, value } = assignment;
 		const storedSchema = context.schema.nodeSchema.get(inner.type);
@@ -136,24 +150,19 @@ export function setFields(assignments: readonly FieldAssignment[]): void {
 		}
 		items.push({ assignment, destinationSchema, wasEmpty });
 	}
+	return { context, items };
+}
 
-	const prepared = prepareForInsertionBatch(
-		items.map(({ assignment: { schema, value }, destinationSchema }) => ({
-			data: value,
-			schema,
-			destinationSchema,
-		})),
-		context,
-	);
-
-	const { editor, forest } = context.checkout;
-	const sets = items.map(
+/**
+ * The field sets which give each of `items` its content, `chunks[index]` for `items[index]`.
+ */
+export function toFieldSets<TValue>(
+	items: readonly FieldSetItem<TValue>[],
+	chunks: readonly (TreeChunk | undefined)[],
+): FieldSet<TreeChunk>[] {
+	return items.map(
 		({ assignment: { inner, storedKey }, destinationSchema, wasEmpty }, index) => {
-			const content = prepared[index];
-			const chunk: TreeChunk | undefined =
-				content === undefined
-					? undefined
-					: combineChunks(forest.chunkField(cursorForMapTreeField([content])));
+			const chunk = chunks[index];
 			const field = { parent: inner.anchorNode, field: storedKey };
 			if (destinationSchema.kind === FieldKinds.required.identifier) {
 				assert(chunk !== undefined, "A required field must have been checked to have content");
@@ -167,5 +176,32 @@ export function setFields(assignments: readonly FieldAssignment[]): void {
 			} satisfies FieldSet<TreeChunk>;
 		},
 	);
-	editor.setFields(sets);
+}
+
+/**
+ * Implementation of {@link (TreeAlpha:interface).setFields}.
+ */
+export function setFields(assignments: readonly FieldAssignment[]): void {
+	const resolvedAssignments = resolveFieldAssignments(assignments);
+	if (resolvedAssignments === undefined) {
+		return;
+	}
+	const { context, items } = resolvedAssignments;
+
+	const prepared = prepareForInsertionBatch(
+		items.map(({ assignment: { schema, value }, destinationSchema }) => ({
+			data: value,
+			schema,
+			destinationSchema,
+		})),
+		context,
+	);
+
+	const { editor, forest } = context.checkout;
+	const chunks = prepared.map((content) =>
+		content === undefined
+			? undefined
+			: combineChunks(forest.chunkField(cursorForMapTreeField([content]))),
+	);
+	editor.setFields(toFieldSets(items, chunks));
 }

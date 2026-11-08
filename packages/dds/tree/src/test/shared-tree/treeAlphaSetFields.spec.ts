@@ -23,6 +23,8 @@ import {
 	SchemaFactoryAlpha,
 	TreeViewConfiguration,
 	type FieldAssignment,
+	type VerboseFieldAssignment,
+	type VerboseTree,
 } from "../../simple-tree/index.js";
 import { createTestUndoRedoStacks } from "../utils.js";
 
@@ -40,6 +42,7 @@ class Root extends sf.object("Root", {
 	title: sf.string,
 	featured: sf.optional(Shape),
 	tagged: sf.optional(Tagged),
+	otherTagged: sf.optional(Tagged),
 }) {}
 const config = new TreeViewConfiguration({ schema: Root });
 
@@ -380,6 +383,160 @@ describe("TreeAlpha.setFields", () => {
 						const assignments = makeAssignments(view);
 						const before = exportTree(view);
 						assert.throws(() => TreeAlpha.setFields(assignments), validateUsageError(message));
+						assertUnchangedAndEditable(view, before);
+					});
+				}
+			});
+		});
+	}
+});
+
+/**
+ * Content in the verbose format, with stored keys, for an offset.
+ */
+function verboseOffset(x: number, y: number): VerboseTree {
+	return { type: Offset.identifier, fields: { x, y } };
+}
+
+describe("TreeAlpha.setFieldsVerbose", () => {
+	for (const [forestName, forest] of [
+		["reference", ForestTypeReference],
+		["optimized", ForestTypeOptimized],
+	] as const) {
+		describe(`${forestName} forest`, () => {
+			it("gives the same result as setFields with the same content", () => {
+				const verbose = createView(forest);
+				const nodes = createView(forest);
+				const shared = verboseOffset(7, 8);
+				TreeAlpha.setFieldsVerbose([
+					...verbose.root.shapes.map(
+						(shape) => [shape, "offset", shared] as VerboseFieldAssignment,
+					),
+					[shapeAt(verbose, 1), "fill", "red"],
+					[shapeAt(verbose, 2), "fill", undefined],
+					[verbose.root, "title", "moved"],
+				]);
+				TreeAlpha.setFields([
+					...moves(nodes, () => new Offset({ x: 7, y: 8 })),
+					[shapeAt(nodes, 1), "fill", "red"],
+					[shapeAt(nodes, 2), "fill", undefined],
+					[nodes.root, "title", "moved"],
+				]);
+				assert.deepEqual(exportTree(verbose), exportTree(nodes));
+				assert.equal(Tree.status(shapeAt(verbose, 3).offset), TreeStatus.InDocument);
+			});
+
+			it("gives each property its own copy of content given for several properties", () => {
+				const view = createView(forest);
+				const shared = verboseOffset(1, 2);
+				TreeAlpha.setFieldsVerbose(
+					view.root.shapes.map((shape) => [shape, "offset", shared] as VerboseFieldAssignment),
+				);
+				shapeAt(view, 0).offset.x = 10;
+				TreeAlpha.setFields([[shapeAt(view, 2).offset, "y", 20]]);
+				assert.deepEqual(
+					view.root.shapes.map(({ offset }) => [offset.x, offset.y]),
+					[
+						[10, 2],
+						[1, 2],
+						[1, 20],
+						[1, 2],
+						[1, 2],
+					],
+				);
+				assert.deepEqual(shared, verboseOffset(1, 2));
+			});
+
+			it("is one edit, undone and redone as a whole", () => {
+				const view = createView(forest);
+				const { undoStack, redoStack, unsubscribe } = createTestUndoRedoStacks(view.events);
+				const commits = countCommits(view);
+				const before = exportTree(view);
+				const shared = verboseOffset(3, 4);
+				TreeAlpha.setFieldsVerbose([
+					...view.root.shapes.map(
+						(shape) => [shape, "offset", shared] as VerboseFieldAssignment,
+					),
+					[shapeAt(view, 0), "fill", undefined],
+				]);
+				const after = exportTree(view);
+				assert.equal(commits.count, 1);
+				undoStack.pop()?.revert();
+				assert.deepEqual(exportTree(view), before);
+				redoStack.pop()?.revert();
+				assert.deepEqual(exportTree(view), after);
+				commits.off();
+				unsubscribe();
+			});
+
+			it("gives each property new identifiers", () => {
+				const view = createView(forest);
+				const tagged: VerboseTree = { type: Tagged.identifier, fields: {} };
+				TreeAlpha.setFieldsVerbose([
+					[view.root, "tagged", tagged],
+					[view.root, "otherTagged", tagged],
+				]);
+				const first = view.root.tagged?.id;
+				const second = view.root.otherTagged?.id;
+				assert(first !== undefined && second !== undefined);
+				assert.notEqual(first, second);
+			});
+
+			describe("rejects, changing nothing,", () => {
+				const cases: [string, (view: View) => VerboseFieldAssignment[], RegExp][] = [
+					[
+						"undefined for a required property",
+						(view) => [
+							[shapeAt(view, 0), "offset", verboseOffset(1, 1)],
+							[shapeAt(view, 1), "offset", undefined],
+						],
+						/.*/,
+					],
+					[
+						"content of a type the property does not allow",
+						(view) => [
+							[shapeAt(view, 0), "offset", verboseOffset(1, 1)],
+							[shapeAt(view, 1), "offset", "not an offset"],
+						],
+						/.*/,
+					],
+					[
+						"shared content out of schema for a later property",
+						(view) => {
+							const shared = verboseOffset(1, 1);
+							return [
+								[shapeAt(view, 0), "offset", shared],
+								[view.root, "featured", shared],
+							];
+						},
+						/.*/,
+					],
+					[
+						"a property set twice",
+						(view) => [
+							[shapeAt(view, 0), "offset", verboseOffset(1, 1)],
+							[shapeAt(view, 0), "offset", verboseOffset(2, 2)],
+						],
+						/more than once/,
+					],
+					[
+						"an identifier property",
+						(view) => {
+							view.root.tagged = new Tagged({});
+							return [[view.root.tagged, "id", "x"]];
+						},
+						/cannot be set/,
+					],
+				];
+				for (const [name, makeAssignments, message] of cases) {
+					it(name, () => {
+						const view = createView(forest);
+						const assignments = makeAssignments(view);
+						const before = exportTree(view);
+						assert.throws(
+							() => TreeAlpha.setFieldsVerbose(assignments),
+							validateUsageError(message),
+						);
 						assertUnchangedAndEditable(view, before);
 					});
 				}

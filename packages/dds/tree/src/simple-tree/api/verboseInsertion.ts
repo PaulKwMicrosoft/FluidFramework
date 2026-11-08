@@ -47,6 +47,7 @@ import { brand, getOrCreate, validateIndex } from "../../util/index.js";
 import { getInnerNode, getKernel, NodeKind, type TreeNode } from "../core/index.js";
 import { isObjectNodeSchema } from "../node-kinds/index.js";
 
+import { resolveFieldAssignments, toFieldSets } from "./setFields.js";
 import { verboseTreeAdapter, type VerboseTree, type VerboseTreeNode } from "./verboseTree.js";
 
 /**
@@ -141,6 +142,58 @@ export function setVerbose(
 	} else {
 		editor.optionalField(path).set(newContent, field.length === 0);
 	}
+}
+
+/**
+ * A property of an object node, and the content to set it to, for {@link (TreeAlpha:interface).setFieldsVerbose}.
+ * @alpha
+ */
+export type VerboseFieldAssignment = readonly [
+	node: TreeNode,
+	key: string,
+	content: VerboseTree | undefined,
+];
+
+/**
+ * Implementation of {@link (TreeAlpha:interface).setFieldsVerbose}.
+ */
+export function setFieldsVerbose(assignments: readonly VerboseFieldAssignment[]): void {
+	const resolved = resolveFieldAssignments(assignments);
+	if (resolved === undefined) {
+		return;
+	}
+	const { context, items } = resolved;
+	const checker = new VerboseContentChecker(context);
+	// Content given for several fields with the same allowed types is checked and chunked once:
+	// the fields share its chunk, which is immutable while it has more than one reference.
+	const checkedContent = new Map<TreeTypeSet, Map<VerboseTree, TreeChunk>>();
+	const { editor, forest } = context.checkout;
+	const chunks: (TreeChunk | undefined)[] = [];
+	for (const { assignment, destinationSchema } of items) {
+		const content = assignment.value;
+		if (content === undefined) {
+			checker.checkField([], destinationSchema);
+			chunks.push(undefined);
+			continue;
+		}
+		const shared = checkedContent.get(destinationSchema.types)?.get(content);
+		if (shared !== undefined) {
+			shared.referenceAdded();
+			chunks.push(shared);
+			continue;
+		}
+		const checked = checker.checkField([content], destinationSchema);
+		const chunk = combineChunks(chunkVerboseContent(forest, checked));
+		// Content which got new identifiers when checked is not shared, so that each field gets its own identifiers.
+		if (checked[0] === content) {
+			getOrCreate(checkedContent, destinationSchema.types, () => new Map()).set(
+				content,
+				chunk,
+			);
+		}
+		chunks.push(chunk);
+	}
+	editor.setFields(toFieldSets(items, chunks));
 }
 
 /**

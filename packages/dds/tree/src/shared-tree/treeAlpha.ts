@@ -102,6 +102,8 @@ import {
 	setVerbose,
 	setFields,
 	type FieldAssignment,
+	setFieldsVerbose,
+	type VerboseFieldAssignment,
 } from "../simple-tree/index.js";
 import { brand, extractFromOpaque, type JsonCompatible } from "../util/index.js";
 
@@ -750,6 +752,25 @@ ode.
 	 * or if a value is not allowed by its property's schema (including `undefined` for a required property).
 	 */
 	setFields(assignments: readonly FieldAssignment[]): void;
+
+	/**
+	 * {@link (TreeAlpha:interface).setFields} for content in the {@link VerboseTree} format, which is checked and built as {@link (TreeAlpha:interface).setVerbose} checks and builds it.
+	 *
+	 * @param assignments - The properties to set: for each, the object node, the property key, and the new content, using stored keys (see {@link (TreeAlpha:interface).insertVerbose}).
+	 * `undefined` empties an optional property.
+	 *
+	 * @remarks
+	 * This is a prototype: see {@link (TreeAlpha:interface).insertVerbose}, which describes how the content is checked.
+	 *
+	 * The result, its events, and its behavior in transactions and when reverted, are those of {@link (TreeAlpha:interface).setFields} setting the same properties to the same content.
+	 * Like {@link (TreeAlpha:interface).setVerbose}, this creates no {@link TreeNode}s: reading the new content creates them as needed.
+	 *
+	 * The same content object given for several properties which allow the same types is checked and built once, and the properties share it in the tree until one of them is edited.
+	 * The content must not be modified while this runs.
+	 *
+	 * @throws A `UsageError` in the cases {@link (TreeAlpha:interface).setFields} throws, if a property is an identifier, or if content is out of schema.
+	 */
+	setFieldsVerbose(assignments: readonly VerboseFieldAssignment[]): void;
 
 	/**
 	 * Releases the objects created for reading `node` and the nodes under it, reducing memory use.
@@ -1417,6 +1438,10 @@ export const TreeAlpha: TreeAlpha = {
 
 	setFields(assignments: readonly FieldAssignment[]): void {
 		setFields(assignments);
+	},
+
+	setFieldsVerbose(assignments: readonly VerboseFieldAssignment[]): void {
+		setFieldsVerbose(assignments);
 	},
 
 	release(node: TreeNode): void {
