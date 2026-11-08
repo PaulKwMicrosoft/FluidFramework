@@ -674,6 +674,8 @@ class Cursor extends BasicChunkCursor implements ITreeSubscriptionCursor {
 	public clear(): void {
 		this.state = ITreeSubscriptionCursorState.Cleared;
 		this.setToDetachedSequence(rootFieldKey);
+		// A cleared cursor may be kept for reuse: it should not keep a chunk it no longer reads alive.
+		this.spareNestedCursor = undefined;
 	}
 }
 

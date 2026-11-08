@@ -3,7 +3,7 @@
  * Licensed under the MIT License.
  */
 
-export { uniformChunk, ChunkShape } from "./uniformChunk.js";
+export { uniformChunk, ChunkShape, UniformChunk, TreeShape } from "./uniformChunk.js";
 export { type TreeChunk, dummyRoot } from "../../core/index.js";
 export {
 	chunkTree,

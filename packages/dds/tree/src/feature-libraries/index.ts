@@ -129,6 +129,8 @@ export {
 	basicChunkTree,
 	cursorForChunks,
 	TextRunChunk,
+	UniformChunk,
+	TreeShape,
 	formattedAtomChunk,
 	verboseTextRun,
 	type VerboseTextRun,

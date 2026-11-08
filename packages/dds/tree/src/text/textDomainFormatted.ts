@@ -30,6 +30,8 @@ import {
 	defaultChunkPolicy,
 	formattedAtomChunk,
 	TextRunChunk,
+	type TreeShape,
+	UniformChunk,
 	type TextRunLayout,
 	verboseTextRun,
 	type VerboseTextRun,
@@ -503,7 +505,25 @@ export namespace FormattedText {
 			}
 
 			public fullString(): string {
-				const result = this.content.fullString();
+				// Read through this node's cursor, rather than the content node's, so the content node is not created to read the text.
+				const inner = getInnerNode(this);
+				currentObserver?.observeNodeDeep(inner);
+				const result = readAtomText(
+					(read) => {
+						const cursor = inner.borrowCursor();
+						cursor.enterField(EmptyKey);
+						cursor.enterNode(0);
+						cursor.enterField(EmptyKey);
+						read(cursor);
+						cursor.exitField();
+						cursor.exitNode();
+						cursor.exitField();
+					},
+					0,
+					undefined,
+					(atom) =>
+						(this.content[atom] ?? fail("fullString failed to find an atom")).content.content,
+				);
 				expensiveInternalValidationAssert(
 					() => result === this.#fullString_reference() || "invalid fullString optimizations",
 				);
@@ -1128,6 +1148,121 @@ export namespace FormattedText {
 		const formatIds = new WeakSet<TreeChunk>();
 
 		/**
+		 * For each shape of atom chunks, the offset among an atom's values of its character,
+		 * or -1 if atoms of the shape are not characters (see {@link characterValueOffset}).
+		 */
+		const characterValueOffsets = new WeakMap<TreeShape, number>();
+
+		/**
+		 * If each atom with shape `shape` is a {@link FormattedText.(StringTextAtom:variable)},
+		 * the offset among its values of its character, which is its only value in the content field.
+		 */
+		function characterValueOffset(shape: TreeShape): number | undefined {
+			let offset = characterValueOffsets.get(shape);
+			if (offset === undefined) {
+				offset = -1;
+				if (
+					(shape.type as string) === StringAtom.identifier &&
+					!shape.mayContainCompressedIds
+				) {
+					let valueOffset = shape.hasValue ? 1 : 0;
+					for (const [key, child, length] of shape.fieldsArray) {
+						if (key === EmptyKey) {
+							const [characterField] = child.fieldsArray;
+							if (
+								length === 1 &&
+								(child.type as string) === StringTextAtom.identifier &&
+								!child.hasValue &&
+								child.fieldsArray.length === 1 &&
+								characterField !== undefined &&
+								characterField[0] === EmptyKey &&
+								characterField[2] === 1 &&
+								characterField[1].hasValue &&
+								characterField[1].fieldsArray.length === 0
+							) {
+								offset = valueOffset;
+							}
+							break;
+						}
+						valueOffset += child.valuesPerTopLevelNode * length;
+					}
+				}
+				characterValueOffsets.set(shape, offset);
+			}
+			return offset === -1 ? undefined : offset;
+		}
+		/**
+		 * The text of atoms `[startIndex, endIndex)` of a sequence of atoms (which must exist),
+		 * read with the cursor `withSequenceCursor` gives, which is in the sequence's field.
+		 * @param endIndex - The end of the atoms read, or undefined to read to the end of the sequence.
+		 * @param slowAtom - Gets the text of an atom which is not a character, by its index.
+		 * @remarks
+		 * Characters are read from the chunks which store them where possible, without visiting each atom:
+		 * a run in a {@link TextRunChunk} is one slice of the run's text,
+		 * and the characters of atoms in a {@link UniformChunk} are its values.
+		 */
+		function readAtomText(
+			withSequenceCursor: (read: (cursor: ITreeCursorSynchronous) => void) => void,
+			startIndex: number,
+			endIndex: number | undefined,
+			slowAtom: (atom: number) => string,
+		): string {
+			const parts: string[] = [];
+			// For each atom which is not a character, its index in `parts` and its atom index.
+			const slowPath: [part: number, atom: number][] = [];
+			withSequenceCursor((cursor) => {
+				const end = endIndex ?? cursor.getFieldLength();
+				if (startIndex >= end) {
+					return;
+				}
+				cursor.enterNode(startIndex);
+				let index = startIndex;
+				let inNode = true;
+				while (inNode && index < end) {
+					const chunk = tryGetChunk(cursor);
+					if (chunk instanceof TextRunChunk) {
+						const within = cursor.fieldIndex - cursor.chunkStart;
+						const count = Math.min(cursor.chunkLength - within, end - index);
+						parts.push(chunk.textOf(within, within + count));
+						index += count;
+						inNode = cursor.seekNodes(count);
+						continue;
+					}
+					if (chunk instanceof UniformChunk) {
+						const treeShape = chunk.shape.treeShape;
+						const offset = characterValueOffset(treeShape);
+						if (offset !== undefined) {
+							const within = cursor.fieldIndex - cursor.chunkStart;
+							const count = Math.min(cursor.chunkLength - within, end - index);
+							const stride = treeShape.valuesPerTopLevelNode;
+							for (let atom = within; atom < within + count; atom++) {
+								parts.push(chunk.values[atom * stride + offset] as string);
+							}
+							index += count;
+							inNode = cursor.seekNodes(count);
+							continue;
+						}
+					}
+					const character = readCharacter(cursor);
+					if (character === undefined) {
+						slowPath.push([parts.length, index]);
+						parts.push("");
+					} else {
+						parts.push(character);
+					}
+					index++;
+					inNode = cursor.nextNode();
+				}
+				if (inNode) {
+					cursor.exitNode();
+				}
+			});
+			for (const [part, atom] of slowPath) {
+				parts[part] = slowAtom(atom);
+			}
+			return parts.join("");
+		}
+		/**
 		 * The character of the atom `cursor` is at, if it is a {@link FormattedText.(StringTextAtom:variable)}, otherwise undefined.
 		 * Leaves the cursor where it was.
 		 */
@@ -1236,14 +1371,27 @@ export namespace FormattedText {
 			}
 
 			public fullString(): string {
-				return this.charactersCopy().join("");
+				return this.readText(0, this.length);
 			}
 
 			public getString(startIndex: number, endIndex: number = this.length): string {
 				validateIndexRange(startIndex, endIndex, this, "FormattedText.getString");
-				return this.getCharactersSubarray(startIndex, endIndex).join("");
+				return this.readText(startIndex, endIndex);
 			}
 
+			/**
+			 * The text of atoms `[startIndex, endIndex)`, as {@link FormattedText.Members.getString} gives it.
+			 */
+			private readText(startIndex: number, endIndex: number): string {
+				return readAtomText(
+					(read) => this.withBorrowedSequenceCursor(read),
+					startIndex,
+					endIndex,
+					(atom) =>
+						(this[atom] ?? fail("readText failed to find an atom in the checked index range"))
+							.content.content,
+				);
+			}
 			/**
 			 * Reads the run starting at atom `start` (see {@link FormattedText.Members.runs}), ending at or before `end`.
 			 * @returns The run's length; for a run of characters, its text;

@@ -108,4 +108,12 @@ export interface ChunkedCursor extends ITreeCursorSynchronous, WithChunk {
 	 * Does not add any counted references to any chunks.
 	 */
 	fork(): ChunkedCursor;
+
+	/**
+	 * Makes this cursor a cursor for `chunk`, at the same position as a new cursor from `chunk`, if it can be one.
+	 * @returns Whether it did. If not, the cursor is unchanged.
+	 * @remarks
+	 * Lets a cursor which uses a cursor for each nested chunk it enters reuse one, rather than creating one per chunk.
+	 */
+	reuseFor?(chunk: TreeChunk): boolean;
 }

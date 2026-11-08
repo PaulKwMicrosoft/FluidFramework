@@ -423,7 +423,7 @@ export class BasicChunkCursor extends SynchronousCursor implements ChunkedCursor
 				return stillIn;
 			}
 			if (!stillIn) {
-				this.nestedCursor = undefined;
+				this.releaseNestedCursor();
 			}
 		}
 		assert(
@@ -494,7 +494,7 @@ export class BasicChunkCursor extends SynchronousCursor implements ChunkedCursor
 				return stillIn;
 			}
 			if (!stillIn) {
-				this.nestedCursor = undefined;
+				this.releaseNestedCursor();
 			}
 		}
 		assert(
@@ -525,8 +525,34 @@ export class BasicChunkCursor extends SynchronousCursor implements ChunkedCursor
 			0x55d /* can only initNestedCursor when in Nodes */,
 		);
 		const chunk = (this.siblings as TreeChunk[])[this.indexOfChunk] ?? oob();
-		this.nestedCursor = chunk instanceof BasicChunk ? undefined : chunk.cursor();
-		this.nestedCursor?.enterNode(this.indexWithinChunk);
+		if (chunk instanceof BasicChunk) {
+			this.nestedCursor = undefined;
+			return;
+		}
+		const spare = this.spareNestedCursor;
+		if (spare?.reuseFor?.(chunk) === true) {
+			this.spareNestedCursor = undefined;
+			this.nestedCursor = spare;
+		} else {
+			this.nestedCursor = chunk.cursor();
+		}
+		this.nestedCursor.enterNode(this.indexWithinChunk);
+	}
+
+	/**
+	 * A cursor for a nested chunk which this cursor no longer uses, kept to be reused (see {@link ChunkedCursor.reuseFor})
+	 * for the next nested chunk: reading the nodes of a field often enters many nested chunks.
+	 */
+	protected spareNestedCursor: ChunkedCursor | undefined;
+
+	/**
+	 * Stops using the cursor of the nested chunk, keeping it for reuse.
+	 */
+	private releaseNestedCursor(): void {
+		if (this.nestedCursor !== undefined) {
+			this.spareNestedCursor = this.nestedCursor;
+			this.nestedCursor = undefined;
+		}
 	}
 
 	public exitField(): void {
@@ -553,7 +579,7 @@ export class BasicChunkCursor extends SynchronousCursor implements ChunkedCursor
 			if (!this.nestedCursor.atChunkRoot()) {
 				return this.nestedCursor.exitNode();
 			}
-			this.nestedCursor = undefined;
+			this.releaseNestedCursor();
 		}
 		assert(
 			this.mode === CursorLocationType.Nodes,

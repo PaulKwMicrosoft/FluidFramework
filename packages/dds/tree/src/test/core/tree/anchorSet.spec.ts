@@ -584,6 +584,47 @@ describe("AnchorSet", () => {
 		assert.deepEqual([...node1.anchoredChildren()], []);
 	});
 
+	it("tracks and forgets many siblings in any order", () => {
+		const count = 100;
+		const ascending = Array.from({ length: count }, (_, index) => index);
+		// A fixed permutation, so the test is deterministic.
+		const shuffled = ascending.map((index) => (index * 37) % count);
+		for (const trackOrder of [ascending, [...ascending].reverse(), shuffled]) {
+			for (const forgetOrder of [ascending, [...ascending].reverse(), shuffled]) {
+				const anchors = new AnchorSet();
+				const parentAnchor = anchors.track(makePath([fieldFoo, 0]));
+				// Sparse: every other index.
+				const tracked = new Map(
+					trackOrder.map((index) => [
+						index,
+						anchors.track(makePath([fieldFoo, 0], [fieldBar, 2 * index])),
+					]),
+				);
+				// Tracking an anchored index again gives the same node.
+				const again = anchors.track(makePath([fieldFoo, 0], [fieldBar, 2 * (count - 1)]));
+				assert.equal(
+					anchors.locate(again),
+					anchors.locate(tracked.get(count - 1) ?? assert.fail()),
+				);
+				anchors.forget(again);
+				const parent = anchors.locate(parentAnchor) ?? assert.fail();
+				assert.deepEqual(
+					[...parent.anchoredChildren()].map((child) => child.parentIndex),
+					ascending.map((index) => 2 * index),
+				);
+				for (const [index, anchor] of tracked) {
+					assert.equal(anchors.locate(anchor)?.parentIndex, 2 * index);
+				}
+				for (const index of forgetOrder) {
+					anchors.forget(tracked.get(index) ?? assert.fail());
+				}
+				assert.deepEqual([...parent.anchoredChildren()], []);
+				anchors.forget(parentAnchor);
+				assert(anchors.isEmpty());
+			}
+		}
+	});
+
 	it("isUpdating is true while a visitor is in use", () => {
 		const anchors = new AnchorSet();
 		assert.equal(anchors.isUpdating(), false);

@@ -389,13 +389,13 @@ class Cursor extends SynchronousCursor implements ChunkedCursor {
 
 	// Cached constants for faster access.
 	/** The chunk's shape. */
-	private readonly shape: ChunkShape;
+	private shape: ChunkShape;
 	/** The chunk's per-tree shape (shape of each top-level tree). */
-	private readonly treeShape: TreeShape;
+	private treeShape: TreeShape;
 	/** Number of positions in one top-level tree (treeShape.nodeCount). */
-	private readonly nodeLength: number;
+	private nodeLength: number;
 	/** Number of values per top-level node (treeShape.valuesPerTopLevelNode). */
-	private readonly stride: number;
+	private stride: number;
 
 	public mode: CursorLocationType = CursorLocationType.Fields;
 
@@ -407,7 +407,7 @@ class Cursor extends SynchronousCursor implements ChunkedCursor {
 	private indexOfField: number = 0;
 
 	// TODO: support prefix (path above root, including index offset of chunk in its containing field)
-	public constructor(private readonly chunk: UniformChunk) {
+	public constructor(private chunk: UniformChunk) {
 		super();
 		this.shape = this.chunk.shape;
 		this.treeShape = this.shape.treeShape;
@@ -415,6 +415,22 @@ class Cursor extends SynchronousCursor implements ChunkedCursor {
 		this.stride = this.treeShape.valuesPerTopLevelNode;
 		this.fieldKey = dummyRoot;
 		this.moveToPosition(0);
+	}
+
+	public reuseFor(chunk: TreeChunk): boolean {
+		if (!(chunk instanceof UniformChunk)) {
+			return false;
+		}
+		this.chunk = chunk;
+		this.shape = chunk.shape;
+		this.treeShape = this.shape.treeShape;
+		this.nodeLength = this.treeShape.nodeCount;
+		this.stride = this.treeShape.valuesPerTopLevelNode;
+		this.mode = CursorLocationType.Fields;
+		this.fieldKey = dummyRoot;
+		this.indexOfField = 0;
+		this.moveToPosition(0);
+		return true;
 	}
 
 	public get [cursorChunk](): UniformChunk | undefined {

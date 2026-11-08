@@ -195,7 +195,9 @@ export class TreeNodeKernel {
 			writable: false,
 			configurable: true,
 		});
-		assert(attached && tryGetKernel(node) === this, "Node must hold its kernel");
+		assert(attached, "Node must hold its kernel");
+		// Reading the kernel back checks that a proxy node forwards it to its target: a slow read, so only in debug builds.
+		debugAssert(() => tryGetKernel(node) === this || "Node must hold its kernel");
 
 		if (innerNode instanceof UnhydratedFlexTreeNode) {
 			// Unhydrated case

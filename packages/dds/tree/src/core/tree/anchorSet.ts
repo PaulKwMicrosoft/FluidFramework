@@ -1231,14 +1231,18 @@ class PathNode extends ReferenceCountedBase implements AnchorNode {
 			field = [];
 			this.setChildren(key, field);
 		}
-		let child = binaryFind(field, index);
-		if (child === undefined) {
-			child = new PathNode(this.anchorSet, key, index, this);
+		// Keep the list sorted by index, inserting rather than sorting: sorting after each insertion is quadratic when reading many siblings.
+		const position = lowerBound(field, index);
+		const existing = field[position];
+		if (existing !== undefined && existing.parentIndex === index) {
+			existing.addRef();
+			return existing;
+		}
+		const child = new PathNode(this.anchorSet, key, index, this);
+		if (position === field.length) {
 			field.push(child);
-			// Keep list sorted by index.
-			field.sort((a, b) => a.parentIndex - b.parentIndex);
 		} else {
-			child.addRef();
+			field.splice(position, 0, child);
 		}
 		return child;
 	}
@@ -1266,9 +1270,11 @@ class PathNode extends ReferenceCountedBase implements AnchorNode {
 		assert(this.status === Status.Alive, 0x40e /* PathNode must be alive */);
 		const key = child.parentField;
 		const field = this.children.get(key);
-		// TODO: should do more optimized search (ex: binary search or better) using child.parentIndex()
-		// Note that this is the index in the list of child paths, not the index within the field
-		const childIndex = field?.indexOf(child) ?? -1;
+		// The index in the list of child paths (sorted by index within the field), not the index within the field.
+		let childIndex = field === undefined ? -1 : lowerBound(field, child.parentIndex);
+		if (field !== undefined && field[childIndex] !== child) {
+			childIndex = field.indexOf(child);
+		}
 		assert(childIndex !== -1, 0x35c /* child must be parented to be removed */);
 		field?.splice(childIndex, 1);
 		if (field?.length === 0) {
@@ -1322,6 +1328,36 @@ class PathNode extends ReferenceCountedBase implements AnchorNode {
  * replacing it with a standard binary search is likely fine.
  * Until then, care and benchmarking should be used when messing with this function.
  */
+/**
+ * The position in `sorted` (sorted by {@link PathNode.parentIndex}) of the first node whose index is at least `index`,
+ * which is where a node with index `index` is or would be inserted.
+ */
+function lowerBound(sorted: readonly PathNode[], index: number): number {
+	const length = sorted.length;
+	// Nodes are often added in order, at the end.
+	if (length === 0 || (sorted[length - 1] as PathNode).parentIndex < index) {
+		return length;
+	}
+	// The list is often not sparse.
+	if (
+		sorted[index]?.parentIndex === index &&
+		(index === 0 || (sorted[index - 1] as PathNode).parentIndex < index)
+	) {
+		return index;
+	}
+	let min = 0;
+	let max = length;
+	while (min < max) {
+		const mid = (min + max) >>> 1;
+		if ((sorted[mid] as PathNode).parentIndex < index) {
+			min = mid + 1;
+		} else {
+			max = mid;
+		}
+	}
+	return min;
+}
+
 function binaryFind(sorted: readonly PathNode[], index: number): PathNode | undefined {
 	// Try guessing the list is not sparse as a starter:
 	const guess = sorted[index];
