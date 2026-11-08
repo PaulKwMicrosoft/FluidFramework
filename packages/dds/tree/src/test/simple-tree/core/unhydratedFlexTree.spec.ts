@@ -345,6 +345,30 @@ describe("unhydratedFlexTree", () => {
 		assert(object.isHydrated() === false);
 	});
 
+	it("keeps one view of its fields, and delivers events to listeners added after edits", () => {
+		const mutableMap = unhydratedFlexTreeFromCursor(context, cursorForMapTreeNode(mapMapTree));
+		assert.equal(mutableMap.fields, mutableMap.fields);
+		assert.deepEqual(
+			[...mutableMap.fields].map(([key]) => key),
+			[mapKey],
+		);
+		const field = mutableMap.getBoxed(mapKey) as UnhydratedOptionalField;
+		// Edits before any listener is added are not observed.
+		field.editor.set(undefined);
+		assert.deepEqual([...mutableMap.fields], []);
+		const changed: string[] = [];
+		const off = mutableMap.events.on("childrenChangedAfterBatch", ({ changedFields }) =>
+			changed.push(...changedFields),
+		);
+		field.editor.set(
+			unhydratedFlexTreeFromCursor(context, cursorForMapTreeNode(mapChildMapTree)),
+		);
+		assert.deepEqual(changed, [mapKey]);
+		off();
+		field.editor.set(undefined);
+		assert.deepEqual(changed, [mapKey]);
+	});
+
 	describe("can mutate", () => {
 		it("required fields", () => {
 			const mutableObject = unhydratedFlexTreeFromCursor(
