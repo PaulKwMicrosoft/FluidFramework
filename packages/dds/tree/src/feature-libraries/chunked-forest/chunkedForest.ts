@@ -233,9 +233,16 @@ export class ChunkedForest implements IEditableForest, WithBreakable {
 		);
 	}
 
-	public chunkField(cursor: ITreeCursorSynchronous): TreeChunk[] {
+	public chunkField(
+		cursor: ITreeCursorSynchronous,
+		shouldRechunk?: (chunk: TreeChunk) => boolean,
+	): TreeChunk[] {
 		this.breaker.use();
-		return chunkField(cursor, { idCompressor: this.idCompressor, policy: this.chunker });
+		return chunkField(cursor, {
+			idCompressor: this.idCompressor,
+			policy: this.chunker,
+			...(shouldRechunk === undefined ? {} : { shouldRechunk }),
+		});
 	}
 
 	public forgetAnchor(anchor: Anchor): void {
@@ -318,6 +325,7 @@ export class ChunkedForest implements IEditableForest, WithBreakable {
 					chunkTree(c, {
 						policy: this.forest.chunker,
 						idCompressor: this.forest.idCompressor,
+						shouldRechunk: () => true,
 					}),
 				);
 				this.forest.roots.fields.set(destination, chunks);

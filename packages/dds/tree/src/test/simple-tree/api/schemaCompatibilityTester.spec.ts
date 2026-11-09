@@ -49,21 +49,18 @@ const factory = new SchemaFactoryAlpha("");
 
 function expectCompatibility(
 	{ view, stored }: { view: ImplicitFieldSchema; stored: TreeStoredSchema },
-	expected: Omit<
-		ReturnType<typeof checkSchemaCompatibility>,
-		"enabledUpgrades" | "discrepancies"
-	> & {
+	expected: Pick<ReturnType<typeof checkSchemaCompatibility>, "canView" | "canUpgrade"> & {
 		enabledUpgrades?: ReadonlyMap<SchemaUpgrade, StagedUpgradeStatus>;
 	},
 	stagedSchemaUpgrades?: Parameters<typeof checkSchemaCompatibility>[2],
 ) {
 	const viewSchema = new TreeViewConfigurationAlpha({ schema: view });
 	const compatibility = checkSchemaCompatibility(viewSchema, stored, stagedSchemaUpgrades);
-	const { discrepancies, ...compatibilityWithoutDiscrepancies } = compatibility;
-	assert.deepEqual(compatibilityWithoutDiscrepancies, {
-		enabledUpgrades: new Map(),
-		...expected,
-	});
+	const { discrepancies, canView, canUpgrade, enabledUpgrades } = compatibility;
+	assert.deepEqual(
+		{ canView, canUpgrade, enabledUpgrades },
+		{ enabledUpgrades: new Map(), ...expected },
+	);
 	assert.equal(discrepancies === undefined, compatibility.canView);
 
 	const viewStored = toUpgradeSchema(view, compatibility.enabledUpgrades.keys());
@@ -76,6 +73,7 @@ function expectCompatibility(
 	if (compatibility.canView) {
 		assert.equal(allowsRepoSuperset(defaultSchemaPolicy, viewStored, stored), true);
 	}
+	return compatibility;
 }
 
 describe("getSchemaIncompatibilityDetails", () => {
@@ -212,12 +210,12 @@ describe("checkSchemaCompatibility", () => {
 			const neverField = factory.required([]);
 			expectCompatibility(
 				{ view: NeverObject, stored: emptySchema },
-				{ canView: false, canUpgrade: false, isEquivalent: false },
+				{ canView: false, canUpgrade: false },
 			);
 
 			expectCompatibility(
 				{ view: neverField, stored: emptySchema },
-				{ canView: false, canUpgrade: false, isEquivalent: false },
+				{ canView: false, canUpgrade: false },
 			);
 
 			// We could reasonably detect these cases as equivalent and update the test expectation here.
@@ -227,21 +225,23 @@ describe("checkSchemaCompatibility", () => {
 			// in cases that realistic users probably won't encounter).
 			expectCompatibility(
 				{ view: factory.optional(NeverObject), stored: emptySchema },
-				{ canView: false, canUpgrade: true, isEquivalent: false },
+				{ canView: false, canUpgrade: true },
 			);
 			expectCompatibility(
 				{ view: factory.optional([]), stored: emptySchema },
-				{ canView: false, canUpgrade: true, isEquivalent: false },
+				{ canView: false, canUpgrade: true },
 			);
 		});
 
-		describe("recognizes identical schema as equivalent", () => {
+		describe("isEquivalent (deprecated)", () => {
 			function expectSelfEquivalent(view: ImplicitFieldSchema) {
-				expectCompatibility(
+				const compatibility = expectCompatibility(
 					{ view, stored: toUpgradeSchema(view) },
-					{ canView: true, canUpgrade: true, isEquivalent: true },
+					{ canView: true, canUpgrade: true },
 				);
+				assert.equal(compatibility.isEquivalent, true);
 			}
+
 			it("empty schema", () => {
 				expectSelfEquivalent(factory.optional([]));
 				expectSelfEquivalent(factory.required([]));
@@ -277,13 +277,56 @@ describe("checkSchemaCompatibility", () => {
 				}) {}
 				expectSelfEquivalent(RecursiveObject);
 			});
+
+			it("is false when the schemas cannot be viewed or upgraded", () => {
+				const compatibility = checkSchemaCompatibility(
+					new TreeViewConfigurationAlpha({ schema: factory.string }),
+					toUpgradeSchema(factory.number),
+				);
+				assert.equal(compatibility.canView, false);
+				assert.equal(compatibility.canUpgrade, false);
+				assert.equal(compatibility.isEquivalent, false);
+			});
+
+			it("is false when unknown optional fields permit viewing but not upgrading", () => {
+				class StoredPoint extends factory.object("Point", {
+					x: factory.number,
+					y: factory.optional(factory.number),
+				}) {}
+				class ViewPoint extends factory.object(
+					"Point",
+					{ x: factory.number },
+					{ allowUnknownOptionalFields: true },
+				) {}
+				const compatibility = checkSchemaCompatibility(
+					new TreeViewConfigurationAlpha({ schema: ViewPoint }),
+					toUpgradeSchema(StoredPoint),
+				);
+				assert.equal(compatibility.canView, true);
+				assert.equal(compatibility.canUpgrade, false);
+				assert.equal(compatibility.isEquivalent, false);
+			});
+
+			it("is false when viewing and upgrading are allowed but an upgrade expands the stored schema", () => {
+				const stagedString = factory.staged(factory.string);
+				const upgrade = stagedString.metadata.stagedSchemaUpgrade;
+				assert(upgrade !== undefined);
+				const schema = factory.types([factory.number, stagedString]);
+				const compatibility = checkSchemaCompatibility(
+					new TreeViewConfigurationAlpha({ schema }),
+					toUpgradeSchema(factory.number),
+					StagedSchemaUpgradePolicy.enabledStagedUpgrades(upgrade),
+				);
+				assert.equal(compatibility.canView, true);
+				assert.equal(compatibility.canUpgrade, true);
+				assert.equal(compatibility.isEquivalent, false);
+			});
 		});
 
 		describe("allows upgrades but not viewing when the view schema allows a strict superset of the stored schema", () => {
-			const expected: Omit<SchemaCompatibilityStatus, "canInitialize"> = {
+			const expected: Pick<SchemaCompatibilityStatus, "canView" | "canUpgrade"> = {
 				canView: false,
 				canUpgrade: true,
-				isEquivalent: false,
 			};
 
 			// Add allowed types to map node
@@ -338,7 +381,7 @@ describe("checkSchemaCompatibility", () => {
 							view: factory.number,
 							stored: toUpgradeSchema(factory.identifier),
 						},
-						{ canView: false, canUpgrade: false, isEquivalent: false },
+						{ canView: false, canUpgrade: false },
 					);
 
 					expectCompatibility(
@@ -381,7 +424,6 @@ describe("checkSchemaCompatibility", () => {
 						{
 							canView: false,
 							canUpgrade: false,
-							isEquivalent: false,
 						},
 					);
 				});
@@ -397,7 +439,6 @@ describe("checkSchemaCompatibility", () => {
 						{
 							canView: false,
 							canUpgrade: true,
-							isEquivalent: false,
 						},
 					);
 
@@ -411,7 +452,6 @@ describe("checkSchemaCompatibility", () => {
 						{
 							canView: false,
 							canUpgrade: true,
-							isEquivalent: false,
 						},
 					);
 
@@ -423,7 +463,6 @@ describe("checkSchemaCompatibility", () => {
 						{
 							canView: false,
 							canUpgrade: true,
-							isEquivalent: false,
 						},
 					);
 				});
@@ -446,7 +485,6 @@ describe("checkSchemaCompatibility", () => {
 				{
 					canView: false,
 					canUpgrade: true,
-					isEquivalent: false,
 				},
 			);
 		});
@@ -468,7 +506,7 @@ describe("checkSchemaCompatibility", () => {
 				}) {}
 				expectCompatibility(
 					{ view: Point2D, stored: toUpgradeSchema(Point3D) },
-					{ canView: true, canUpgrade: false, isEquivalent: false },
+					{ canView: true, canUpgrade: false },
 				);
 			});
 		});
@@ -477,10 +515,9 @@ describe("checkSchemaCompatibility", () => {
 			describe("when the view schema and stored schema are incomparable", () => {
 				// (i.e. neither is a subset of the other, hence each allows documents the other does not)
 				function expectIncomparability(a: ImplicitFieldSchema, b: ImplicitFieldSchema): void {
-					const expected: Omit<SchemaCompatibilityStatus, "canInitialize"> = {
+					const expected: Pick<SchemaCompatibilityStatus, "canView" | "canUpgrade"> = {
 						canView: false,
 						canUpgrade: false,
-						isEquivalent: false,
 					};
 					expectCompatibility({ view: a, stored: toUpgradeSchema(b) }, expected);
 					expectCompatibility({ view: b, stored: toUpgradeSchema(a) }, expected);
@@ -538,10 +575,9 @@ describe("checkSchemaCompatibility", () => {
 			});
 
 			describe("when the view schema allows a subset of the stored schema's documents but in ways that misalign with allowed viewing policies", () => {
-				const expected: Omit<SchemaCompatibilityStatus, "canInitialize"> = {
+				const expected: Pick<SchemaCompatibilityStatus, "canView" | "canUpgrade"> = {
 					canView: false,
 					canUpgrade: false,
-					isEquivalent: false,
 				};
 
 				// Note: the decision to not allow is policy. See
@@ -561,7 +597,6 @@ describe("checkSchemaCompatibility", () => {
 						{
 							canView: true,
 							canUpgrade: false,
-							isEquivalent: false,
 						},
 					);
 				});
@@ -638,7 +673,7 @@ describe("checkSchemaCompatibility", () => {
 
 				expectCompatibility(
 					{ view: Compatible2, stored: toUpgradeSchema(Compatible1) },
-					{ canView: true, canUpgrade: true, isEquivalent: true },
+					{ canView: true, canUpgrade: true },
 				);
 			});
 
@@ -656,7 +691,7 @@ describe("checkSchemaCompatibility", () => {
 
 				expectCompatibility(
 					{ view: Compatible2, stored: toUpgradeSchema(Compatible1) },
-					{ canView: false, canUpgrade: true, isEquivalent: false },
+					{ canView: false, canUpgrade: true },
 				);
 			});
 
@@ -678,7 +713,6 @@ describe("checkSchemaCompatibility", () => {
 					{
 						canView: true,
 						canUpgrade: true,
-						isEquivalent: true,
 						enabledUpgrades: new Map([[upgrade, "enabled"]]),
 					},
 					{
@@ -702,7 +736,7 @@ describe("checkSchemaCompatibility", () => {
 
 				expectCompatibility(
 					{ view: Compatible1, stored: toUpgradeSchema(Compatible2) },
-					{ canView: false, canUpgrade: false, isEquivalent: false },
+					{ canView: false, canUpgrade: false },
 				);
 			});
 
@@ -732,7 +766,6 @@ describe("checkSchemaCompatibility", () => {
 					{
 						canView: false,
 						canUpgrade: false,
-						isEquivalent: false,
 						enabledUpgrades: new Map([[upgrade, "enabled"]]),
 					},
 				);
