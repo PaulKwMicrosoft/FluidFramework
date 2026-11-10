@@ -369,21 +369,19 @@ export function normalizeNodeId(
 	nodeId: NodeId,
 	nodeAliases: ChangeAtomIdBTree<NodeId>,
 ): NodeId {
-	let dealiased = getFromChangeAtomIdMap(nodeAliases, nodeId);
-	if (dealiased === undefined) {
-		// Most nodes have no alias, so the set to detect alias loops is only made when there is one.
-		return nodeId;
-	}
 	const visited = newChangeAtomIdBTree<true>();
-	visited.set([nodeId.revision, nodeId.localId], true);
 	let currentId = nodeId;
-	while (dealiased !== undefined) {
-		assert(!visited.has([dealiased.revision, dealiased.localId]), 0xd42 /* Node alias loop */);
-		currentId = dealiased;
+
+	while (true) {
 		visited.set([currentId.revision, currentId.localId], true);
-		dealiased = getFromChangeAtomIdMap(nodeAliases, currentId);
+		const dealiased = getFromChangeAtomIdMap(nodeAliases, currentId);
+		if (dealiased === undefined) {
+			return currentId;
+		}
+		assert(!visited.has([dealiased.revision, dealiased.localId]), 0xd42 /* Node alias loop */);
+
+		currentId = dealiased;
 	}
-	return currentId;
 }
 
 export function makeChangesetInversions(
