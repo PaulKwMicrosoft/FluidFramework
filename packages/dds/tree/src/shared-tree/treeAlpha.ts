@@ -97,7 +97,6 @@ import {
 	type TreeArrayNode,
 	type TreeMapNode,
 	releaseTreeNode,
-	releaseTreeNodeDescendants,
 	runReadScope,
 	insertVerbose,
 	setVerbose,
@@ -806,27 +805,6 @@ ode.
 	release(node: TreeNode): void;
 
 	/**
-	 * Releases the objects created for reading the nodes under `node`, as {@link (TreeAlpha:interface).release} does for each of them, keeping `node` itself.
-	 * @remarks
-	 * Only nodes which have been read are visited: unlike calling {@link (TreeAlpha:interface).release} on each child, this does not create nodes for children which have not been read.
-	 *
-	 * `node` stays usable, and so do its event listeners.
-	 * Nodes under `node` which have event listeners are kept, along with the nodes between them and `node`, and their listeners keep working.
-	 * Every other node under `node` which has been read is released, as described in {@link (TreeAlpha:interface).release}.
-	 *
-	 * Additional rules:
-	 *
-	 * - Calling this on a node which is released or deleted does nothing.
-	 *
-	 * - Unhydrated nodes are not supported.
-	 *
-	 * - It can be called inside transactions and from event listeners, but not while the tree is in the middle of applying a change.
-	 *
-	 * @throws A usage error if `node` is unhydrated or the tree is being changed.
-	 */
-	releaseDescendants(node: TreeNode): void;
-
-	/**
 	 * Runs `read` as a short-lived, read-only use of the tree containing `node`, and releases the objects it created for reading when it returns.
 	 * @param node - A node in the tree to read (any node in it). Must be in the document.
 	 * @param read - Reads the tree. Its result is returned.
@@ -1468,10 +1446,6 @@ export const TreeAlpha: TreeAlpha = {
 
 	release(node: TreeNode): void {
 		releaseTreeNode(node);
-	},
-
-	releaseDescendants(node: TreeNode): void {
-		releaseTreeNodeDescendants(node);
 	},
 
 	readScope<T>(node: TreeNode, read: () => T): T {

@@ -2114,7 +2114,6 @@ export interface TreeAlpha {
     on<K extends keyof TreeChangeEventsBeta<TNode>, TNode extends TreeNode>(node: TNode, eventName: K, listener: NoInfer<TreeChangeEventsBeta<TNode>[K]>): () => void;
     readScope<T>(node: TreeNode, read: () => T): T;
     release(node: TreeNode): void;
-    releaseDescendants(node: TreeNode): void;
     replaceAsBase(parent: TreeNode, key: string | number, newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined): void;
     replaceAsBaseVerbose(parent: TreeNode, key: string | number, newContent: VerboseTree | undefined): void;
     setFields(assignments: readonly FieldAssignment[]): void;
