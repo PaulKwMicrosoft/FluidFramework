@@ -330,9 +330,6 @@ interface DefaultProvider extends ErasedType<"@fluidframework/tree.FieldProvider
 }
 
 // @alpha
-export const defaultSharedPropertyFieldKeys: readonly string[];
-
-// @alpha
 export function defineTreeDataStore<const TSchema extends ImplicitFieldSchema>(options: TreeDataStoreOptions<TSchema>): DataStoreKind<TreeView<TSchema>>;
 
 // @alpha
@@ -590,9 +587,6 @@ export const ForestTypeExpensiveDebug: ForestType;
 
 // @beta
 export const ForestTypeOptimized: ForestType;
-
-// @alpha
-export function forestTypeOptimizedSharingFields(fieldKeys: Iterable<string>): ForestType;
 
 // @alpha
 export const ForestTypeOptimizedSharingTextFormats: ForestType;
@@ -2093,7 +2087,6 @@ export interface TreeAlpha {
     child(node: TreeNode, key: string | number): TreeNode | TreeLeafValue | undefined;
     children(node: TreeNode): Iterable<[propertyKey: string | number, child: TreeNode | TreeLeafValue]>;
     context(node: TreeNode): TreeContextAlpha;
-    copier<T extends TreeNode>(node: T): () => Unhydrated<T>;
     create<const TSchema extends ImplicitFieldSchema | UnsafeUnknownSchema>(schema: UnsafeUnknownSchema extends TSchema ? ImplicitFieldSchema : TSchema & ImplicitFieldSchema, data: InsertableField<TSchema>): Unhydrated<TSchema extends ImplicitFieldSchema ? TreeFieldFromImplicitField<TSchema> : TreeNode | TreeLeafValue | undefined>;
     exportCompressed(tree: TreeNode | TreeLeafValue, options: {
         idCompressor?: IIdCompressor;
@@ -2112,7 +2105,6 @@ export interface TreeAlpha {
     key2(node: TreeNode): string | number | undefined;
     // @deprecated
     on<K extends keyof TreeChangeEventsBeta<TNode>, TNode extends TreeNode>(node: TNode, eventName: K, listener: NoInfer<TreeChangeEventsBeta<TNode>[K]>): () => void;
-    readScope<T>(node: TreeNode, read: () => T): T;
     release(node: TreeNode): void;
     replaceAsBase(parent: TreeNode, key: string | number, newContent: Unhydrated<TreeNode> | TreeLeafValue | undefined): void;
     replaceAsBaseVerbose(parent: TreeNode, key: string | number, newContent: VerboseTree | undefined): void;
