@@ -34,12 +34,14 @@ export function createConnectedTree(): ITreePrivate {
 
 interface ITreeWithSubmitLocalMessage extends ITreePrivate {
 	submitLocalMessage: (content: unknown, localOpMetadata?: unknown) => void;
-	submitLocalMessageWithoutHandles: (content: unknown, localOpMetadata?: unknown) => void;
+}
+interface ITreeWithSubmitLocalMessage {
+	submitLocalMessage: (content: unknown, localOpMetadata?: unknown) => void;
 }
 
 /**
- * Intercepts outgoing ops on `tree` by monkey-patching `submitLocalMessage` and `submitLocalMessageWithoutHandles`,
- * appending each submitted op to `resultArray` before forwarding it normally.
+ * Intercepts outgoing ops on `tree` by monkey-patching `submitLocalMessage`, appending each
+ * submitted op to `resultArray` before forwarding it normally.
  */
 export function registerOpListener(
 	tree: ITreePrivate,
@@ -47,13 +49,12 @@ export function registerOpListener(
 ): void {
 	// TODO: better way to hook this up. Needs to detect local ops exactly once.
 	const treeInternal = tree as unknown as ITreeWithSubmitLocalMessage;
-	for (const method of ["submitLocalMessage", "submitLocalMessageWithoutHandles"] as const) {
-		const submit = treeInternal[method].bind(tree);
-		treeInternal[method] = (content: unknown, localOpMetadata?: unknown): void => {
-			resultArray.push(content as ISequencedDocumentMessage);
-			submit(content, localOpMetadata);
-		};
+	const oldSubmitLocalMessage = treeInternal.submitLocalMessage.bind(tree);
+	function submitLocalMessage(content: unknown, localOpMetadata?: unknown): void {
+		resultArray.push(content as ISequencedDocumentMessage);
+		oldSubmitLocalMessage(content, localOpMetadata);
 	}
+	treeInternal.submitLocalMessage = submitLocalMessage;
 }
 
 /**
