@@ -299,14 +299,10 @@ export class UnhydratedFlexTreeNode
 
 	public readonly [flexTreeMarker] = FlexTreeEntityKind.Node as const;
 
-	/**
-	 * The emitter of {@link UnhydratedFlexTreeNode.events}, made when they are first subscribed to:
-	 * most nodes are inserted into a tree without any.
-	 */
-	#events: ReturnType<typeof createEmitter<UnhydratedFlexTreeNodeEvents>> | undefined;
+	private readonly _events = createEmitter<UnhydratedFlexTreeNodeEvents>();
 	public get events(): Listenable<UnhydratedFlexTreeNodeEvents> &
 		HasListeners<UnhydratedFlexTreeNodeEvents> {
-		return (this.#events ??= createEmitter<UnhydratedFlexTreeNodeEvents>());
+		return this._events;
 	}
 
 	public get context(): FlexTreeContext {
@@ -347,19 +343,13 @@ export class UnhydratedFlexTreeNode
 	 * Due to having to detect if a field is empty, this forces the evaluation of any pending defaults in the fields.
 	 * Use {@link allFieldsLazy} to avoid evaluating pending defaults.
 	 */
-	public get fields(): MinimalFieldMap<UnhydratedFlexTreeField> {
-		return (this.#fields ??= {
-			get: (key: FieldKey): UnhydratedFlexTreeField | undefined => this.tryGetField(key),
-			[Symbol.iterator]: (): IterableIterator<[FieldKey, UnhydratedFlexTreeField]> => {
-				currentObserver?.observeNodeFields(this);
-				return filterIterable(this.fieldsAll, ([, field]) => field.length > 0);
-			},
-		});
-	}
-	/**
-	 * {@link UnhydratedFlexTreeNode.fields}, made when first read.
-	 */
-	#fields: MinimalFieldMap<UnhydratedFlexTreeField> | undefined;
+	public readonly fields: MinimalFieldMap<UnhydratedFlexTreeField> = {
+		get: (key: FieldKey): UnhydratedFlexTreeField | undefined => this.tryGetField(key),
+		[Symbol.iterator]: (): IterableIterator<[FieldKey, UnhydratedFlexTreeField]> => {
+			currentObserver?.observeNodeFields(this);
+			return filterIterable(this.fieldsAll, ([, field]) => field.length > 0);
+		},
+	};
 
 	public [Symbol.iterator](): IterableIterator<UnhydratedFlexTreeField> {
 		return mapIterable(this.fields, ([, field]) => field)[Symbol.iterator]();
@@ -474,7 +464,7 @@ export class UnhydratedFlexTreeNode
 	 * When omitted (e.g. for non-sequence fields), `fieldMarks` is empty.
 	 */
 	public emitChangedEvent(key: FieldKey, marks?: readonly DeltaMark[]): void {
-		this.#events?.emit("childrenChangedAfterBatch", {
+		this._events.emit("childrenChangedAfterBatch", {
 			changedFields: new Set([key]),
 			fieldMarks: marks === undefined ? new Map() : new Map([[key, marks]]),
 		});
@@ -516,7 +506,7 @@ export class UnhydratedFlexTreeNode
 			// `fields` presence (not content) signals a deep change to deltaMarksToArrayOps.
 			syntheticMarks.push({ count: 1, fields: new Map([[EmptyKey, { marks: [] }]]) });
 
-			parentNode.#events?.emit("childrenChangedAfterBatch", {
+			parentNode._events.emit("childrenChangedAfterBatch", {
 				changedFields: new Set([EmptyKey]),
 				fieldMarks: new Map([[EmptyKey, syntheticMarks]]),
 			});
@@ -538,7 +528,7 @@ export class UnhydratedFlexTreeNode
 	 * in the correct order.
 	 */
 	#emitSubtreeChangedEvents(): void {
-		this.#events?.emit("subtreeChangedAfterBatch");
+		this._events.emit("subtreeChangedAfterBatch");
 
 		const parentField = this.parentField.parent;
 		if (parentField.key === EmptyKey) {
