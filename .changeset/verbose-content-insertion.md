@@ -21,18 +21,18 @@ Identifier fields without content get new identifiers.
 Since the content is only checked against the stored schema, checks which node constructors run from the view schema (for example, those of tables made by `TableSchema`) do not run.
 
 ```typescript
-TreeAlpha.insertVerbose(view.root.slides, index, [
-	{ type: Slide.identifier, fields: { title: "Title", shapes: { type: Shapes.identifier, fields: [] } } },
+TreeAlpha.insertVerbose(view.root.sections, index, [
+	{ type: Section.identifier, fields: { title: "Title", items: { type: Items.identifier, fields: [] } } },
 ]);
 ```
 
-Importing verbose content and inserting it, per slide of 200-slide presentations:
+Importing verbose content and inserting it, per section of 200-section documents:
 
 | Measurement | `importVerbose` + insert | `insertVerbose` |
 | --- | --- | --- |
-| Synthetic slides, optimized forest | 9.0 ms | 1.0 ms |
-| Synthetic slides, reference forest | 9.0 ms | 3.0 ms |
-| Text-heavy presentation, optimized forest, with the other changes of this release (headless Microsoft Edge, busy machine) | 162.9 ms | 22.7 ms |
-| Diagram presentation, same conditions | 130.5 ms | 18.9 ms |
+| Synthetic sections, optimized forest | 9.0 ms | 1.0 ms |
+| Synthetic sections, reference forest | 9.0 ms | 3.0 ms |
+| Text-heavy document, optimized forest, with the other changes of this release (headless Microsoft Edge, busy machine) | 162.9 ms | 22.7 ms |
+| Diagram-heavy document, same conditions | 130.5 ms | 18.9 ms |
 
 The content is the same in both cases, and so is the forest's chunk layout. Results depend on the schema and environment.

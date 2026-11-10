@@ -13,10 +13,10 @@ Content which gets new identifiers is not shared, so that each property gets its
 
 ```typescript
 const fill = { type: SolidFill.identifier, fields: { color: "#FF0000" } };
-TreeAlpha.setFieldsVerbose(shapes.map((shape) => [shape, "fill", fill] as const));
+TreeAlpha.setFieldsVerbose(items.map((item) => [item, "fill", fill] as const));
 ```
 
-Setting a fill property of 100 shapes of a large presentation to one new fill, and undoing it (median of 4 alternating process pairs, Node.js, production mode):
+Setting one property of 100 nodes of a large document to the same new value, and undoing it (median of 4 alternating process pairs, Node.js, production mode):
 
 | Measurement | Imported nodes with `setFields` | `setFieldsVerbose` |
 | --- | --- | --- |
