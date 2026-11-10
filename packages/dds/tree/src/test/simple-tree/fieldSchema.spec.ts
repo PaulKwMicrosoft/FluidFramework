@@ -129,34 +129,6 @@ describe("fieldSchema", () => {
 		}
 	}
 
-	it("fields created without properties share their properties", () => {
-		const sf = new SchemaFactoryAlpha("sharedProps");
-		const optionalA = sf.optional(sf.number);
-		const optionalB = sf.optional(sf.string);
-		const requiredA = sf.required(sf.number);
-		const requiredB = sf.requiredRecursive([() => sf.string]);
-		assert.strictEqual(optionalA.props, optionalB.props);
-		assert.strictEqual(optionalA.props, sf.optionalRecursive([() => sf.number]).props);
-		assert.strictEqual(requiredA.props, requiredB.props);
-		assert(Object.isFrozen(optionalA.props));
-		assert(Object.isFrozen(requiredA.props));
-		assert.notEqual(optionalA.props?.defaultProvider, undefined);
-		assert.equal(requiredA.props?.defaultProvider, undefined);
-		assert.deepEqual(optionalA.metadata, {});
-		assert.equal(optionalA.persistedMetadata, undefined);
-		assert.equal(optionalA.isStagedOptional, false);
-
-		const described = sf.optional(sf.number, {
-			metadata: { description: "described" },
-			persistedMetadata: { kept: true },
-		});
-		assert.notEqual(described.props, optionalA.props);
-		assert.equal(described.props?.defaultProvider, optionalA.props?.defaultProvider);
-		assert.equal(described.metadata.description, "described");
-		assert.deepEqual(described.persistedMetadata, { kept: true });
-		assert.equal(sf.required(sf.number, { key: "k" }).props?.defaultProvider, undefined);
-	});
-
 	it("areImplicitFieldSchemaEqual", () => {
 		const sf = new SchemaFactoryAlpha("test");
 		function check(a: ImplicitFieldSchema, b: ImplicitFieldSchema, expected: boolean) {

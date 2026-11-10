@@ -3,7 +3,6 @@
  * Licensed under the MIT License.
  */
 
-import { assert } from "@fluidframework/core-utils/internal";
 import type { IFluidHandle } from "@fluidframework/core-interfaces";
 
 import type { ImplicitAllowedTypes } from "../core/index.js";
@@ -168,31 +167,6 @@ export interface SchemaStatics {
 const defaultOptionalProvider: DefaultProvider = getDefaultProvider(() => []);
 
 /**
- * The properties of an optional field created without properties, shared by all of them, since large schemas have many such fields.
- */
-const optionalFieldProps: FieldPropsAlpha = Object.freeze({
-	defaultProvider: defaultOptionalProvider,
-});
-
-/**
- * The properties of a required field created by {@link SchemaStatics.required} without properties, shared by all of them.
- */
-const requiredFieldProps: FieldPropsAlpha = Object.freeze({ defaultProvider: undefined });
-
-/**
- * The properties of a field: props with defaultProvider, or shared (whose defaultProvider it is) if there are no props.
- */
-function fieldProps<TCustomMetadata>(
-	shared: FieldPropsAlpha,
-	props: Omit<FieldPropsAlpha<TCustomMetadata>, "defaultProvider"> | undefined,
-): FieldPropsAlpha<TCustomMetadata> {
-	assert(Object.isFrozen(shared), "Field properties shared between fields must be frozen");
-	return props === undefined
-		? (shared as FieldPropsAlpha<TCustomMetadata>)
-		: { defaultProvider: shared.defaultProvider, ...props };
-}
-
-/**
  * Implementation of {@link SchemaStatics}.
  * @remarks
  * Entries can use more specific types than {@link SchemaStatics} requires to be more useful for non-public consumers.
@@ -215,7 +189,10 @@ export const schemaStaticsStable = {
 		TCustomMetadata,
 		FieldPropsAlpha<TCustomMetadata>
 	> => {
-		return createFieldSchema(FieldKind.Optional, t, fieldProps(optionalFieldProps, props));
+		return createFieldSchema(FieldKind.Optional, t, {
+			defaultProvider: defaultOptionalProvider,
+			...props,
+		});
 	},
 
 	required: <const T extends ImplicitAllowedTypes, const TCustomMetadata = unknown>(
@@ -227,7 +204,7 @@ export const schemaStaticsStable = {
 		TCustomMetadata,
 		FieldPropsAlpha<TCustomMetadata>
 	> => {
-		return createFieldSchema(FieldKind.Required, t, fieldProps(requiredFieldProps, props));
+		return createFieldSchema(FieldKind.Required, t, { defaultProvider: undefined, ...props });
 	},
 
 	optionalRecursive: <
@@ -242,11 +219,10 @@ export const schemaStaticsStable = {
 		TCustomMetadata,
 		FieldPropsAlpha<TCustomMetadata>
 	> => {
-		return createFieldSchemaUnsafe(
-			FieldKind.Optional,
-			t,
-			fieldProps(optionalFieldProps, props),
-		);
+		return createFieldSchemaUnsafe(FieldKind.Optional, t, {
+			defaultProvider: defaultOptionalProvider,
+			...props,
+		});
 	},
 
 	requiredRecursive: <
@@ -261,11 +237,10 @@ export const schemaStaticsStable = {
 		TCustomMetadata,
 		FieldPropsAlpha<TCustomMetadata>
 	> => {
-		return createFieldSchemaUnsafe(
-			FieldKind.Required,
-			t,
-			fieldProps(requiredFieldProps, props),
-		);
+		return createFieldSchemaUnsafe(FieldKind.Required, t, {
+			defaultProvider: undefined,
+			...props,
+		});
 	},
 } as const satisfies SchemaStatics;
 
