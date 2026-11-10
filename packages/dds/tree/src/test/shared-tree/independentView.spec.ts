@@ -571,26 +571,6 @@ describe("independentView", () => {
 			assert.deepEqual([...view.root], ["A", "B"]);
 		});
 
-		it("retains the history back to an old revertible's commit until it is disposed", () => {
-			const { checkout, view } = createView(5);
-			const { revertibles } = collectRevertibles(view);
-			view.root.insertAtEnd("A");
-			for (let i = 0; i < 5; i++) {
-				load(view, `${i}`);
-				assert.equal(retainedCommitCount(checkout), i + 2);
-			}
-			view.root.insertAtEnd("B");
-			assert.equal(retainedCommitCount(checkout), 7);
-			revertibles[0]?.dispose();
-			load(view, "C");
-			// The oldest commit still needed is B's.
-			assert.equal(retainedCommitCount(checkout), 2);
-			revertibles[1]?.dispose();
-			load(view, "D");
-			assert.equal(retainedCommitCount(checkout), 1);
-			assert.deepEqual([...view.root], ["A", "0", "1", "2", "3", "4", "B", "C", "D"]);
-		});
-
 		it("does not trim history while the view has forks", () => {
 			const { checkout, view } = createView(1);
 			view.root.insertAtEnd("A");

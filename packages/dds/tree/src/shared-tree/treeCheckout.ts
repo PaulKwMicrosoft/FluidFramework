@@ -791,16 +791,6 @@ export abstract class CheckoutBase implements ITreeCheckout {
 		| undefined;
 
 	/**
-	 * Whether {@link CheckoutBase.trimHistory} found nothing to trim, and nothing since can have made trimming possible.
-	 * @remarks
-	 * Only set when the oldest commit of the history is needed by a revertible.
-	 * Appending commits and adding revertibles for commits in the history leave nothing to trim then; disposing a revertible,
-	 * or any other change to the branch, may not.
-	 * This saves walking the whole history after every edit.
-	 */
-	private nothingToTrim = false;
-
-	/**
 	 * Undisposed branches forked (directly or transitively) from this checkout's branch, excluding the branches held by this checkout's revertibles.
 	 * Each is mapped to a function which stops tracking its forks.
 	 * @remarks
@@ -1329,9 +1319,6 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	private readonly onAfterBranchChange = (
 		event: SharedTreeBranchChange<SharedTreeChange>,
 	): void => {
-		if (event.type !== "append") {
-			this.nothingToTrim = false;
-		}
 		if (this.applyingBaseContent) {
 			// Base content is folded into the base of the history, so it is not reported as a commit.
 			return;
@@ -1920,9 +1907,6 @@ export abstract class CheckoutBase implements ITreeCheckout {
 		) {
 			return;
 		}
-		if (this.nothingToTrim) {
-			return;
-		}
 
 		const neededCommits = new Set<GraphCommit<SharedTreeChange>>();
 		for (const revertibleBranch of this.revertibleCommitBranches.values()) {
@@ -1945,9 +1929,6 @@ export abstract class CheckoutBase implements ITreeCheckout {
 		const newBase = oldestRetained.parent as
 			| Mutable<GraphCommit<SharedTreeChange>>
 			| undefined;
-		// Once trimmed, the history starts at the oldest commit a revertible needs, if there is one,
-		// and commits appended after it leave nothing to trim.
-		this.nothingToTrim = neededCommits.has(oldestRetained);
 		if (newBase?.parent === undefined) {
 			return;
 		}
@@ -2672,7 +2653,6 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	private disposeRevertible(revision: RevisionTag): void {
 		this.revertibleCommitBranches.get(revision)?.dispose();
 		this.revertibleCommitBranches.delete(revision);
-		this.nothingToTrim = false;
 		this.revertibles.delete(revision);
 	}
 
