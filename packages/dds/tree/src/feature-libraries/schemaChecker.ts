@@ -15,7 +15,6 @@ import type {
 import { tagSchemaArtifacts, UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import {
-	CursorLocationType,
 	type ITreeCursorSynchronous,
 	type TreeFieldStoredSchema,
 	LeafNodeStoredSchema,

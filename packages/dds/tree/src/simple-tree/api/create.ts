@@ -30,7 +30,6 @@ import {
 import {
 	ChunkedFieldContent,
 	type Context,
-	getInnerNode,
 	getKernel,
 	getOrCreateNodeFromInnerNode,
 	type TreeNode,

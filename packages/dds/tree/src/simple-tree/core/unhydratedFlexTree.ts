@@ -10,7 +10,7 @@ import { UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import {
 	type AnchorEvents,
-	CursorLocationType,
+	type CursorLocationType,
 	CursorMarker,
 	cursorChunk,
 	dummyRoot,

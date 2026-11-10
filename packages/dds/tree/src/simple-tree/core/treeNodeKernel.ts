@@ -9,7 +9,6 @@ import {
 	assert,
 	fail,
 	debugAssert,
-	oob,
 	unreachableCase,
 } from "@fluidframework/core-utils/internal";
 import { UsageError } from "@fluidframework/telemetry-utils/internal";
