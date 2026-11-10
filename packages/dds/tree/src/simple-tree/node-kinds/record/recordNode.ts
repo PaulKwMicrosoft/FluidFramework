@@ -143,7 +143,7 @@ function createRecordNodeProxy(
 		},
 		has: (target, key): boolean => {
 			if (typeof key === "symbol") {
-				return key !== kernelSlot && Object.prototype.hasOwnProperty.call(target, key);
+				return false;
 			}
 
 			const innerNode = getInnerNode(proxy);
@@ -153,19 +153,11 @@ function createRecordNodeProxy(
 		},
 		ownKeys: (target) => {
 			const innerNode = getInnerNode(proxy);
-			// The target's own symbol properties (other than the kernel's slot) are reported, as a proxy must report
-			// those which are not configurable: for example, private fields compiled to symbol properties.
-			const keys: (string | symbol)[] = [...innerNode.keys()];
-			for (const key of Object.getOwnPropertySymbols(target)) {
-				if (key !== kernelSlot) {
-					keys.push(key);
-				}
-			}
-			return keys;
+			return [...innerNode.keys()];
 		},
 		getOwnPropertyDescriptor: (target, key) => {
 			if (typeof key === "symbol") {
-				return key === kernelSlot ? undefined : Reflect.getOwnPropertyDescriptor(target, key);
+				return undefined;
 			}
 
 			const innerNode = getInnerNode(proxy);
