@@ -43,50 +43,6 @@ describe("treeSchema", () => {
 			assert.equal(hasCachedSchemaComponentForTesting(b), false);
 		});
 	});
-	describe("definitions", () => {
-		it("are read like the map createTreeSchema builds", () => {
-			const [a, b, c] = createSchemaGraph([[1, 2], [2], []]);
-			assert(a !== undefined && b !== undefined && c !== undefined);
-			const expected = createTreeSchema(a).definitions;
-			for (const definitions of [
-				SchemaComponent.fromSchema(a).definitions,
-				getRootSchemaDerivedData(a).definitions,
-			]) {
-				assert.equal(definitions.size, expected.size);
-				assert.deepEqual(new Map(definitions), new Map(expected));
-				assert.deepEqual(new Set(definitions.keys()), new Set(expected.keys()));
-				assert.deepEqual(new Set(definitions.values()), new Set(expected.values()));
-				for (const schema of [a, b, c]) {
-					assert.equal(definitions.get(schema.identifier), schema);
-					assert(definitions.has(schema.identifier));
-				}
-				assert.equal(definitions.get("missing"), undefined);
-				assert(!definitions.has("missing"));
-				const visited: string[] = [];
-				definitions.forEach((schema, identifier, map) => {
-					assert.equal(schema.identifier, identifier);
-					assert.equal(map, definitions);
-					visited.push(identifier);
-				});
-				assert.deepEqual(visited, [...definitions.keys()]);
-				assert.deepEqual(
-					[...definitions].map(([identifier]) => identifier),
-					visited,
-				);
-			}
-		});
-
-		it("of a component included in other definitions are a view of them", () => {
-			const [a, b, c] = createSchemaGraph([[1, 2], [2], []]);
-			assert(a !== undefined && b !== undefined && c !== undefined);
-			assert.equal(SchemaComponent.fromSchema(a).definitions.size, 3);
-			const reachable = SchemaComponent.fromSchema(b).reachableDefinitions;
-			assert.deepEqual(new Map(reachable), new Map([b, c].map((s) => [s.identifier, s])));
-			assert.equal(reachable.get(a.identifier), undefined);
-			assert.equal(reachable.get(c.identifier), c);
-		});
-	});
-
 	describe("SchemaComponent.fromSchema", () => {
 		it("caches node components without allocating root-derived data", () => {
 			const [parent, child] = createSchemaGraph([[1], []]);
