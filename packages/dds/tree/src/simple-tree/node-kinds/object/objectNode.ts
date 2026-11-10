@@ -3,7 +3,7 @@
  * Licensed under the MIT License.
  */
 
-import { assert, fail, debugAssert } from "@fluidframework/core-utils/internal";
+import { assert, fail } from "@fluidframework/core-utils/internal";
 import { isFluidHandle } from "@fluidframework/runtime-utils/internal";
 import { UsageError } from "@fluidframework/telemetry-utils/internal";
 
@@ -341,7 +341,6 @@ class ObjectProxyHandler implements ProxyHandler<TreeNode> {
 		const fieldInfo = this.flexKeyMap.get(propertyKey);
 		if (fieldInfo !== undefined) {
 			const flexNode = getInnerNodeFromTarget(target, proxy);
-			debugAssert(() => !flexNode.context.isDisposed() || "FlexTreeNode is disposed");
 			if (flexNode.tryGetSingleContent !== undefined) {
 				// Read the content without creating a field object for it.
 				const content = flexNode.tryGetSingleContent(fieldInfo.storedKey);

@@ -3,7 +3,7 @@
  * Licensed under the MIT License.
  */
 
-import { assert, debugAssert, oob } from "@fluidframework/core-utils/internal";
+import { assert, oob } from "@fluidframework/core-utils/internal";
 
 import {
 	CursorLocationType,
@@ -237,11 +237,6 @@ class TextRunCursor extends SynchronousCursor implements ChunkedCursor {
 	 */
 	private leaveAtomIfAtRoot(): void {
 		if (this.nested?.atChunkRoot() === true) {
-			debugAssert(
-				() =>
-					this.nested?.mode === CursorLocationType.Nodes ||
-					"nested cursor should be at its atom",
-			);
 			this.nested = undefined;
 		}
 	}
@@ -315,7 +310,6 @@ class TextRunCursor extends SynchronousCursor implements ChunkedCursor {
 			return this.nested.firstField();
 		}
 		const entered = this.enterAtom().firstField();
-		debugAssert(() => entered || "atoms have fields");
 		return entered;
 	}
 

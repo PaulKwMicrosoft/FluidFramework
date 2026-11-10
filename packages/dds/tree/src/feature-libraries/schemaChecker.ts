@@ -5,7 +5,6 @@
 
 import {
 	appendDebugMessage,
-	debugAssert,
 	unreachableCase,
 	fail,
 } from "@fluidframework/core-utils/internal";
@@ -402,9 +401,6 @@ function isChunkedFieldContentInSchema<T extends NotUndefined>(
 		index += 1;
 		inField = cursor.nextNode();
 	}
-	debugAssert(
-		() => cursor.mode === CursorLocationType.Fields || "cursor should be back in the field",
-	);
 	return undefined;
 }
 

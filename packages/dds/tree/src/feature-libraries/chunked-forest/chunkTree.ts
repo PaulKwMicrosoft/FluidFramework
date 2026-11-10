@@ -1429,7 +1429,7 @@ class ContentChunkingWalk {
 		fieldLength: number,
 	): WalkResult {
 		const interner = this.compressor.policy.subtreeInterner;
-		if (interner === undefined || !interner.sharesField(parentType, key)) {
+		if (interner?.sharesField(parentType, key) !== true) {
 			return result;
 		}
 		if (result instanceof TreeShape) {

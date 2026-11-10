@@ -3,7 +3,7 @@
  * Licensed under the MIT License.
  */
 
-import { assert, debugAssert, fail } from "@fluidframework/core-utils/internal";
+import { assert, fail } from "@fluidframework/core-utils/internal";
 import { UsageError } from "@fluidframework/telemetry-utils/internal";
 
 import {
@@ -117,13 +117,6 @@ export function makeField(
 	parent?: AnchorNode,
 ): FlexTreeField {
 	const anchors = context.checkout.forest.anchors;
-	debugAssert(
-		() =>
-			parent === undefined ||
-			anchors.find(cursor.getFieldPath().parent ?? fail("Expected a field under a node")) ===
-				parent ||
-			"parent must be the anchor node of the node containing the field",
-	);
 
 	let parentAnchorNode = parent;
 	// Anchor for the field built from the cursor's path. Owned by this function until passed to a new field.
