@@ -1407,8 +1407,7 @@ export const TreeAlpha: TreeAlpha = {
 };
 
 /**
- * Whether 
-ode is in the document of a tree with base content enabled (see {@link IndependentTreeHistoryOptions.enableBaseContent}).
+ * Whether `node` is in the document of a tree with base content enabled (see {@link IndependentTreeHistoryOptions.enableBaseContent}).
  * @remarks
  * Such trees are independent of any collaboration, so content may be edited in ways which give the same content
  * but different edits than collaboration would expect.
