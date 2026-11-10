@@ -644,8 +644,7 @@ export interface ChunkPolicy {
 	 *
 	 * @remarks
 	 * When provided, chunking stores subtrees for which {@link ChunkPolicy.shapeFromSchema} gives no shape in
-	 * {@link UniformChunk}s when their content has a layout the cache supports,
-	 * and re-chunks {@link BasicChunk}s with a {@link BasicChunk.provisionalLayout} instead of reusing them.
+	 * {@link UniformChunk}s when their content has a layout the cache supports.
 	 * See {@link ContentShapeCache}.
 	 *
 	 * The fields of a node in a content-derived shape are in the order the source content has them,
@@ -775,20 +774,13 @@ export function chunkRange(
 		assert(cursor.mode === CursorLocationType.Nodes, 0x57f /* should be in nodes */);
 		const start = cursor.chunkStart;
 		let reusedChunk = false;
-		let atProvisionalChunk = false;
 		// symbol based fast path to check for chunk:
 		// return existing chunk with a increased ref count if possible.
 		if (start === cursor.fieldIndex) {
 			const chunkLength = cursor.chunkLength;
 			if (chunkLength <= remaining) {
 				const chunk = tryGetChunk(cursor);
-				if (
-					contentShapes !== undefined &&
-					chunk !== undefined &&
-					isReplaceable(chunk, contentShapes)
-				) {
-					atProvisionalChunk = true;
-				} else if (chunk !== undefined && isReusable(chunk, chunkCompressor)) {
+				if (chunk !== undefined && isReusable(chunk, chunkCompressor)) {
 					if (
 						chunk instanceof SequenceChunk &&
 						chunk.subChunks.length <= chunkCompressor.policy.sequenceChunkInlineThreshold
@@ -817,10 +809,7 @@ export function chunkRange(
 			assert(cursor.mode === CursorLocationType.Nodes, 0x580 /* should be in nodes */);
 			const type = cursor.type;
 			const shape = chunkCompressor.policy.shapeFromSchema(type);
-			if (
-				contentShapes !== undefined &&
-				(atProvisionalChunk || !(shape instanceof TreeShape))
-			) {
+			if (contentShapes !== undefined && !(shape instanceof TreeShape)) {
 				remaining -= chunkRunWithContentShapes(
 					cursor,
 					chunkCompressor,
@@ -1342,19 +1331,6 @@ function inMemoryValue<T extends Value>(
 }
 
 /**
- * Whether `chunk` is a {@link BasicChunk} with a {@link BasicChunk.provisionalLayout} which chunking with `cache`
- * replaces instead of reusing.
- *
- * @remarks
- * Chunks whose type is not in the stored schema are reused, since no shapes are available for them.
- */
-function isReplaceable(chunk: TreeChunk, cache: ContentShapeCache): chunk is BasicChunk {
-	return (
-		chunk instanceof BasicChunk && chunk.provisionalLayout && cache.hasNodeSchema(chunk.type)
-	);
-}
-
-/**
  * The result of chunking one node with content-derived shapes:
  * its shape (with its values appended to {@link ContentChunkingWalk.values}) or a chunk holding it
  * (a new {@link BasicChunk}, or a chunk shared by {@link ChunkPolicy.subtreeInterner}).
@@ -1613,13 +1589,8 @@ function chunkRunWithContentShapes(
 	let consumed = 0;
 	for (;;) {
 		const valueStart = walk.values.length;
-		const existing = cursor.chunkStart === cursor.fieldIndex ? tryGetChunk(cursor) : undefined;
 		const result =
-			existing !== undefined && isReplaceable(existing, walk.cache)
-				? walkProvisionalChunk(existing, walk)
-				: consumed === 0
-					? walkNode(cursor, walk, firstShape)
-					: walkNode(cursor, walk);
+			consumed === 0 ? walkNode(cursor, walk, firstShape) : walkNode(cursor, walk);
 		walk.appendRun(result, valueStart, 0);
 		consumed++;
 		if (consumed === remaining) {
@@ -1633,7 +1604,6 @@ function chunkRunWithContentShapes(
 			const next = tryGetChunk(cursor);
 			if (
 				next !== undefined &&
-				!isReplaceable(next, cache) &&
 				isReusable(next, compressor) &&
 				cursor.chunkLength <= remaining - consumed
 			) {
@@ -1677,21 +1647,6 @@ function walkNode(
 			if (cursor.chunkStart === cursor.fieldIndex) {
 				const existing = tryGetChunk(cursor);
 				if (existing !== undefined) {
-					if (isReplaceable(existing, walk.cache)) {
-						const provisionalValueStart = walk.values.length;
-						const provisionalResult = walk.shareChild(
-							walkProvisionalChunk(existing, walk),
-							provisionalValueStart,
-							type,
-							key,
-							fieldLength,
-						);
-						walk.appendRun(provisionalResult, provisionalValueStart, firstRunOfField);
-						fieldShape = nextFieldShape(fieldShape, provisionalResult);
-						count++;
-						inNodes = cursor.nextNode();
-						continue;
-					}
 					const chunkLength = cursor.chunkLength;
 					if (chunkLength <= fieldLength - count && isReusable(existing, walk.compressor)) {
 						existing.referenceAdded();
@@ -1782,71 +1737,6 @@ function walkNodeFromAdapter<TNode>(
 			layout =
 				fieldShape instanceof TreeShape
 					? walk.cache.addField(layout, type, key, fieldShape, children.length)
-					: undefined;
-		}
-	}
-	return walk.endNode(type, value, layout, valueStart, runStart, fieldStart);
-}
-
-/**
- * {@link walkNode} for a chunk with a {@link BasicChunk.provisionalLayout}, reading the chunk directly.
- *
- * @remarks
- * The fields of such content are in the order they were encoded in, which can differ from the order of
- * schema-derived shapes, so schema-derived shapes are only used for nodes without fields.
- */
-function walkProvisionalChunk(chunk: BasicChunk, walk: ContentChunkingWalk): WalkResult {
-	const { type, value } = chunk;
-	const schemaShape = walk.compressor.policy.shapeFromSchema(type);
-	if (
-		schemaShape instanceof TreeShape &&
-		schemaShape.fieldsArray.length === 0 &&
-		chunk.fields.size === 0 &&
-		schemaShape.hasValue === (value !== undefined)
-	) {
-		if (value !== undefined) {
-			walk.values.push(inMemoryValue(schemaShape, value, walk.compressor.idCompressor));
-		}
-		return schemaShape;
-	}
-	const valueStart = walk.values.length;
-	const runStart = walk.runItems.length;
-	const fieldStart = walk.fieldKeys.length;
-	let layout = value === undefined ? walk.cache.layoutForType(type) : undefined;
-	for (const [key, children] of chunk.fields) {
-		const firstRunOfField = walk.runItems.length;
-		walk.fieldKeys.push(key);
-		walk.fieldRunStarts.push(firstRunOfField);
-		let fieldShape: TreeShape | false | undefined;
-		let count = 0;
-		let fieldLength = 0;
-		for (const child of children) {
-			fieldLength += child.topLevelLength;
-		}
-		for (const child of children) {
-			if (isReplaceable(child, walk.cache)) {
-				const childValueStart = walk.values.length;
-				const result = walk.shareChild(
-					walkProvisionalChunk(child, walk),
-					childValueStart,
-					type,
-					key,
-					fieldLength,
-				);
-				walk.appendRun(result, childValueStart, firstRunOfField);
-				fieldShape = nextFieldShape(fieldShape, result);
-				count++;
-			} else {
-				child.referenceAdded();
-				walk.appendChunk(child);
-				fieldShape = false;
-				count += child.topLevelLength;
-			}
-		}
-		if (layout !== undefined) {
-			layout =
-				fieldShape instanceof TreeShape
-					? walk.cache.addField(layout, type, key, fieldShape, count)
 					: undefined;
 		}
 	}
