@@ -791,7 +791,7 @@ export namespace FormattedText {
 			}
 
 			/**
-			 * Edits the formats of a range of atoms: per run if possible (see {@link TextNode.#formatRuns}), otherwise per atom with dit.
+			 * Edits the formats of a range of atoms: per run if possible (see {@link TextNode.#formatRuns}), otherwise per atom with `edit`.
 			 * @param runFormat - The new format of the atoms of a run, given their current format, or undefined if the runs can not be edited as runs.
 			 */
 			#editFormats(
@@ -1006,7 +1006,7 @@ export namespace FormattedText {
 
 		/**
 		 * Chunks holding copies of format nodes given to {@link FormattedText.Statics.fromRuns}, so runs given the same format node share one copy.
-		 * Each holds one reference to its chunk. An entry is dropped when its node changes.
+		 * Each holds one reference to its chunk. An entry, and its listener, are dropped when its node changes.
 		 */
 		const formatChunks = new WeakMap<TreeNode, TreeChunk>();
 
@@ -1023,11 +1023,13 @@ export namespace FormattedText {
 			}
 			let chunk = formatChunks.get(node);
 			if (chunk === undefined) {
-				chunk = basicChunkTree(getInnerNode(node).borrowCursor(), chunkCompressor);
-				formatChunks.set(node, chunk);
-				TreeBeta.on(node, "treeChanged", () => {
-					formatChunks.get(node)?.referenceRemoved();
+				const copy = basicChunkTree(getInnerNode(node).borrowCursor(), chunkCompressor);
+				chunk = copy;
+				formatChunks.set(node, copy);
+				const off = TreeBeta.on(node, "treeChanged", () => {
+					off();
 					formatChunks.delete(node);
+					copy.referenceRemoved();
 				});
 			}
 			chunk.referenceAdded();

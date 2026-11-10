@@ -24,6 +24,7 @@ import {
 // eslint-disable-next-line import-x/no-internal-modules -- Building forest types for the test
 import { toForestType } from "../../shared-tree/forestType.js";
 import {
+	getKernel,
 	KeyEncodingOptions,
 	SchemaFactory,
 	SchemaFactoryBeta,
@@ -423,6 +424,18 @@ describe("FormattedText built as runs", () => {
 				.join(""),
 			"HSelloQR world, hello sZhared text.\nBye.",
 		);
+	});
+
+	it("a format node edited after fromRuns gives its new format to the next fromRuns, without keeping listeners", () => {
+		const format = red();
+		const kernel = getKernel(format);
+		for (const size of [12, 14, 16]) {
+			const text = Text.fromRuns([{ text: "ab", format }]);
+			assert.equal(text.charactersWithFormatting()[1]?.format.size, size);
+			assert(kernel.hasEventListeners());
+			format.size = size + 2;
+			assert(!kernel.hasEventListeners());
+		}
 	});
 });
 
