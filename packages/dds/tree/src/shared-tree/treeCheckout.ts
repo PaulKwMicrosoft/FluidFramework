@@ -488,17 +488,17 @@ export interface RevertMetrics {
 }
 
 /**
- * Fields of a node changed by a commit, as recorded by a checkout with base content enabled.
+ * A field changed by a commit, as recorded by a checkout with base content enabled.
  */
 interface EditedField {
 	/**
-	 * An anchor to the node that has the fields.
+	 * An anchor to the node that has the field.
 	 */
 	readonly parent: Anchor;
 	/**
-	 * The keys of the fields.
+	 * The key of the field.
 	 */
-	readonly keys: FieldKey[];
+	readonly key: FieldKey;
 }
 
 /**
@@ -1775,20 +1775,16 @@ export abstract class CheckoutBase implements ITreeCheckout {
 		// The node and field currently being visited. Fields under no node (the root field and detached fields) are not recorded.
 		let parent: UpPath | undefined;
 		let field: FieldKey | undefined;
-		// The fields recorded for `parent` during this visit of it, and for each node being visited above it.
-		// A node's anchor is tracked once per visit of it, however many of its fields are edited:
-		// tracking an anchor walks the node's path from the root.
-		let parentEdit: EditedField | undefined;
-		const ancestorEdits: (EditedField | undefined)[] = [];
 		const record = (): void => {
 			if (parent === undefined || field === undefined) {
 				return;
 			}
-			if (parentEdit === undefined) {
-				parentEdit = { parent: anchors.track(parent), keys: [field] };
-				edits.push(parentEdit);
-			} else if (!parentEdit.keys.includes(field)) {
-				parentEdit.keys.push(field);
+			const anchor = anchors.track(parent);
+			const last = edits.at(-1);
+			if (last?.key === field && anchors.locate(last.parent) === anchors.locate(anchor)) {
+				anchors.forget(anchor);
+			} else {
+				edits.push({ parent: anchor, key: field });
 			}
 		};
 		return {
@@ -1808,15 +1804,12 @@ export abstract class CheckoutBase implements ITreeCheckout {
 				assert(field !== undefined, "Must be in a field to enter a node");
 				parent = { parent, parentField: field, parentIndex: index };
 				field = undefined;
-				ancestorEdits.push(parentEdit);
-				parentEdit = undefined;
 			},
 			exitNode: (index) => {
 				visitor.exitNode(index);
 				assert(parent !== undefined, "Must be in a node to exit it");
 				field = parent.parentField;
 				parent = parent.parent;
-				parentEdit = ancestorEdits.pop();
 			},
 			enterField: (key) => {
 				visitor.enterField(key);
@@ -2598,12 +2591,12 @@ export abstract class CheckoutBase implements ITreeCheckout {
 			commit !== undefined;
 			commit = commit.parent
 		) {
-			for (const { parent, keys } of editedFields.get(commit.revision) ?? []) {
+			for (const { parent, key } of editedFields.get(commit.revision) ?? []) {
 				const node = anchors.locate(parent);
 				if (node === undefined) {
 					continue;
 				}
-				if (node === field?.parent && keys.includes(field.key)) {
+				if (node === field?.parent && key === field.key) {
 					return true;
 				}
 				if (target !== undefined) {
