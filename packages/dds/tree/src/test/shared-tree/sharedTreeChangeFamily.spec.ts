@@ -9,7 +9,6 @@ import { deepFreeze } from "@fluidframework/test-runtime-utils/internal";
 
 import { currentVersion, type CodecWriteOptions } from "../../codec/index.js";
 import {
-	type ChangeEncodingContext,
 	type DeltaDetachedNodeId,
 	type TreeStoredSchema,
 	makeAnonChange,
@@ -48,7 +47,6 @@ import {
 	chunkFromJsonTrees,
 	failCodecFamily,
 	mintRevisionTag,
-	testIdCompressor,
 	testRevisionTagCodec,
 } from "../utils.js";
 
@@ -127,30 +125,6 @@ const sharedTreeFamily = new SharedTreeChangeFamily(
 );
 
 describe("SharedTreeChangeFamily", () => {
-	it("encodes changes with the default field batch codec", () => {
-		const family = new SharedTreeChangeFamily(testRevisionTagCodec, undefined, codecOptions);
-		const context: ChangeEncodingContext = {
-			originatorId: testIdCompressor.localSessionId,
-			isSummary: false,
-			revision: undefined,
-			idCompressor: testIdCompressor,
-		};
-		for (const version of family.codecs.getSupportedFormats()) {
-			const codec = family.codecs.resolve(version);
-			const decoded = codec.decode(
-				JSON.parse(JSON.stringify(codec.encode(treeDataChange1, context))),
-				context,
-			);
-			const inner = decoded.changes[0];
-			assert(inner?.type === "data");
-			const builds = [...(inner.innerChange.builds?.values() ?? [])];
-			assert.equal(builds.length, 1);
-			const cursor = builds[0]?.cursor() ?? assert.fail();
-			cursor.enterNode(0);
-			assert.equal(cursor.value, "X");
-		}
-	});
-
 	it("composition composes runs of data changes", () => {
 		assert.deepEqual(
 			sharedTreeFamily.compose([

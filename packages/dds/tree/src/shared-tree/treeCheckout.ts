@@ -88,6 +88,7 @@ import {
 	buildForest,
 	createNodeIdentifierManager,
 	defaultSchemaPolicy,
+	fieldBatchCodecBuilder,
 	TreeStatus,
 	intoDelta,
 	jsonableTreeFromCursor,
@@ -433,7 +434,7 @@ export function createTreeCheckout(
 		args?.changeFamily ??
 		new SharedTreeChangeFamily(
 			revisionTagCodec,
-			args?.fieldBatchCodec,
+			args?.fieldBatchCodec ?? fieldBatchCodecBuilder.build(codecOptions),
 			codecOptions,
 			args?.chunkCompressionStrategy,
 			idCompressor,
@@ -745,10 +746,7 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	private mostRecentlyClosedLabelNode: LabelTree | undefined;
 
 	private readonly views = new Set<TreeView<ImplicitFieldSchema>>();
-	/**
-	 * The codec for {@link CheckoutBase.serializedChangeCodec}, once it is first used.
-	 */
-	#serializedChangeCodec: SerializedChangeCodec | undefined;
+	private readonly serializedChangeCodec: SerializedChangeCodec;
 
 	/**
 	 * Event emitters for local commits.
@@ -975,19 +973,13 @@ export abstract class CheckoutBase implements ITreeCheckout {
 		if (maxRevertibles !== undefined || enableBaseContent) {
 			this.trackForks(branch);
 		}
+		this.serializedChangeCodec = makeSerializedChangeCodec(
+			this.changeFamily,
+			this.jsonValidator,
+		);
 		this.#transaction = this.createTransactionStack(branch);
 		this.editLock = new EditLock(this.#transaction.activeBranchEditor);
 		this.registerForBranchEvents();
-	}
-
-	/**
-	 * The codec of serialized changes, built when first used, since most checkouts never serialize a change.
-	 */
-	private get serializedChangeCodec(): SerializedChangeCodec {
-		return (this.#serializedChangeCodec ??= makeSerializedChangeCodec(
-			this.changeFamily,
-			this.jsonValidator,
-		));
 	}
 
 	public get branchHistory(): DefaultTreeBranchHistory {

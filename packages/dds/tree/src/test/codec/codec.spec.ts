@@ -15,8 +15,6 @@ import * as Type from "typebox/type";
 import {
 	extractJsonValidator,
 	type IJsonCodec,
-	lazyCodecFamily,
-	makeCodecFamily,
 	withSchemaValidation,
 } from "../../codec/index.js";
 import {
@@ -90,38 +88,6 @@ describe("Codec APIs", () => {
 			} finally {
 				globalThis.Function = originalFunction;
 			}
-		});
-	});
-
-	describe("lazyCodecFamily", () => {
-		const idCodec: IJsonCodec<number, number> = {
-			encode: (x) => x,
-			decode: (x) => x,
-		};
-
-		it("builds the family once, when it is first used", () => {
-			let builds = 0;
-			const family = lazyCodecFamily(() => {
-				builds += 1;
-				return makeCodecFamily([
-					[1, idCodec],
-					[2, idCodec],
-				]);
-			});
-			assert.equal(builds, 0);
-			assert.deepEqual([...family.getSupportedFormats()], [1, 2]);
-			assert.equal(builds, 1);
-			assert.equal(family.resolve(2).encode(7), 7);
-			assert.equal(family.resolve(1).decode(8), 8);
-			assert.equal(builds, 1);
-		});
-
-		it("throws errors in building the family when it is used", () => {
-			const family = lazyCodecFamily(() => {
-				throw new Error("cannot build");
-			});
-			assert.throws(() => family.resolve(1), /cannot build/);
-			assert.throws(() => [...family.getSupportedFormats()], /cannot build/);
 		});
 	});
 });
