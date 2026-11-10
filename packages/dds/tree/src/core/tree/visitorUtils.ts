@@ -8,10 +8,10 @@ import type { RevisionTag } from "../rebase/index.js";
 import type { FieldKey } from "../schema-stored/index.js";
 
 import type { ITreeCursorSynchronous } from "./cursor.js";
-import type { DetachedNodeId, Mark, Root } from "./delta.js";
+import type { DetachedNodeId, Root } from "./delta.js";
 import { DetachedFieldIndex } from "./detachedFieldIndex.js";
 import type { ForestRootId } from "./detachedFieldIndexTypes.js";
-import type { NodeIndex, PlaceIndex, Range } from "./pathTree.js";
+import type { PlaceIndex, Range } from "./pathTree.js";
 import { type DeltaVisitor, visitDelta } from "./visitDelta.js";
 
 export function makeDetachedFieldIndex(prefix: string = "Temp"): DetachedFieldIndex {
@@ -62,117 +62,18 @@ export function makeBreakingVisitor(
 	visitor: DeltaVisitor & { readonly type?: never },
 	breaker: Breakable,
 ): DeltaVisitor & { readonly type?: never } {
-	return new BreakingVisitor(visitor, breaker);
-}
-
-/**
- * The visitor {@link makeBreakingVisitor} returns.
- * @remarks
- * A class, rather than an object of closures, since visitors are made for every change applied,
- * and its methods run {@link Breakable.run}'s logic inline rather than allocating a callback per call.
- */
-class BreakingVisitor implements DeltaVisitor {
-	public declare readonly type?: never;
-
-	public constructor(
-		private readonly visitor: DeltaVisitor,
-		private readonly breaker: Breakable,
-	) {}
-
-	public free(): void {
-		this.breaker.use();
-		try {
-			this.visitor.free();
-		} catch (error: unknown) {
-			this.breaker.rethrowCaught(error);
-		}
-	}
-
-	public create(content: readonly ITreeCursorSynchronous[], destination: FieldKey): void {
-		this.breaker.use();
-		try {
-			this.visitor.create(content, destination);
-		} catch (error: unknown) {
-			this.breaker.rethrowCaught(error);
-		}
-	}
-
-	public destroy(detachedField: FieldKey, count: number): void {
-		this.breaker.use();
-		try {
-			this.visitor.destroy(detachedField, count);
-		} catch (error: unknown) {
-			this.breaker.rethrowCaught(error);
-		}
-	}
-
-	public attach(source: FieldKey, count: number, destination: PlaceIndex): void {
-		this.breaker.use();
-		try {
-			this.visitor.attach(source, count, destination);
-		} catch (error: unknown) {
-			this.breaker.rethrowCaught(error);
-		}
-	}
-
-	public detach(
-		source: Range,
-		destination: FieldKey,
-		id: DetachedNodeId,
-		isReplaced: boolean,
-	): void {
-		this.breaker.use();
-		try {
-			this.visitor.detach(source, destination, id, isReplaced);
-		} catch (error: unknown) {
-			this.breaker.rethrowCaught(error);
-		}
-	}
-
-	public enterNode(index: NodeIndex): void {
-		this.breaker.use();
-		try {
-			this.visitor.enterNode(index);
-		} catch (error: unknown) {
-			this.breaker.rethrowCaught(error);
-		}
-	}
-
-	public exitNode(index: NodeIndex): void {
-		this.breaker.use();
-		try {
-			this.visitor.exitNode(index);
-		} catch (error: unknown) {
-			this.breaker.rethrowCaught(error);
-		}
-	}
-
-	public enterField(key: FieldKey): void {
-		this.breaker.use();
-		try {
-			this.visitor.enterField(key);
-		} catch (error: unknown) {
-			this.breaker.rethrowCaught(error);
-		}
-	}
-
-	public exitField(key: FieldKey): void {
-		this.breaker.use();
-		try {
-			this.visitor.exitField(key);
-		} catch (error: unknown) {
-			this.breaker.rethrowCaught(error);
-		}
-	}
-
-	public fieldMarks(marks: readonly Mark[]): void {
-		this.breaker.use();
-		try {
-			this.visitor.fieldMarks?.(marks);
-		} catch (error: unknown) {
-			this.breaker.rethrowCaught(error);
-		}
-	}
+	return {
+		free: () => breaker.run(() => visitor.free()),
+		create: (...args) => breaker.run(() => visitor.create(...args)),
+		destroy: (...args) => breaker.run(() => visitor.destroy(...args)),
+		attach: (...args) => breaker.run(() => visitor.attach(...args)),
+		detach: (...args) => breaker.run(() => visitor.detach(...args)),
+		enterNode: (...args) => breaker.run(() => visitor.enterNode(...args)),
+		exitNode: (...args) => breaker.run(() => visitor.exitNode(...args)),
+		enterField: (...args) => breaker.run(() => visitor.enterField(...args)),
+		exitField: (...args) => breaker.run(() => visitor.exitField(...args)),
+		fieldMarks: (...args) => breaker.run(() => visitor.fieldMarks?.(...args)),
+	};
 }
 
 /**
@@ -181,133 +82,92 @@ class BreakingVisitor implements DeltaVisitor {
  * @returns a DeltaVisitor combining all `visitors`.
  */
 export function combineVisitors(visitors: readonly CombinableVisitor[]): CombinedVisitor {
-	return new CombinedVisitorImplementation(visitors);
-}
-
-/**
- * The visitor {@link combineVisitors} returns.
- * @remarks
- * A class, rather than an object of closures, since visitors are combined for every change applied.
- */
-class CombinedVisitorImplementation implements CombinedVisitor {
-	public readonly type = "Combined";
-
-	/**
-	 * The visitors combined, with those of combined visitors flattened.
-	 */
-	public readonly visitors: readonly CombinableVisitor[];
-
-	/**
-	 * The {@link AnnouncedVisitor}s among {@link CombinedVisitorImplementation.visitors}.
-	 */
-	private readonly announcedVisitors: readonly AnnouncedVisitor[];
-
-	public constructor(
-		/**
-		 * The visitors as given, which are each freed once.
-		 */
-		private readonly inputs: readonly CombinableVisitor[],
-	) {
-		const visitors: CombinableVisitor[] = [];
-		const announcedVisitors: AnnouncedVisitor[] = [];
-		for (const input of inputs) {
-			for (const visitor of input.type === "Combined" ? input.visitors : [input]) {
-				visitors.push(visitor);
-				if (visitor.type === "Announced") {
-					announcedVisitors.push(visitor);
-				}
+	const allVisitors = visitors.flatMap((v) => (v.type === "Combined" ? v.visitors : [v]));
+	const announcedVisitors = allVisitors.filter(
+		(v): v is AnnouncedVisitor => v.type === "Announced",
+	);
+	return {
+		type: "Combined",
+		visitors: allVisitors,
+		free: () => {
+			for (const v of visitors) {
+				v.free();
 			}
-		}
-		this.visitors = visitors;
-		this.announcedVisitors = announcedVisitors;
-	}
-
-	public free(): void {
-		for (const v of this.inputs) {
-			v.free();
-		}
-	}
-
-	public create(content: readonly ITreeCursorSynchronous[], destination: FieldKey): void {
-		for (const v of this.visitors) {
-			v.create(content, destination);
-		}
-		for (const v of this.announcedVisitors) {
-			v.afterCreate(content, destination);
-		}
-	}
-
-	public destroy(detachedField: FieldKey, count: number): void {
-		for (const v of this.announcedVisitors) {
-			v.beforeDestroy(detachedField, count);
-		}
-		for (const v of this.visitors) {
-			v.destroy(detachedField, count);
-		}
-	}
-
-	public attach(source: FieldKey, count: number, destination: PlaceIndex): void {
-		for (const v of this.announcedVisitors) {
-			v.beforeAttach(source, count, destination);
-		}
-		for (const v of this.visitors) {
-			v.attach(source, count, destination);
-		}
-		for (const v of this.announcedVisitors) {
-			v.afterAttach(source, {
-				start: destination,
-				end: destination + count,
-			});
-		}
-	}
-
-	public detach(
-		source: Range,
-		destination: FieldKey,
-		id: DetachedNodeId,
-		isReplaced: boolean,
-	): void {
-		for (const v of this.announcedVisitors) {
-			v.beforeDetach(source, destination, isReplaced);
-		}
-		for (const v of this.visitors) {
-			v.detach(source, destination, id, isReplaced);
-		}
-		for (const v of this.announcedVisitors) {
-			v.afterDetach(source.start, source.end - source.start, destination, isReplaced);
-		}
-	}
-
-	public enterNode(index: NodeIndex): void {
-		for (const v of this.visitors) {
-			v.enterNode(index);
-		}
-	}
-
-	public exitNode(index: NodeIndex): void {
-		for (const v of this.visitors) {
-			v.exitNode(index);
-		}
-	}
-
-	public enterField(key: FieldKey): void {
-		for (const v of this.visitors) {
-			v.enterField(key);
-		}
-	}
-
-	public exitField(key: FieldKey): void {
-		for (const v of this.visitors) {
-			v.exitField(key);
-		}
-	}
-
-	public fieldMarks(marks: readonly Mark[]): void {
-		for (const v of this.visitors) {
-			v.fieldMarks?.(marks);
-		}
-	}
+		},
+		create: (...args) => {
+			for (const v of allVisitors) {
+				v.create(...args);
+			}
+			for (const v of announcedVisitors) {
+				v.afterCreate(...args);
+			}
+		},
+		destroy: (...args) => {
+			for (const v of announcedVisitors) {
+				v.beforeDestroy(...args);
+			}
+			for (const v of allVisitors) {
+				v.destroy(...args);
+			}
+		},
+		attach: (source: FieldKey, count: number, destination: PlaceIndex) => {
+			for (const v of announcedVisitors) {
+				v.beforeAttach(source, count, destination);
+			}
+			for (const v of allVisitors) {
+				v.attach(source, count, destination);
+			}
+			for (const v of announcedVisitors) {
+				v.afterAttach(source, {
+					start: destination,
+					end: destination + count,
+				});
+			}
+		},
+		detach: (
+			source: Range,
+			destination: FieldKey,
+			id: DetachedNodeId,
+			isReplaced: boolean,
+		) => {
+			for (const v of announcedVisitors) {
+				v.beforeDetach(source, destination, isReplaced);
+			}
+			for (const v of allVisitors) {
+				v.detach(source, destination, id, isReplaced);
+			}
+			for (const v of announcedVisitors) {
+				v.afterDetach(source.start, source.end - source.start, destination, isReplaced);
+			}
+		},
+		enterNode: (...args) => {
+			for (const v of allVisitors) {
+				v.enterNode(...args);
+			}
+		},
+		exitNode: (...args) => {
+			for (const v of allVisitors) {
+				v.exitNode(...args);
+			}
+		},
+		enterField: (...args) => {
+			for (const v of allVisitors) {
+				v.enterField(...args);
+			}
+		},
+		exitField: (...args) => {
+			for (const v of allVisitors) {
+				v.exitField(...args);
+			}
+		},
+		fieldMarks: (marks) => {
+			for (const v of allVisitors) {
+				v.fieldMarks?.(marks);
+			}
+		},
+	};
 }
+
 /**
  * Visitor that is notified of changes before, after, and when changes are made.
  * Must be freed after use.
