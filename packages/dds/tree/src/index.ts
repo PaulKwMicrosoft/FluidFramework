@@ -64,8 +64,6 @@ export {
 	type CreateIndependentTreeAlphaOptions,
 	ForestTypeOptimized,
 	ForestTypeOptimizedSharingTextFormats,
-	forestTypeOptimizedSharingFields,
-	defaultSharedPropertyFieldKeys,
 	ForestTypeExpensiveDebug,
 	ForestTypeReference,
 	type TreeBranchHandleAlpha,

@@ -25,8 +25,6 @@ export { ForestTypeReference } from "./forestTypeReference.js";
 export {
 	ForestTypeOptimized,
 	ForestTypeOptimizedSharingTextFormats,
-	forestTypeOptimizedSharingFields,
-	defaultSharedPropertyFieldKeys,
 } from "./forestTypeOptimized.js";
 export { ForestTypeExpensiveDebug } from "./forestTypeExpensiveDebug.js";
 

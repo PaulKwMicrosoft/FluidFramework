@@ -13,7 +13,6 @@ import {
 	type SharedFieldPolicy,
 	SubtreeInterner,
 	textFormatFieldsOnly,
-	textFormatsAndFields,
 	// eslint-disable-next-line import-x/no-internal-modules
 } from "../../../feature-libraries/chunked-forest/subtreeInterner.js";
 import { defaultIncrementalEncodingPolicy } from "../../../feature-libraries/index.js";
@@ -88,17 +87,5 @@ describe("SubtreeInterner", () => {
 			distinctAfterInterning(brand(Doc.identifier), styleKey, textFormatFieldsOnly),
 			4,
 		);
-	});
-
-	it("shares text formats and the fields with the configured keys", () => {
-		const policy = textFormatsAndFields(["style", "properties"]);
-		assert.equal(distinctAfterInterning(atomType, formatKey, policy), 2);
-		assert.equal(distinctAfterInterning(brand(Doc.identifier), styleKey, policy), 2);
-		assert.equal(
-			distinctAfterInterning(brand(Doc.identifier), styleKey, textFormatsAndFields([])),
-			4,
-		);
-		assert(policy(brand("any.Type"), brand("properties")));
-		assert(!policy(brand("any.Type"), brand("other")));
 	});
 });

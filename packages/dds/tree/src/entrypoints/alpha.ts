@@ -182,8 +182,6 @@ export {
  
 	// #region @alpha APIs
 	ForestTypeOptimizedSharingTextFormats, 
-	forestTypeOptimizedSharingFields, 
-	defaultSharedPropertyFieldKeys, 
 	AllowedTypesFullUnsafe, 
 	ArrayNodeCustomizableSchema, 
 	ArrayNodeCustomizableSchemaAlpha, 

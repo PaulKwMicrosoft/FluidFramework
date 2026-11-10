@@ -119,8 +119,6 @@ export {
 	FieldBatchFormatVersion,
 	makeTreeChunker,
 	textFormatFieldsOnly,
-	type SharedFieldPolicy,
-	textFormatsAndFields,
 	fieldBatchCodecBuilder,
 	FieldBatchDecodingContext,
 	type FieldBatchEncodingContext,
