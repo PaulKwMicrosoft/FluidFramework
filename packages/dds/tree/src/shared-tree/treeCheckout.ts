@@ -826,24 +826,6 @@ export abstract class CheckoutBase implements ITreeCheckout {
 	private readonly editedFields: Map<RevisionTag, EditedField[]> | undefined;
 
 	/**
-	 * Runs `fn` with edits to this checkout forbidden: any edit, transaction, revert or branch operation attempted during it throws a usage error
-	 * which mentions `reason`, and leaves this checkout usable (unlike edits attempted during change events, which break it).
-	 * @remarks
-	 * If edits are already forbidden (for example during a change event), `fn` simply runs.
-	 */
-	public runWithEditsLocked<T>(reason: string, fn: () => T): T {
-		const lock = this.editLock;
-		if (lock.isLocked) {
-			return fn();
-		}
-		lock.lock(reason, true);
-		try {
-			return fn();
-		} finally {
-			lock.unlock();
-		}
-	}
-	/**
 	 * Whether base content is enabled (see {@link TreeCheckoutOptions.enableBaseContent}).
 	 */
 	public get baseContentEnabled(): boolean {

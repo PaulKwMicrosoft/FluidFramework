@@ -52,7 +52,6 @@ import {
 	TreeNode,
 	type Unhydrated,
 	tryGetSchema,
-	createCopier,
 	createFromCursor,
 	FieldKind,
 	normalizeFieldSchema,
@@ -97,7 +96,6 @@ import {
 	type TreeArrayNode,
 	type TreeMapNode,
 	releaseTreeNode,
-	runReadScope,
 	insertVerbose,
 	setVerbose,
 	setFields,
@@ -341,21 +339,6 @@ export interface TreeAlpha {
 		data: VerboseTree | undefined,
 		options?: TreeParsingOptions,
 	): Unhydrated<TreeFieldFromImplicitField<TSchema>>;
-
-	/**
-	 * Returns a function which creates copies of 
-ode's content, as it is when this is called.
-	 * @remarks
-	 * Each copy is an unhydrated node, like one {@link (TreeBeta:interface).clone} returns, and copies are independent of each other and of 
-ode.
-	 * Unlike cloning, the content is copied once, and each copy holds that copy by reference:
-	 * creating a copy creates one node object, nodes below it are only created when read,
-	 * and inserting a copy into a tree inserts the shared content without copying it again.
-	 * Use this to insert the same content in many places, such as one format used by many runs or paragraphs.
-	 *
-	 * The content must not contain identifiers which have not been generated yet.
-	 */
-	copier<T extends TreeNode>(node: T): () => Unhydrated<T>;
 
 	/**
 	 * Copy a snapshot of the current version of a TreeNode into a JSON compatible plain old JavaScript Object (except for {@link @fluidframework/core-interfaces#IFluidHandle|IFluidHandles}).
@@ -804,28 +787,6 @@ ode.
 	 */
 	release(node: TreeNode): void;
 
-	/**
-	 * Runs `read` as a short-lived, read-only use of the tree containing `node`, and releases the objects it created for reading when it returns.
-	 * @param node - A node in the tree to read (any node in it). Must be in the document.
-	 * @param read - Reads the tree. Its result is returned.
-	 * @remarks
-	 * Nodes first read inside the scope (those whose {@link TreeNode}s are created during it) are released when it ends,
-	 * as {@link (TreeAlpha:interface).release} releases a node, so that reading a large tree once does not keep memory for every node read.
-	 * They must not be used after the scope ends: every use of them then throws a usage error,
-	 * and reading the same locations again creates new nodes.
-	 * Nodes which existed before the scope behave as usual, during and after it.
-	 *
-	 * Inside the scope:
-	 *
-	 * - The tree cannot be edited: edits, transactions, reverts and other branch operations throw a usage error.
-	 *
-	 * - Nodes first read in the scope cannot be subscribed to (for example with {@link (TreeBeta:interface).on}): this throws a usage error.
-	 *
-	 * - Read scopes cannot be nested.
-	 *
-	 * @throws A usage error if `node` is not in the document, or in the cases described above.
-	 */
-	readScope<T>(node: TreeNode, read: () => T): T;
 }
 
 /**
@@ -1144,10 +1105,6 @@ export const TreeAlpha: TreeAlpha = {
 		);
 	},
 
-	copier<T extends TreeNode>(node: T): () => Unhydrated<T> {
-		return createCopier(node);
-	},
-
 	exportVerbose(node: TreeNode | TreeLeafValue, options?: TreeEncodingOptions): VerboseTree {
 		if (isTreeValue(node)) {
 			return node;
@@ -1446,22 +1403,6 @@ export const TreeAlpha: TreeAlpha = {
 
 	release(node: TreeNode): void {
 		releaseTreeNode(node);
-	},
-
-	readScope<T>(node: TreeNode, read: () => T): T {
-		if (getKernel(node).getStatus() !== TreeStatus.InDocument) {
-			throw new UsageError("Read scopes require a node in the document.");
-		}
-		const flexNode = getInnerNode(node);
-		assert(flexNode.isHydrated(), "A node in the document must be hydrated");
-		const checkout = flexNode.context.checkout;
-		if (!(checkout instanceof CheckoutBase)) {
-			throw new UsageError("Read scopes are not supported for this tree.");
-		}
-		return runReadScope(
-			(fn) => checkout.runWithEditsLocked("a read scope (TreeAlpha.readScope)", fn),
-			read,
-		);
 	},
 };
 

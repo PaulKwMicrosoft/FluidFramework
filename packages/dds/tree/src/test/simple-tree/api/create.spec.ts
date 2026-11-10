@@ -16,13 +16,10 @@ import {
 import {
 	createIndependentTreeAlpha,
 	independentView,
-	TreeAlpha,
+	TreeBeta,
 } from "../../../shared-tree/index.js";
-import {
-	createCopier,
-	createFromCursor,
-	// eslint-disable-next-line import-x/no-internal-modules
-} from "../../../simple-tree/api/create.js";
+// eslint-disable-next-line import-x/no-internal-modules
+import { createFromCursor } from "../../../simple-tree/api/create.js";
 // eslint-disable-next-line import-x/no-internal-modules
 import type { UnhydratedFlexTreeNode } from "../../../simple-tree/core/index.js";
 import {
@@ -80,7 +77,7 @@ describe("simple-tree create", () => {
 		});
 	});
 
-	describe("createCopier", () => {
+	describe("clones holding a tree's chunks", () => {
 		const oldFactory = new SchemaFactoryAlpha("copies");
 		class OldItem extends oldFactory.object("Item", {
 			value: oldFactory.number,
@@ -117,7 +114,7 @@ describe("simple-tree create", () => {
 
 		it("checks each copy against the stored schema of the tree it is inserted into", () => {
 			const source = viewOfOldItems([new OldItem({ value: 1, note: "unknown to NewItem" })]);
-			const copy = TreeAlpha.copier(source.root[0] ?? assert.fail());
+			const copy = (): NewItem => TreeBeta.clone<typeof NewItem>(source.root[0] ?? assert.fail());
 
 			const accepting = viewOfOldItems([]);
 			accepting.root.insertAtEnd(copy());
@@ -133,9 +130,9 @@ describe("simple-tree create", () => {
 		});
 
 		it("checks every copy of shared content, including against a stored schema which accepted another copy", () => {
-			const copy = createCopier(
-				new OldHolder({ item: new OldItem({ value: 1, note: "unknown to NewItem" }) }),
-			);
+			const source = independentView(new TreeViewConfiguration({ schema: OldHolder }));
+			source.initialize(new OldHolder({ item: new OldItem({ value: 1, note: "unknown to NewItem" }) }));
+			const copy = (): OldHolder => TreeBeta.clone<typeof OldHolder>(source.root);
 			const oldStored = toStoredSchema(OldHolder, StagedSchemaUpgradePolicy.restrictive);
 			const stored = new TreeStoredSchemaRepository(oldStored);
 			const schemaAndPolicy = { schema: stored, policy: defaultSchemaPolicy };

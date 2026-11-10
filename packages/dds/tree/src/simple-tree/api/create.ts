@@ -206,22 +206,6 @@ export function initializeArrayWithChunks(
 }
 
 /**
- * Returns a function which creates copies of `node`'s content (as it is now), each an unhydrated node of `node`'s schema.
- * @remarks
- * The content is copied into chunks once. Each copy is one node object whose fields hold those chunks by reference
- * (see {@link ChunkedFieldContent}): nodes below it are created only when read,
- * and inserting a copy into a tree inserts the chunks as they are.
- * Copies are independent: editing one does not affect the others.
- * The content must not contain fields with pending defaults (such as identifiers yet to be generated).
- */
-export function createCopier<T extends TreeNode>(node: T): () => T {
-	const kernel = getKernel(node);
-	const context = getUnhydratedContext(kernel.schema);
-	const chunk = basicChunkTree(getInnerNode(node).borrowCursor(), chunkCopyPolicy);
-	return () => getOrCreateNodeFromInnerNode(copyFromChunk(context, chunk)) as T;
-}
-
-/**
  * Creates an unhydrated node in `context` holding a copy of the content of `chunk`, a single node:
  * the node's fields hold `chunk`'s field chunks by reference (see {@link ChunkedFieldContent}),
  * and nodes below it are created only when read.
