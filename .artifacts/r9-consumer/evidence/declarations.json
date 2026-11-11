@@ -1,0 +1,6 @@
+{
+  "success": true,
+  "exitCode": 0,
+  "command": "& 'C:\\Program Files\\nodejs\\node.exe' '..\\r9-source\\packages\\dds\\tree\\node_modules\\typescript\\bin\\tsc' --noEmit --strict --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2022 '.\\api-proof.mts' '.\\api-proof.cts'",
+  "proofSource": "Exact copied historical r8 declaration contracts, freshly executed against isolated r9 consumer"
+}

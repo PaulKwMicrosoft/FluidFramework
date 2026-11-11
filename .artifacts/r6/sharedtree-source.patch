@@ -1,0 +1,1537 @@
+diff --git a/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md b/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
+index 8f43af41c8799dd65f27f1140f63ade207dbeb45..3bb830989df41775a141bc6e420b8d452c4b6a05 100644
+--- a/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
++++ b/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
+@@ -37,6 +37,74 @@ are not an in-place upgrade target, even if an application supplies matching lab
+ 
+ ## Controller
+ 
++### r6 opt-in, capture-local node counterparts
++
++Ordinary `capture()` and authority wire protocol v2 are unchanged. The separate
++r6 successor adds `capture({ trackNodeReferences: true })`, returning a
++`SharedTreeAuthorityReferenceCapture`. It does not add fields to the document schema.
++
++```ts
++const cut = authority.capture({ trackNodeReferences: true });
++const prefixDraft = authority.createDraft(cut, { afterPrefix: k });
++const prefixView = prefixDraft.viewWith(configuration);
++const source = cut.reference(liveNode);
++if (source.kind === "tracked") {
++    const counterpart = cut.resolve(source.reference, prefixDraft);
++    if (counterpart.kind === "node") {
++        // counterpart.node belongs to prefixView's checkout, not the live checkout.
++        // Narrow its schema with Tree.is before making typed corrections.
++    }
++}
++```
++
++`reference(node)` accepts nodes from this controller's live view or an active
++unpublished draft belonging to this exact capture. It returns `tracked` with an
++opaque object reference, or `outsideCapture` for unhydrated nodes and births
++outside the captured sequenced history. A local unsequenced birth stays outside
++that old capture even after its Fluid acknowledgement. Correction-draft-born
++node -> eventual-live correspondence is deliberately unsupported; numeric native
++IDs, matching contents and schema identifiers cannot substitute for it.
++
++`resolve(reference, "live" | draft)` returns:
++
++* `node`, with the target checkout's wrapper and `inDocument` or `removed` status;
++* `absent`, when the node is absent from that historical projection, including
++  a prefix before its creation;
++* `unavailable` / `destroyed`, if a previously represented counterpart was destroyed.
++
++`removed` can also describe a descendant of a removed tree; existing reinsertion
++rules still admit only supported removed roots in the same checkout. Wrong
++captures/controllers/checkouts, forged references, sealed/disposed drafts,
++expired captures, missing/incompatible target views, unfinished transactions
++and transient change-event access are usage errors. Dispose the capture to
++release its anchors and all its reference-enabled draft checkouts.
++
++References are established once at an actual forest-clone boundary and then
++follow real delta visitors. The tracked S snapshot is projected from live state
++by rolling back L. Each tracked prefix draft forks S directly, before rolling
++back the excluded P suffix; it does not pass through A and recreate P-born nodes.
++Detached-root IDs are seeded from `DetachedFieldIndex`. Anchor IDs and wrapper
++caches are not shared between forests. Paths are used only as coordinates at the
++verified clone boundary, never for subsequent counterpart lookup or recovery.
++
++The opt-in eagerly anchors all stored nodes, including leaves and retained
++detached content. Defaults are `maxNodes: 10000`, `maxDrafts: 16` concurrently
++retained public reference drafts, and a fixed maximum node depth of 256.
++Optional positive safe-integer node/draft limits can be supplied. Exceeding a
++limit fails rather than truncating coverage. Space is O(nodes * retained views);
++this is not a production-scale lazy index. The node limit includes the temporary
++local snapshot, even though L-born nodes cannot yield public references.
++The enrollment limit does not cap subsequent live/draft edits, new ancestor
++paths, or the underlying retained history; there is no implicit eviction.
++
++References are valid only in this process/controller/capture lifetime. There is
++no token serialization, original-cut reopening, global identity, or durable
++native UUID sidecar contract. Existing authority-mode unbounded history retention
++is still required; holding an anchor alone does not pin repair data against
++destruction. All r5 summary/recovery and detached-content restrictions below remain.
++
++### Existing authority operations
++
+ `getSharedTreeAuthority(tree)` exposes:
+ 
+ * `capture()` — a consistent immutable approved checkpoint, ordered stable
+diff --git a/packages/dds/tree/api-report/tree.alpha.api.md b/packages/dds/tree/api-report/tree.alpha.api.md
+index a536576564c193f1e597773e83c99b5f1624f5dc..249c8a4e2d67598c572245005eacee4aae1dcf8b 100644
+--- a/packages/dds/tree/api-report/tree.alpha.api.md
++++ b/packages/dds/tree/api-report/tree.alpha.api.md
+@@ -1271,6 +1271,8 @@ export interface SharedTreeAuthorityCapture {
+ export interface SharedTreeAuthorityController {
+     // (undocumented)
+     capture(): SharedTreeAuthorityCapture;
++    // (undocumented)
++    capture(options: SharedTreeAuthorityReferenceOptions): SharedTreeAuthorityReferenceCapture;
+     createDraft(capture: SharedTreeAuthorityCapture, options?: {
+         readonly afterPrefix: number;
+     }): SharedTreeAuthorityDraft;
+@@ -1288,6 +1290,24 @@ export interface SharedTreeAuthorityDraft {
+     viewWith<TRoot extends ImplicitFieldSchema>(configuration: TreeViewConfiguration<TRoot>): TreeView<TRoot>;
+ }
+ 
++// @alpha
++export interface SharedTreeAuthorityNodeReference {
++    // (undocumented)
++    readonly scope: "capture-local";
++}
++
++// @alpha
++export type SharedTreeAuthorityNodeResolution = {
++    readonly kind: "node";
++    readonly node: TreeNode;
++    readonly status: "inDocument" | "removed";
++} | {
++    readonly kind: "absent";
++} | {
++    readonly kind: "unavailable";
++    readonly reason: "destroyed";
++};
++
+ // @alpha @input
+ export interface SharedTreeAuthorityPublication {
+     // (undocumented)
+@@ -1302,6 +1322,30 @@ export interface SharedTreeAuthorityPublication {
+     readonly nextCheckpoint: string;
+ }
+ 
++// @alpha
++export interface SharedTreeAuthorityReferenceCapture extends SharedTreeAuthorityCapture {
++    // (undocumented)
++    reference(node: TreeNode): SharedTreeAuthorityReferenceResult;
++    // (undocumented)
++    resolve(reference: SharedTreeAuthorityNodeReference, target: "live" | SharedTreeAuthorityDraft): SharedTreeAuthorityNodeResolution;
++}
++
++// @alpha @input
++export interface SharedTreeAuthorityReferenceOptions {
++    readonly maxDrafts?: number;
++    readonly maxNodes?: number;
++    // (undocumented)
++    readonly trackNodeReferences: true;
++}
++
++// @alpha
++export type SharedTreeAuthorityReferenceResult = {
++    readonly kind: "tracked";
++    readonly reference: SharedTreeAuthorityNodeReference;
++} | {
++    readonly kind: "outsideCapture";
++};
++
+ // @alpha @input
+ export interface SharedTreeFormatOptions {
+     treeEncodeType: TreeCompressionStrategy;
+diff --git a/packages/dds/tree/src/core/tree/anchorSet.ts b/packages/dds/tree/src/core/tree/anchorSet.ts
+index fdade7d3dfdf3631136465651aef80a9757f5e74..e7a8080ff14cf234d2f863387cc22994fe578e96 100644
+--- a/packages/dds/tree/src/core/tree/anchorSet.ts
++++ b/packages/dds/tree/src/core/tree/anchorSet.ts
+@@ -407,6 +407,33 @@ export class AnchorSet implements AnchorLocator {
+ 		return anchor;
+ 	}
+ 
++	/**
++	 * Tracks a node at a verified forest-clone boundary, including detached-root metadata.
++	 * The caller must establish identical forest coordinates; this is not a cross-history lookup.
++	 * No slots, wrappers, or listeners are copied.
++	 */
++	public trackForFork(path: NormalizedUpPath): Anchor {
++		let root = path;
++		while (root.parent !== undefined) {
++			root = root.parent;
++		}
++		const existing = this.find(root);
++		if (root.detachedNodeId !== undefined && existing?.detachedNodeId !== undefined) {
++			assert(
++				existing.detachedNodeId.major === root.detachedNodeId.major &&
++					existing.detachedNodeId.minor === root.detachedNodeId.minor,
++				"Detached root metadata must agree at a clone boundary",
++			);
++		}
++		const anchor = this.track(path);
++		const target = this.find(root);
++		assert(target !== undefined, "A newly tracked path must have a root");
++		if (root.detachedNodeId !== undefined) {
++			target.detachedNodeId = { ...root.detachedNodeId };
++		}
++		return anchor;
++	}
++
+ 	/**
+ 	 * Finds a path node, creating if needed, and adds a ref count to it.
+ 	 */
+diff --git a/packages/dds/tree/src/entrypoints/alpha.ts b/packages/dds/tree/src/entrypoints/alpha.ts
+index f46b5a8641d8cadc3dc04b93a218f606a1ac10f9..6f1b791f4aebaf57a26217c4a531fbf0aca14563 100644
+--- a/packages/dds/tree/src/entrypoints/alpha.ts
++++ b/packages/dds/tree/src/entrypoints/alpha.ts
+@@ -184,7 +184,7 @@ export {
+ 	ErasedNode, 
+ 	ErasedSchema, 
+ 	ErasedSchemaSubclassable, 
+-	ExternalAuthorityConfiguration,
++	ExternalAuthorityConfiguration, 
+ 	FactoryContent, 
+ 	FactoryContentObject, 
+ 	FieldHasDefaultAlpha, 
+@@ -254,10 +254,15 @@ export {
+ 	SchemaFactoryAlpha, 
+ 	SchemaStaticsAlpha, 
+ 	SchemaType, 
+-	SharedTreeAuthorityCapture,
+-	SharedTreeAuthorityController,
+-	SharedTreeAuthorityDraft,
+-	SharedTreeAuthorityPublication,
++	SharedTreeAuthorityCapture, 
++	SharedTreeAuthorityController, 
++	SharedTreeAuthorityDraft, 
++	SharedTreeAuthorityNodeReference, 
++	SharedTreeAuthorityNodeResolution, 
++	SharedTreeAuthorityPublication, 
++	SharedTreeAuthorityReferenceCapture, 
++	SharedTreeAuthorityReferenceOptions, 
++	SharedTreeAuthorityReferenceResult, 
+ 	SharedTreeFormatOptions, 
+ 	SharedTreeOptions, 
+ 	SimpleAllowedTypeAttributes, 
+@@ -315,7 +320,7 @@ export {
+ 	extractPersistedSchema, 
+ 	generateSchemaFromSimpleSchema, 
+ 	getJsonSchema, 
+-	getSharedTreeAuthority,
++	getSharedTreeAuthority, 
+ 	getSimpleSchema, 
+ 	importCompatibilitySchemaSnapshot, 
+ 	incrementalEncodingPolicyForAllowedTypes, 
+diff --git a/packages/dds/tree/src/index.ts b/packages/dds/tree/src/index.ts
+index 9528c3f8eb99118256e4d8712ea836ceee168d65..fec7c1290847c61d648b2cfaa423eaa276f706df 100644
+--- a/packages/dds/tree/src/index.ts
++++ b/packages/dds/tree/src/index.ts
+@@ -11,6 +11,11 @@ export {
+ 	type SharedTreeAuthorityDraft,
+ 	type SharedTreeAuthorityPublication,
+ 	type SharedTreeAuthorityController,
++	type SharedTreeAuthorityReferenceCapture,
++	type SharedTreeAuthorityNodeReference,
++	type SharedTreeAuthorityNodeResolution,
++	type SharedTreeAuthorityReferenceOptions,
++	type SharedTreeAuthorityReferenceResult,
+ } from "./shared-tree/index.js";
+ export type { ExternalAuthorityConfiguration } from "./shared-tree-core/index.js";
+ 
+diff --git a/packages/dds/tree/src/shared-tree/authorityNodeReferences.ts b/packages/dds/tree/src/shared-tree/authorityNodeReferences.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..3564d8d5b1fd8950b00d0a66696a2c0ee79309b4
+--- /dev/null
++++ b/packages/dds/tree/src/shared-tree/authorityNodeReferences.ts
+@@ -0,0 +1,281 @@
++/*!
++ * Copyright (c) Microsoft Corporation and contributors. All rights reserved.
++ * Licensed under the MIT License.
++ */
++
++import { assert } from "@fluidframework/core-utils/internal";
++import { UsageError } from "@fluidframework/telemetry-utils/internal";
++import type { Anchor, AnchorNode, GraphCommit } from "../core/index.js";
++import { TreeStatus } from "../feature-libraries/index.js";
++import {
++	type TreeNode,
++	isTreeNode,
++	getKernel,
++	SimpleContextSlot,
++	treeNodeFromAnchor,
++} from "../simple-tree/index.js";
++import { disposeSymbol } from "../util/index.js";
++import type { SharedTreeChange } from "./sharedTreeChangeTypes.js";
++import type { TreeCheckout } from "./treeCheckout.js";
++
++/**
++ * An opaque process-local identity owned by one reference-enabled authority capture.
++ * There is no encoding or reopening API. Constructed lookalikes are rejected.
++ * @alpha
++ */
++export interface SharedTreeAuthorityNodeReference {
++	readonly scope: "capture-local";
++}
++
++/** Result of registering a node from an admitted live or draft view. @alpha */
++export type SharedTreeAuthorityReferenceResult =
++	| { readonly kind: "tracked"; readonly reference: SharedTreeAuthorityNodeReference }
++	| { readonly kind: "outsideCapture" };
++
++/** A counterpart in the requested checkout, never a wrapper from another context. @alpha */
++export type SharedTreeAuthorityNodeResolution =
++	| {
++			readonly kind: "node";
++			readonly node: TreeNode;
++			readonly status: "inDocument" | "removed";
++	  }
++	| { readonly kind: "absent" }
++	| { readonly kind: "unavailable"; readonly reason: "destroyed" };
++
++/** Opts in to bounded, eager node tracking for one capture. @alpha @input */
++export interface SharedTreeAuthorityReferenceOptions {
++	readonly trackNodeReferences: true;
++	/** Counts all stored nodes, including leaves and retained removed trees. Default 10,000. */
++	readonly maxNodes?: number;
++	/** Maximum concurrently retained public reference drafts. Default 16. */
++	readonly maxDrafts?: number;
++}
++
++interface ReferenceContext {
++	readonly anchors: readonly Anchor[];
++	readonly nodes: ReadonlyMap<AnchorNode, number>;
++	readonly absent: ReadonlySet<number>;
++	offDispose: () => void;
++	sealed: boolean;
++}
++
++export function projectAuthorityCheckout(
++	checkout: TreeCheckout,
++	head: GraphCommit<SharedTreeChange>,
++): void {
++	const oldBranch = checkout.mainBranch;
++	checkout.switchBranch(oldBranch.fork(head));
++	oldBranch.dispose();
++}
++
++/** Identity bookkeeping only: no edit IDs, native IDs, path matching, or serialized node keys. */
++export class AuthorityNodeReferences {
++	private readonly contexts = new Map<TreeCheckout, ReferenceContext>();
++	private readonly references: (SharedTreeAuthorityNodeReference | undefined)[] = [];
++	private readonly indices = new Map<SharedTreeAuthorityNodeReference, number>();
++	public readonly sequenced: TreeCheckout;
++	private disposed = false;
++
++	public constructor(
++		private readonly live: TreeCheckout,
++		sequencedHead: GraphCommit<SharedTreeChange>,
++		private readonly maxDrafts: number,
++		maxNodes: number,
++	) {
++		const liveAnchors = live.trackReferenceNodes(maxNodes);
++		let fork: { checkout: TreeCheckout; anchors: Anchor[] } | undefined;
++		let completed = false;
++		try {
++			fork = live.forkWithAnchors(liveAnchors);
++			projectAuthorityCheckout(fork.checkout, sequencedHead);
++			for (const [index, anchor] of fork.anchors.entries()) {
++				assert(liveAnchors[index] !== undefined, "Fork correspondence must be complete");
++				if (fork.checkout.forest.anchors.locate(anchor) === undefined) {
++					this.references.push(undefined);
++				} else {
++					const reference: SharedTreeAuthorityNodeReference = Object.freeze({
++						scope: "capture-local",
++					});
++					this.indices.set(reference, index);
++					this.references.push(reference);
++				}
++			}
++			this.sequenced = fork.checkout;
++			this.register(live, liveAnchors);
++			this.register(this.sequenced, fork.anchors);
++			completed = true;
++		} finally {
++			if (!completed) {
++				// A failed projection must not pin the live tree.
++				for (const anchor of liveAnchors) {
++					live.forest.anchors.forget(anchor);
++				}
++				if (fork !== undefined) {
++					for (const anchor of fork.anchors) {
++						fork.checkout.forest.anchors.forget(anchor);
++					}
++					if (!fork.checkout.disposed) {
++						fork.checkout[disposeSymbol]();
++					}
++				}
++			}
++		}
++	}
++
++	private register(checkout: TreeCheckout, anchors: readonly Anchor[]): void {
++		const nodes = new Map<AnchorNode, number>();
++		const absent = new Set<number>();
++		for (const [index, anchor] of anchors.entries()) {
++			const node = checkout.forest.anchors.locate(anchor);
++			if (node === undefined) {
++				absent.add(index);
++			} else {
++				nodes.set(node, index);
++			}
++		}
++		const context: ReferenceContext = {
++			anchors,
++			nodes,
++			absent,
++			offDispose: () => {},
++			sealed: false,
++		};
++		this.contexts.set(checkout, context);
++		context.offDispose = checkout.events.on("dispose", () => this.release(checkout));
++	}
++
++	private release(checkout: TreeCheckout): void {
++		const context = this.contexts.get(checkout);
++		if (context !== undefined) {
++			context.offDispose();
++			for (const anchor of context.anchors) {
++				checkout.forest.anchors.forget(anchor);
++			}
++			this.contexts.delete(checkout);
++		}
++	}
++
++	private context(checkout: TreeCheckout): ReferenceContext {
++		if (this.disposed || this.live.disposed) {
++			throw new UsageError("Capture node references have expired");
++		}
++		checkout.checkReferenceAccess();
++		const context = this.contexts.get(checkout);
++		if (context === undefined || context.sealed) {
++			throw new UsageError("Expected a checkout owned by this reference capture");
++		}
++		return context;
++	}
++
++	public createDraft(head: GraphCommit<SharedTreeChange>): TreeCheckout {
++		const source = this.context(this.sequenced);
++		if (this.contexts.size - 2 >= this.maxDrafts) {
++			throw new UsageError("Capture reference draft limit exceeded");
++		}
++		const fork = this.sequenced.forkWithAnchors(source.anchors);
++		let completed = false;
++		try {
++			projectAuthorityCheckout(fork.checkout, head);
++			this.register(fork.checkout, fork.anchors);
++			completed = true;
++			return fork.checkout;
++		} finally {
++			if (!completed) {
++				for (const anchor of fork.anchors) {
++					fork.checkout.forest.anchors.forget(anchor);
++				}
++				if (!fork.checkout.disposed) {
++					fork.checkout[disposeSymbol]();
++				}
++			}
++		}
++	}
++
++	public reference(node: TreeNode): SharedTreeAuthorityReferenceResult {
++		this.context(this.live);
++		if (!isTreeNode(node)) {
++			throw new UsageError("Expected a TreeNode, not a native ID or serialized content");
++		}
++		const kernel = getKernel(node);
++		if (!kernel.isHydrated()) {
++			return { kind: "outsideCapture" };
++		}
++		const checkout = kernel.context.flexContext.checkout;
++		const owned = [...this.contexts.keys()].find((candidate) => candidate === checkout);
++		if (owned === undefined) {
++			throw new UsageError("Source node belongs to another capture or checkout");
++		}
++		const context = this.context(owned);
++		if (kernel.getStatus() === TreeStatus.Deleted || kernel.context.flexContext.isDisposed()) {
++			throw new UsageError("Source node view or lifecycle has been disposed");
++		}
++		const index = context.nodes.get(kernel.anchorNode);
++		if (index === undefined) {
++			return { kind: "outsideCapture" };
++		}
++		const reference = this.references[index];
++		if (reference === undefined) {
++			return { kind: "outsideCapture" };
++		}
++		return { kind: "tracked", reference };
++	}
++
++	public resolve(
++		reference: SharedTreeAuthorityNodeReference,
++		checkout: TreeCheckout,
++	): SharedTreeAuthorityNodeResolution {
++		const context = this.context(checkout);
++		const index = this.indices.get(reference);
++		if (index === undefined) {
++			throw new UsageError("Expected a node reference from this exact capture");
++		}
++		const view = checkout.forest.anchors.slots.get(SimpleContextSlot);
++		if (view === undefined || view.flexContext.isDisposed()) {
++			throw new UsageError("Reference resolution requires an active compatible target view");
++		}
++		if (context.absent.has(index)) {
++			return { kind: "absent" };
++		}
++		const anchor = context.anchors[index];
++		assert(anchor !== undefined, "Reference context must contain an anchor");
++		const node = checkout.forest.anchors.locate(anchor);
++		if (node === undefined) {
++			return { kind: "unavailable", reason: "destroyed" };
++		}
++		const result = treeNodeFromAnchor(node);
++		assert(isTreeNode(result), "Only non-leaf nodes can produce public node references");
++		const status = getKernel(result).getStatus();
++		assert(
++			status === TreeStatus.InDocument || status === TreeStatus.Removed,
++			"A located reference must be live or removed",
++		);
++		return {
++			kind: "node",
++			node: result,
++			status: status === TreeStatus.InDocument ? "inDocument" : "removed",
++		};
++	}
++
++	public dispose(): void {
++		if (!this.disposed) {
++			for (const checkout of this.contexts.keys()) {
++				if (!checkout.disposed) {
++					checkout.checkReferenceAccess();
++				}
++			}
++			this.disposed = true;
++			for (const checkout of this.contexts.keys()) {
++				this.release(checkout);
++				if (checkout !== this.live && checkout !== this.sequenced && !checkout.disposed) {
++					checkout[disposeSymbol]();
++				}
++			}
++			this.indices.clear();
++			this.references.length = 0;
++		}
++	}
++
++	public sealDraft(checkout: TreeCheckout): void {
++		this.context(checkout).sealed = true;
++	}
++}
+diff --git a/packages/dds/tree/src/shared-tree/externalAuthorityController.ts b/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
+index 7d74a29b223b5d352801c681f28da4264d622c15..0ea6c8d228949f94032cdd4272afdb59fd5a0398 100644
+--- a/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
++++ b/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
+@@ -10,6 +10,7 @@ import { findCommonAncestor, type GraphCommit } from "../core/index.js";
+ import type {
+ 	ImplicitFieldSchema,
+ 	ITree,
++	TreeNode,
+ 	TreeView,
+ 	TreeViewConfiguration,
+ 	VerboseTree,
+@@ -19,6 +20,20 @@ import type { ITreePrivate, SharedTreeKernel } from "./sharedTree.js";
+ import type { TreeCheckout } from "./treeCheckout.js";
+ import type { SharedTreeChange } from "./sharedTreeChangeTypes.js";
+ import { hasSchemaChange } from "./sharedTreeChangeFamily.js";
++import {
++	AuthorityNodeReferences,
++	type SharedTreeAuthorityNodeReference,
++	type SharedTreeAuthorityNodeResolution,
++	type SharedTreeAuthorityReferenceOptions,
++	type SharedTreeAuthorityReferenceResult,
++} from "./authorityNodeReferences.js";
++
++export type {
++	SharedTreeAuthorityNodeReference,
++	SharedTreeAuthorityNodeResolution,
++	SharedTreeAuthorityReferenceOptions,
++	SharedTreeAuthorityReferenceResult,
++} from "./authorityNodeReferences.js";
+ 
+ /**
+  * An immutable, internally consistent A and A+P cut. It never includes local unsequenced work.
+@@ -32,6 +47,19 @@ export interface SharedTreeAuthorityCapture {
+ 	dispose(): void;
+ }
+ 
++/**
++ * An opt-in capture with process-local counterparts for nodes in its sequenced history.
++ * Later births (including local unsequenced and correction-draft births) are outside this capture.
++ * @alpha
++ */
++export interface SharedTreeAuthorityReferenceCapture extends SharedTreeAuthorityCapture {
++	reference(node: TreeNode): SharedTreeAuthorityReferenceResult;
++	resolve(
++		reference: SharedTreeAuthorityNodeReference,
++		target: "live" | SharedTreeAuthorityDraft,
++	): SharedTreeAuthorityNodeResolution;
++}
++
+ /**
+  * A private, ordinary editable fork of the capture's approved history, optionally
+  * including an explicitly selected prefix of its sequenced provisional edits.
+@@ -66,6 +94,7 @@ export interface SharedTreeAuthorityPublication {
+  */
+ export interface SharedTreeAuthorityController {
+ 	capture(): SharedTreeAuthorityCapture;
++	capture(options: SharedTreeAuthorityReferenceOptions): SharedTreeAuthorityReferenceCapture;
+ 	/**
+ 	 * Forks captured A followed by exactly the first afterPrefix edits (default zero).
+ 	 * Later captured P and all local L are excluded. Publication must approve the same prefix.
+@@ -85,6 +114,7 @@ interface CaptureData {
+ 	readonly commits: readonly GraphCommit<SharedTreeChange>[];
+ 	readonly approvedCheckout: TreeCheckout;
+ 	readonly sequencedCheckout: TreeCheckout;
++	readonly references?: AuthorityNodeReferences;
+ 	disposed: boolean;
+ }
+ 
+@@ -116,13 +146,55 @@ class Controller implements SharedTreeAuthorityController {
+ 		return checkout;
+ 	}
+ 
+-	public capture(): SharedTreeAuthorityCapture {
++	public capture(): SharedTreeAuthorityCapture;
++	public capture(
++		options: SharedTreeAuthorityReferenceOptions,
++	): SharedTreeAuthorityReferenceCapture;
++	public capture(
++		options?: SharedTreeAuthorityReferenceOptions,
++	): SharedTreeAuthorityCapture | SharedTreeAuthorityReferenceCapture {
++		if (
++			options !== undefined &&
++			(options === null || typeof options !== "object" || options.trackNodeReferences !== true)
++		) {
++			throw new UsageError(
++				"Reference capture requires positive integer limits and explicit opt-in",
++			);
++		}
++		const { maxNodes = 10000, maxDrafts = 16 } = options ?? {};
++		if (![maxNodes, maxDrafts].every((value) => Number.isSafeInteger(value) && value > 0)) {
++			throw new UsageError("Reference capture requires positive integer limits");
++		}
+ 		const state = this.kernel.getExternalAuthorityState();
++		const references =
++			options === undefined
++				? undefined
++				: new AuthorityNodeReferences(
++						this.kernel.checkout,
++						state.sequenced,
++						maxDrafts,
++						maxNodes,
++					);
++		let approvedCheckout: TreeCheckout;
++		let completed = false;
++		try {
++			approvedCheckout = this.materialize(
++				state.approved,
++				references?.sequenced ?? this.kernel.checkout,
++			);
++			completed = true;
++		} finally {
++			if (!completed && references !== undefined) {
++				references.dispose();
++				references.sequenced[disposeSymbol]();
++			}
++		}
+ 		const data: CaptureData = {
+ 			approved: state.approved,
+ 			commits: state.provisional,
+-			approvedCheckout: this.materialize(state.approved),
+-			sequencedCheckout: this.materialize(state.sequenced),
++			approvedCheckout,
++			sequencedCheckout: references?.sequenced ?? this.materialize(state.sequenced),
++			references,
+ 			disposed: false,
+ 		};
+ 		const check = (): void => {
+@@ -130,7 +202,7 @@ class Controller implements SharedTreeAuthorityController {
+ 				throw new UsageError("Authority capture has been disposed");
+ 			}
+ 		};
+-		const capture: SharedTreeAuthorityCapture = Object.freeze({
++		const capture = Object.freeze({
+ 			checkpoint: state.checkpoint,
+ 			editIds: Object.freeze(
+ 				state.provisional.map((commit) => {
+@@ -148,11 +220,42 @@ class Controller implements SharedTreeAuthorityController {
+ 			},
+ 			dispose: () => {
+ 				if (!data.disposed) {
++					data.references?.dispose();
+ 					data.disposed = true;
+ 					data.approvedCheckout[disposeSymbol]();
+ 					data.sequencedCheckout[disposeSymbol]();
+ 				}
+ 			},
++			...(references === undefined
++				? {}
++				: {
++						reference: (node: TreeNode): SharedTreeAuthorityReferenceResult => {
++							check();
++							return references.reference(node);
++						},
++						resolve: (
++							reference: SharedTreeAuthorityNodeReference,
++							target: "live" | SharedTreeAuthorityDraft,
++						): SharedTreeAuthorityNodeResolution => {
++							check();
++							let checkout = this.kernel.checkout;
++							if (target !== "live") {
++								const draft = this.drafts.get(target);
++								if (
++									draft?.capture !== capture ||
++									draft.disposed ||
++									draft.sealed ||
++									draft.checkout.disposed
++								) {
++									throw new UsageError(
++										"Expected an active unpublished draft from this exact capture",
++									);
++								}
++								checkout = draft.checkout;
++							}
++							return references.resolve(reference, checkout);
++						},
++					}),
+ 		});
+ 		this.captures.set(capture, data);
+ 		return capture;
+@@ -189,7 +292,9 @@ class Controller implements SharedTreeAuthorityController {
+ 			capture,
+ 			afterPrefix,
+ 			base,
+-			checkout: this.materialize(base, captured.approvedCheckout),
++			checkout:
++				captured.references?.createDraft(base) ??
++				this.materialize(base, captured.approvedCheckout),
+ 			disposed: false,
+ 			sealed: false,
+ 		};
+@@ -197,7 +302,12 @@ class Controller implements SharedTreeAuthorityController {
+ 			viewWith: <TRoot extends ImplicitFieldSchema>(
+ 				config: TreeViewConfiguration<TRoot>,
+ 			): TreeView<TRoot> => {
+-				if (data.disposed || data.sealed) {
++				if (
++					data.disposed ||
++					data.sealed ||
++					data.checkout.disposed ||
++					(captured.references !== undefined && captured.disposed)
++				) {
+ 					throw new UsageError("Authority draft has been disposed or published");
+ 				}
+ 				return data.checkout.viewWith(config) as TreeView<TRoot>;
+@@ -205,7 +315,9 @@ class Controller implements SharedTreeAuthorityController {
+ 			dispose: () => {
+ 				if (!data.disposed) {
+ 					data.disposed = true;
+-					data.checkout[disposeSymbol]();
++					if (!data.checkout.disposed) {
++						data.checkout[disposeSymbol]();
++					}
+ 				}
+ 			},
+ 		};
+@@ -241,6 +353,7 @@ class Controller implements SharedTreeAuthorityController {
+ 				draft === undefined ||
+ 				draft.disposed ||
+ 				draft.sealed ||
++				draft.checkout.disposed ||
+ 				draft.capture !== publication.capture
+ 			) {
+ 				throw new UsageError("Expected an unpublished draft from this capture");
+@@ -265,6 +378,7 @@ class Controller implements SharedTreeAuthorityController {
+ 				change: enriched[index] ?? commit.change,
+ 			}));
+ 			draft.sealed = true;
++			captured.references?.sealDraft(draft.checkout);
+ 		}
+ 		return this.kernel.publishExternalAuthority({
+ 			batchId: publication.batchId,
+diff --git a/packages/dds/tree/src/shared-tree/index.ts b/packages/dds/tree/src/shared-tree/index.ts
+index 45cc968a6b8970545580de1331c6f9d997057773..2577d2c371e2b993510d160f7c01d0f94bbc8603 100644
+--- a/packages/dds/tree/src/shared-tree/index.ts
++++ b/packages/dds/tree/src/shared-tree/index.ts
+@@ -9,6 +9,11 @@ export {
+ 	type SharedTreeAuthorityDraft,
+ 	type SharedTreeAuthorityPublication,
+ 	type SharedTreeAuthorityController,
++	type SharedTreeAuthorityReferenceCapture,
++	type SharedTreeAuthorityNodeReference,
++	type SharedTreeAuthorityNodeResolution,
++	type SharedTreeAuthorityReferenceOptions,
++	type SharedTreeAuthorityReferenceResult,
+ } from "./externalAuthorityController.js";
+ 
+ export {
+diff --git a/packages/dds/tree/src/shared-tree/treeCheckout.ts b/packages/dds/tree/src/shared-tree/treeCheckout.ts
+index 2ed7613a56c98bcf25db6824d2560361fc0d6ddd..fadb69ef1f68179a6a68f482188d302635dfa43d 100644
+--- a/packages/dds/tree/src/shared-tree/treeCheckout.ts
++++ b/packages/dds/tree/src/shared-tree/treeCheckout.ts
+@@ -1213,6 +1213,104 @@ export class TreeCheckout implements ITreeCheckout {
+ 
+ 	@throwIfBroken
+ 	public fork(): TreeCheckout {
++		return this.forkCore().checkout;
++	}
++
++	/** Rejects reference operations on transient or disposed checkout state. */
++	@throwIfBroken
++	public checkReferenceAccess(): void {
++		if (this.disposed) {
++			throw new UsageError("Capture reference checkout has been disposed");
++		}
++		this.editLock.checkUnlocked("Accessing capture node references");
++		if (this.transaction.size > 0) {
++			throw new UsageError("Capture node references require a completed transaction");
++		}
++	}
++
++	/** Owns one anchor per forest node, including retained detached content. */
++	public trackReferenceNodes(maxNodes: number): Anchor[] {
++		this.checkReferenceAccess();
++		const anchors: Anchor[] = [];
++		let completed = false;
++		try {
++			// Detached roots may never have been hydrated. Seed their actual index metadata.
++			for (const { root, id } of this._removedRoots.entries()) {
++				if (anchors.length >= maxNodes) {
++					throw new UsageError("Capture node reference limit exceeded");
++				}
++				anchors.push(
++					this.forest.anchors.trackForFork({
++						parent: undefined,
++						parentField: this._removedRoots.toFieldKey(root),
++						parentIndex: 0,
++						detachedNodeId: id,
++					}),
++				);
++			}
++			const metadataAnchors = anchors.length;
++			const cursor = this.forest.getCursorAboveDetachedFields();
++			const visitFields = (parent: AnchorNode | undefined, depth: number): void => {
++				if (cursor.firstField()) {
++					do {
++						const parentField = cursor.getFieldKey();
++						if (cursor.firstNode()) {
++							do {
++								if (depth > 256) {
++									throw new UsageError("Capture node reference depth limit exceeded");
++								}
++								if (anchors.length - metadataAnchors >= maxNodes) {
++									throw new UsageError("Capture node reference limit exceeded");
++								}
++								// Raw chunk cursors include a synthetic root in getPath().
++								// Build forest coordinates from the actual detached fields instead.
++								const anchor = this.forest.anchors.track({
++									parent,
++									parentField,
++									parentIndex: cursor.fieldIndex,
++								});
++								anchors.push(anchor);
++								const node = this.forest.anchors.locate(anchor);
++								assert(node !== undefined, "Reference enumeration must track a concrete node");
++								visitFields(node, depth + 1);
++							} while (cursor.nextNode());
++						}
++					} while (cursor.nextField());
++				}
++			};
++			visitFields(undefined, 1);
++			for (const anchor of anchors.splice(0, metadataAnchors)) {
++				this.forest.anchors.forget(anchor);
++			}
++			completed = true;
++			return anchors;
++		} finally {
++			if (!completed) {
++				for (const anchor of anchors) {
++					this.forest.anchors.forget(anchor);
++				}
++			}
++		}
++	}
++
++	/** Transfers only owned anchors, before either checkout can be observed or edited. */
++	public forkWithAnchors(anchors: readonly Anchor[]): {
++		checkout: TreeCheckout;
++		anchors: Anchor[];
++	} {
++		this.checkReferenceAccess();
++		this.editLock.lock();
++		try {
++			return this.forkCore(anchors);
++		} finally {
++			this.editLock.unlock();
++		}
++	}
++
++	private forkCore(anchors?: readonly Anchor[]): {
++		checkout: TreeCheckout;
++		anchors: Anchor[];
++	} {
+ 		this.checkNotDisposed(
+ 			"The parent branch has already been disposed and can no longer create new branches.",
+ 		);
+@@ -1239,8 +1337,37 @@ export class TreeCheckout implements ITreeCheckout {
+ 			forkBreaker,
+ 			this.externalAuthority,
+ 		);
+-		this.#events.emit("fork", checkout);
+-		return checkout;
++		const transferred: Anchor[] = [];
++		let completed = false;
++		try {
++			if (anchors !== undefined) {
++				for (const anchor of anchors) {
++					const node = this.forest.anchors.locate(anchor);
++					transferred.push(
++						node === undefined
++							? forest.anchors.track(null)
++							: forest.anchors.trackForFork(node),
++					);
++				}
++				checkout.editLock.lock();
++			}
++			try {
++				this.#events.emit("fork", checkout);
++			} finally {
++				if (anchors !== undefined) {
++					checkout.editLock.unlock();
++				}
++			}
++			completed = true;
++			return { checkout, anchors: transferred };
++		} finally {
++			if (!completed) {
++				for (const anchor of transferred) {
++					forest.anchors.forget(anchor);
++				}
++				checkout[disposeSymbol]();
++			}
++		}
+ 	}
+ 
+ 	public switchBranch(
+diff --git a/packages/dds/tree/src/simple-tree/index.ts b/packages/dds/tree/src/simple-tree/index.ts
+index 587186d0f6f32056bd70d620158868a415191668..4e9dfb7d094e79a52360436004106ee4db17cfe6 100644
+--- a/packages/dds/tree/src/simple-tree/index.ts
++++ b/packages/dds/tree/src/simple-tree/index.ts
+@@ -26,6 +26,7 @@ export {
+ 	getOrCreateNodeFromInnerNode,
+ 	getOrCreateNodeFromInnerUnboxedNode,
+ 	getKernel,
++	treeNodeFromAnchor,
+ 	type NodeFromSchema,
+ 	isTreeNodeSchemaClass,
+ 	type TreeNodeFromImplicitAllowedTypes,
+diff --git a/packages/dds/tree/src/test/shared-tree/authorityNodeReferences.spec.ts b/packages/dds/tree/src/test/shared-tree/authorityNodeReferences.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..0b296068735f12f39bdd4beb3c2c18784b965229
+--- /dev/null
++++ b/packages/dds/tree/src/test/shared-tree/authorityNodeReferences.spec.ts
+@@ -0,0 +1,591 @@
++/*!
++ * Copyright (c) Microsoft Corporation and contributors. All rights reserved.
++ * Licensed under the MIT License.
++ */
++
++import { strict as assert } from "node:assert";
++import { FlushMode } from "@fluidframework/runtime-definitions/internal";
++import { combineVisitors } from "../../core/index.js";
++import {
++	SchemaFactory,
++	TreeViewConfiguration,
++	treeNodeApi as Tree,
++	type TreeNode,
++	getKernel,
++} from "../../simple-tree/index.js";
++import { configuredSharedTree } from "../../treeFactory.js";
++import {
++	ForestTypeOptimized,
++	ForestTypeReference,
++	getSharedTreeAuthority,
++	type SharedTreeAuthorityNodeReference,
++	type SharedTreeAuthorityReferenceCapture,
++	type SharedTreeAuthorityDraft,
++} from "../../shared-tree/index.js";
++import { TestTreeProviderLite, createTestUndoRedoStacks } from "../utils.js";
++
++const sf = new SchemaFactory("capture-reference-no-identifiers");
++class Item extends sf.object("Item", {
++	nativeId: sf.number,
++	value: sf.number,
++}) {}
++class Items extends sf.array("Items", Item) {}
++class Group extends sf.object("Group", { items: Items }) {}
++class Chain extends sf.objectRecursive("Chain", {
++	next: sf.optionalRecursive([() => Chain]),
++}) {}
++class Root extends sf.object("Root", {
++	items: Items,
++	slot: sf.optional(Item),
++	group: sf.optional(Group),
++	value: sf.number,
++}) {}
++const configuration = new TreeViewConfiguration({ schema: Root });
++
++function reference(capture: SharedTreeAuthorityReferenceCapture, node: TreeNode) {
++	const result = capture.reference(node);
++	assert(result.kind === "tracked");
++	return result.reference;
++}
++
++function resolveItem(
++	capture: SharedTreeAuthorityReferenceCapture,
++	ref: SharedTreeAuthorityNodeReference,
++	target: "live" | SharedTreeAuthorityDraft,
++): Item {
++	const result = capture.resolve(ref, target);
++	assert(result.kind === "node");
++	assert(Tree.is(result.node, Item));
++	return result.node;
++}
++
++for (const [name, forest] of [
++	["object", ForestTypeReference],
++	["chunked", ForestTypeOptimized],
++] as const) {
++	describe(`capture node references (${name})`, () => {
++		async function setup() {
++			const factory = configuredSharedTree({
++				forest,
++				minVersionForCollab: "2.80.0",
++				enableDetachedRootEditing: true,
++				externalAuthority: {
++					documentEpoch: "capture-references",
++					authorityId: "authority",
++					authorityEpoch: "epoch",
++				},
++			});
++			const provider = new TestTreeProviderLite(
++				2,
++				factory.getFactory(),
++				true,
++				FlushMode.TurnBased,
++			);
++			const trees = provider.trees;
++			const views = trees.map((tree) => tree.viewWith(configuration));
++			views[0].initialize({
++				items: [
++					{ nativeId: 7, value: 0 },
++					{ nativeId: 7, value: 0 },
++				],
++				value: 0,
++			});
++			provider.synchronizeMessages();
++			const controllers = trees.map(getSharedTreeAuthority);
++			const capture = controllers[0].capture();
++			const receipt = controllers[0].publishAdvance({
++				batchId: "bootstrap",
++				nextCheckpoint: "ready",
++				capture,
++				approvePrefix: capture.editIds.length,
++			});
++			provider.synchronizeMessages();
++			assert.equal(await receipt, "applied");
++			capture.dispose();
++			return { provider, trees, views, controllers, controller: controllers[0] };
++		}
++
++		it("relates different wrappers without conflating identical values or native IDs", async () => {
++			const { views, controller } = await setup();
++			const [first, second] = [...views[0].root.items];
++			const capture = controller.capture({ trackNodeReferences: true });
++			const one = reference(capture, first);
++			const two = reference(capture, second);
++			assert.notEqual(one, two);
++			const a = controller.createDraft(capture);
++			const aView = a.viewWith(configuration);
++			const s = controller.createDraft(capture, { afterPrefix: capture.editIds.length });
++			const sView = s.viewWith(configuration);
++			assert.notEqual(aView.root.items[0], first);
++			assert.equal(resolveItem(capture, one, a), aView.root.items[0]);
++			assert.equal(resolveItem(capture, two, s), sView.root.items[1]);
++			assert.equal(reference(capture, aView.root.items[0]), one);
++			assert.equal(reference(capture, sView.root.items[0]), one);
++			assert.equal(resolveItem(capture, one, "live"), first);
++			assert.equal(Tree.shortId(first), undefined);
++			a.dispose();
++			s.dispose();
++			capture.dispose();
++		});
++
++		it("projects P-born references directly from S and reports absence before creation", async () => {
++			const { provider, views, controller } = await setup();
++			views[0].root.value = 1;
++			provider.synchronizeMessages();
++			views[0].root.items.insertAtEnd({ nativeId: 7, value: 2 });
++			provider.synchronizeMessages();
++			const created = views[0].root.items[2];
++			const capture = controller.capture({ trackNodeReferences: true });
++			const ref = reference(capture, created);
++			for (const k of [0, 1, 2]) {
++				const draft = controller.createDraft(capture, { afterPrefix: k });
++				const view = draft.viewWith(configuration);
++				if (k < 2) {
++					assert.deepEqual(capture.resolve(ref, draft), { kind: "absent" });
++					assert.equal(view.root.items.length, 2);
++				} else {
++					assert.equal(resolveItem(capture, ref, draft), view.root.items[2]);
++					view.root.items[2].value = 3;
++					const receipt = controller.publishAdvance({
++						batchId: "normalize-born",
++						nextCheckpoint: "normalized",
++						capture,
++						approvePrefix: 2,
++						draft,
++					});
++					provider.synchronizeMessages();
++					assert.equal(await receipt, "applied");
++					assert.equal(resolveItem(capture, ref, "live"), created);
++					assert.equal(created.value, 3);
++				}
++				draft.dispose();
++			}
++			capture.dispose();
++		});
++
++		it("tracks already removed, never-hydrated peer roots with their actual detached metadata", async () => {
++			const { provider, views, controllers } = await setup();
++			// Do not touch the peer's item wrappers before removal/capture.
++			const original = views[0].root.items[0];
++			views[0].root.items.removeAt(0);
++			provider.synchronizeMessages();
++			const controller = controllers[1];
++			const capture = controller.capture({ trackNodeReferences: true });
++			const a = controller.createDraft(capture);
++			const aView = a.viewWith(configuration);
++			const ref = reference(capture, aView.root.items[0]);
++			const draft = controller.createDraft(capture, { afterPrefix: 1 });
++			draft.viewWith(configuration);
++			assert.equal(capture.resolve(ref, draft).kind, "node");
++			const removed = resolveItem(capture, ref, draft);
++			assert.equal(removed.value, 0);
++			removed.value = 17;
++			// This must be the target checkout's removed root, not a source wrapper.
++			const draftRoot = Tree.parent(removed);
++			assert.equal(draftRoot, undefined);
++			const active = controller.createDraft(capture, { afterPrefix: 1 });
++			const activeView = active.viewWith(configuration);
++			const other = resolveItem(capture, ref, active);
++			assert.notEqual(other, removed);
++			assert.throws(() => {
++				activeView.root.slot = removed;
++			}, /same checkout/);
++			other.value = 18;
++			activeView.root.slot = other;
++			const receipt = controller.publishAdvance({
++				batchId: "reattach-removed",
++				nextCheckpoint: "reattached",
++				capture,
++				approvePrefix: 1,
++				draft: active,
++			});
++			provider.synchronizeMessages();
++			assert.equal(await receipt, "applied");
++			assert.equal(views[0].root.slot, original);
++			assert.equal(original.value, 18);
++			assert.equal(resolveItem(capture, ref, "live"), views[1].root.slot);
++			active.dispose();
++			draft.dispose();
++			a.dispose();
++			capture.dispose();
++		});
++
++		it("never retargets after replacement, reorder, or repeated detach/reattach", async () => {
++			const { provider, views, controller } = await setup();
++			const original = views[0].root.items[0];
++			const capture = controller.capture({ trackNodeReferences: true });
++			const ref = reference(capture, original);
++			views[0].root.items.removeAt(0);
++			views[0].root.items.insertAtStart({ nativeId: 7, value: 0 });
++			provider.synchronizeMessages();
++			assert.equal(resolveItem(capture, ref, "live"), original);
++			assert.equal(capture.reference(views[0].root.items[0]).kind, "outsideCapture");
++			const a = controller.createDraft(capture);
++			a.viewWith(configuration);
++			assert.notEqual(resolveItem(capture, ref, a), views[0].root.items[0]);
++			for (let i = 0; i < 3; i++) {
++				original.value = i;
++				views[0].root.slot = original;
++				provider.synchronizeMessages();
++				assert.equal(resolveItem(capture, ref, "live"), views[0].root.slot);
++				views[0].root.slot = undefined;
++				provider.synchronizeMessages();
++				assert.equal(resolveItem(capture, ref, "live"), original);
++			}
++			a.dispose();
++			capture.dispose();
++		});
++
++		it("excludes L births and all post-cut births even after acknowledgement", async () => {
++			const { provider, views, controller } = await setup();
++			const existing = views[0].root.items[0];
++			views[0].root.items.insertAtEnd({ nativeId: 7, value: 99 });
++			const local = views[0].root.items[2];
++			existing.value = 4;
++			const capture = controller.capture({ trackNodeReferences: true });
++			assert.equal(capture.reference(local).kind, "outsideCapture");
++			const ref = reference(capture, existing);
++			const a = controller.createDraft(capture);
++			a.viewWith(configuration);
++			assert.equal(resolveItem(capture, ref, a).value, 0);
++			assert.equal(resolveItem(capture, ref, "live").value, 4);
++			provider.synchronizeMessages();
++			assert.equal(capture.reference(local).kind, "outsideCapture");
++			views[1].root.items.insertAtEnd({ nativeId: 7, value: 100 });
++			provider.synchronizeMessages();
++			assert.equal(capture.reference(views[0].root.items[3]).kind, "outsideCapture");
++			const aViewItem = resolveItem(capture, ref, a);
++			const fresh = new Item({ nativeId: 7, value: 0 });
++			assert.equal(capture.reference(fresh).kind, "outsideCapture");
++			// A correction-born node is explicitly not an eventual-live reference.
++			const draft = controller.createDraft(capture);
++			const view = draft.viewWith(configuration);
++			view.root.items.insertAtEnd(fresh);
++			assert.equal(capture.reference(view.root.items[2]).kind, "outsideCapture");
++			assert.equal(reference(capture, aViewItem), ref);
++			draft.dispose();
++			a.dispose();
++			capture.dispose();
++		});
++
++		it("preserves P-created and moved local nodes through correction, rebase and self-echo", async () => {
++			const { provider, trees, views, controller } = await setup();
++			views[0].root.value = 1;
++			provider.synchronizeMessages();
++			views[1].root.items.insertAtEnd({ nativeId: 7, value: 2 });
++			provider.synchronizeMessages();
++			const node = views[0].root.items[2];
++			const capture = controller.capture({ trackNodeReferences: true });
++			const ref = reference(capture, node);
++			views[0].root.items.removeAt(2);
++			views[0].root.slot = node;
++			node.value = 20;
++			const draft = controller.createDraft(capture, { afterPrefix: 1 });
++			draft.viewWith(configuration).root.value = 10;
++			assert.deepEqual(capture.resolve(ref, draft), { kind: "absent" });
++			const receipt = controller.publishAdvance({
++				batchId: "rebase",
++				nextCheckpoint: "corrected",
++				capture,
++				approvePrefix: 1,
++				draft,
++			});
++			// Flushes this writer's ordinary work and advance in one real runtime batch.
++			trees[0].containerRuntime.flush();
++			provider.synchronizeMessages({ flush: false });
++			assert.equal(await receipt, "applied");
++			assert.equal(resolveItem(capture, ref, "live"), node);
++			assert.equal(node.value, 20);
++			assert.equal(views[0].root.slot, node);
++			const pending = controller.capture();
++			assert(pending.editIds.length > 0);
++			assert.equal(pending.editIds[0], capture.editIds[1]);
++			pending.dispose();
++			draft.dispose();
++			capture.dispose();
++		});
++
++		it("rescues an existing child when local creation of its new parent is rolled back", async () => {
++			const { provider, views, controller } = await setup();
++			const original = views[0].root.items[0];
++			views[0].root.items.removeAt(0);
++			const group = new Group({ items: [] });
++			views[0].root.group = group;
++			group.items.insertAtEnd(original);
++			const capture = controller.capture({ trackNodeReferences: true });
++			const ref = reference(capture, original);
++			assert.equal(capture.reference(group).kind, "outsideCapture");
++			const a = controller.createDraft(capture);
++			const view = a.viewWith(configuration);
++			assert.equal(resolveItem(capture, ref, a), view.root.items[0]);
++			assert.equal(view.root.group, undefined);
++			provider.synchronizeMessages();
++			assert.equal(resolveItem(capture, ref, "live"), group.items[0]);
++			a.dispose();
++			capture.dispose();
++		});
++
++		it("preserves a reference through a peer correction while L is genuinely unsequenced", async () => {
++			const { provider, trees, views, controllers, controller } = await setup();
++			views[1].root.items.insertAtEnd({ nativeId: 7, value: 2 });
++			provider.synchronizeMessages();
++			const original = views[0].root.items[2];
++			const capture = controller.capture({ trackNodeReferences: true });
++			const ref = reference(capture, original);
++			const peerCut = controllers[1].capture();
++			const correction = controllers[1].createDraft(peerCut);
++			correction.viewWith(configuration).root.value = 42;
++			const receipt = controllers[1].publishAdvance({
++				batchId: "peer-correction",
++				nextCheckpoint: "peer-corrected",
++				capture: peerCut,
++				draft: correction,
++			});
++			trees[1].containerRuntime.flush();
++			views[0].root.items.removeAt(2);
++			original.value = 23;
++			views[0].root.slot = original;
++			provider.synchronizeMessages({ flush: false });
++			assert.equal(await receipt, "applied");
++			assert.equal(resolveItem(capture, ref, "live"), views[0].root.slot);
++			assert.equal(original.value, 23);
++			assert.equal(views[1].root.items[2].value, 2, "L has not reached the peer");
++			const stillPending = controller.capture();
++			assert.deepEqual(stillPending.editIds, capture.editIds);
++			stillPending.dispose();
++			provider.synchronizeMessages();
++			assert.equal(resolveItem(capture, ref, "live"), original);
++			assert.equal(views[1].root.slot?.value, 23);
++			correction.dispose();
++			peerCut.dispose();
++			capture.dispose();
++		});
++
++		it("rejects excessive depth without leaking anchors or breaking ordinary capture", async () => {
++			const factory = configuredSharedTree({
++				forest,
++				minVersionForCollab: "2.80.0",
++				enableDetachedRootEditing: true,
++				externalAuthority: {
++					documentEpoch: "depth",
++					authorityId: "authority",
++					authorityEpoch: "epoch",
++				},
++			});
++			const provider = new TestTreeProviderLite(1, factory.getFactory());
++			const tree = provider.trees[0];
++			let chain = new Chain({});
++			for (let i = 0; i < 256; i++) {
++				chain = new Chain({ next: chain });
++			}
++			tree.viewWith(new TreeViewConfiguration({ schema: Chain })).initialize(chain);
++			provider.synchronizeMessages();
++			const controller = getSharedTreeAuthority(tree);
++			const anchors = tree.kernel.checkout.forest.anchors;
++			const before = [...anchors].length;
++			assert.throws(() => controller.capture({ trackNodeReferences: true }), /depth limit/);
++			assert.equal([...anchors].length, before);
++			const ordinary = controller.capture();
++			assert(ordinary.editIds.length > 0);
++			ordinary.dispose();
++		});
++
++		it("keeps references through undo/redo of the retained lifecycle", async () => {
++			const { provider, trees, views, controller } = await setup();
++			const stacks = createTestUndoRedoStacks(trees[0].kernel.checkout.events);
++			const original = views[0].root.items[0];
++			const capture = controller.capture({ trackNodeReferences: true });
++			const ref = reference(capture, original);
++			views[0].root.items.removeAt(0);
++			provider.synchronizeMessages();
++			const undo = stacks.undoStack.pop();
++			assert(undo !== undefined);
++			undo.revert();
++			provider.synchronizeMessages();
++			assert.equal(resolveItem(capture, ref, "live"), views[0].root.items[0]);
++			const redo = stacks.redoStack.pop();
++			assert(redo !== undefined);
++			redo.revert();
++			provider.synchronizeMessages();
++			assert.equal(resolveItem(capture, ref, "live"), original);
++			const result = capture.resolve(ref, "live");
++			assert(result.kind === "node");
++			assert.equal(result.status, "removed");
++			capture.dispose();
++		});
++
++		it("reports physical destruction as unavailable without finding a lookalike", async () => {
++			const { provider, trees, views, controller } = await setup();
++			const original = views[0].root.items[0];
++			const capture = controller.capture({ trackNodeReferences: true });
++			const ref = reference(capture, original);
++			views[0].root.items.removeAt(0);
++			provider.synchronizeMessages();
++			const anchor = getKernel(original).anchorNode;
++			assert(anchor !== undefined && anchor.parent === undefined);
++			const liveForest = trees[0].kernel.checkout.forest;
++			const visitor = combineVisitors([
++				liveForest.acquireVisitor(),
++				liveForest.anchors.acquireVisitor(),
++			]);
++			visitor.destroy(anchor.parentField, 1);
++			visitor.free();
++			assert.deepEqual(capture.resolve(ref, "live"), {
++				kind: "unavailable",
++				reason: "destroyed",
++			});
++			assert.notEqual(views[0].root.items[0], original);
++			capture.dispose();
++		});
++
++		it("rejects foreign captures/checkouts, forged references, and disposed or sealed targets", async () => {
++			const { provider, views, controllers, controller } = await setup();
++			const capture = controller.capture({ trackNodeReferences: true });
++			const other = controller.capture({ trackNodeReferences: true });
++			const ref = reference(capture, views[0].root.items[0]);
++			assert.throws(() => other.resolve(ref, "live"), /exact capture/);
++			assert.throws(
++				() => capture.resolve({ scope: "capture-local" }, "live"),
++				/exact capture/,
++			);
++			assert.throws(
++				() => capture.reference(views[1].root.items[0]),
++				/another capture or checkout/,
++			);
++			const foreign = controller.createDraft(other);
++			const foreignView = foreign.viewWith(configuration);
++			assert.throws(
++				() => capture.reference(foreignView.root.items[0]),
++				/another capture or checkout/,
++			);
++			assert.throws(() => capture.resolve(ref, foreign), /exact capture/);
++			const draft = controller.createDraft(capture);
++			assert.throws(() => capture.resolve(ref, draft), /active compatible target view/);
++			const view = draft.viewWith(configuration);
++			view.dispose();
++			assert.throws(() => capture.resolve(ref, draft), /active unpublished/);
++			draft.dispose();
++			const sealed = controller.createDraft(capture);
++			const sealedView = sealed.viewWith(configuration);
++			const sealedNode = sealedView.root.items[0];
++			const receipt = controller.publishAdvance({
++				batchId: "seal",
++				nextCheckpoint: "sealed",
++				capture,
++				draft: sealed,
++			});
++			assert.throws(() => capture.resolve(ref, sealed), /active unpublished/);
++			assert.throws(() => capture.reference(sealedNode), /owned by this reference capture/);
++			provider.synchronizeMessages();
++			assert.equal(await receipt, "applied");
++			sealed.dispose();
++			foreign.dispose();
++			other.dispose();
++			capture.dispose();
++			assert.throws(() => capture.resolve(ref, "live"), /disposed/);
++			assert.throws(() => capture.reference(views[0].root.items[0]), /disposed/);
++			const peer = controllers[1].capture();
++			assert.equal(peer.checkpoint, "sealed");
++			peer.dispose();
++		});
++
++		it("bounds eager tracking/drafts and releases owned anchors on failure and disposal", async () => {
++			const { trees, views, controller } = await setup();
++			const original = views[0].root.items[0];
++			const anchors = trees[0].kernel.checkout.forest.anchors;
++			const before = [...anchors].length;
++			assert.throws(
++				() => controller.capture({ trackNodeReferences: true, maxNodes: 1 }),
++				/limit/,
++			);
++			assert.equal([...anchors].length, before);
++			for (const limit of [0, -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
++				assert.throws(
++					() => controller.capture({ trackNodeReferences: true, maxNodes: limit }),
++					/limits/,
++				);
++			}
++			const capture = controller.capture({ trackNodeReferences: true, maxDrafts: 1 });
++			const ref = reference(capture, original);
++			const draft = controller.createDraft(capture);
++			draft.viewWith(configuration);
++			assert.throws(() => controller.createDraft(capture), /draft limit/);
++			draft.dispose();
++			const replacement = controller.createDraft(capture);
++			replacement.viewWith(configuration);
++			assert.equal(resolveItem(capture, ref, "live"), original);
++			capture.dispose();
++			capture.dispose();
++			assert.throws(() => replacement.viewWith(configuration), /disposed/);
++			replacement.dispose();
++			assert.equal([...anchors].length, before);
++			const ordinary = controller.capture();
++			assert.equal("reference" in ordinary, false);
++			ordinary.dispose();
++		});
++
++		it("cleans up an injected fork-listener failure without poisoning the source", async () => {
++			const { trees, controller } = await setup();
++			const checkout = trees[0].kernel.checkout;
++			const before = [...checkout.forest.anchors].length;
++			const off = checkout.events.on("fork", () => {
++				throw new Error("Injected fork observer failure");
++			});
++			assert.throws(
++				() => controller.capture({ trackNodeReferences: true }),
++				/Injected fork observer failure/,
++			);
++			off();
++			assert.equal([...checkout.forest.anchors].length, before);
++			const capture = controller.capture({ trackNodeReferences: true });
++			capture.dispose();
++			assert.equal([...checkout.forest.anchors].length, before);
++		});
++
++		it("rejects reentrant reference operations and protects the fork transfer boundary", async () => {
++			const { trees, views, controller } = await setup();
++			const original = views[0].root.items[0];
++			const capture = controller.capture({ trackNodeReferences: true });
++			const ref = reference(capture, original);
++			const transaction = trees[0].kernel.checkout.transaction;
++			transaction.start();
++			assert.throws(
++				() => controller.capture({ trackNodeReferences: true }),
++				/completed transaction/,
++			);
++			assert.throws(() => capture.resolve(ref, "live"), /completed transaction/);
++			transaction.abort();
++			let events = 0;
++			const off = Tree.on(original, "nodeChanged", () => {
++				events++;
++				assert.throws(() => capture.resolve(ref, "live"), /forbidden|change event/i);
++				assert.throws(() => capture.dispose(), /forbidden|change event/i);
++				assert.throws(
++					() => controller.capture({ trackNodeReferences: true }),
++					/forbidden|change event/i,
++				);
++			});
++			original.value = 1;
++			assert.equal(events, 1);
++			off();
++			let forks = 0;
++			const offFork = trees[0].kernel.checkout.events.on("fork", (child) => {
++				forks++;
++				assert.throws(() => {
++					original.value = 99;
++				}, /forbidden|change event/i);
++				const childView = child.viewWith(configuration);
++				assert.throws(() => {
++					childView.root.value = 99;
++				}, /forbidden|change event/i);
++			});
++			const second = controller.capture({ trackNodeReferences: true });
++			offFork();
++			assert.equal(forks, 1);
++			assert.equal(original.value, 1);
++			assert.equal(views[0].root.value, 0);
++			second.dispose();
++			capture.dispose();
++		});
++	});
++}

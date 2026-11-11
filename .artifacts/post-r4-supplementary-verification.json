@@ -1,0 +1,57 @@
+{
+  "scope": "Post-r4 test-only hardening; does not replace immutable r4 release evidence",
+  "r4TreeSha256": "A3B17F0D75738D37D8D00C366620D9FFE86CABBA2C6C73336D56A84B1208C179",
+  "r4SourcePatchSha256": "0427441694BDC6F93813B3869F1B9D8753724175D960A58E0B948E9ED9F351D5",
+  "r4ReleaseVerificationSha256": "7C42571BFD05ADB1BA2595C4D66AC5CC196C73085A9189E843DA5F5FC7EF2A7B",
+  "r2TreeSha256": "B018B9E461E39E90006C8554C6C2A16D168FA17715E61E8D29C958FF188C6D33",
+  "compatibleR2WrapperSha256": "2A0942EE89B05FB58F9E03EE40B7852C73A11DCE4C6A7F459556D8CD2218D16F",
+  "supplementaryPatch": "post-r4-supplementary-tests.patch",
+  "supplementaryPatchSha256": "3B2ADDD1056028E40056F6C08858A8D59C5A9DB3A1A35094D5497331E5065388",
+  "supplementaryPatchBase": "Apply r4\\sharedtree-source.patch to release 7c3fc51d5d204a16299014921e93d522590a4af2 first",
+  "testSource": "detach-port\\packages\\dds\\tree\\src\\test\\shared-tree\\detachedReinsertion.spec.ts",
+  "testSourceSha256": "F835F58505AC57E6853C67686825A7D7ACA69F7D374A37FFF57C070407010A6B",
+  "validation": {
+    "esmCompile": "passed",
+    "cjsCompile": "passed",
+    "esmDetachPassing": 16,
+    "cjsDetachPassing": 16,
+    "esmAuthorityPassing": 18,
+    "cjsAuthorityPassing": 18,
+    "typeAwareEslintQuiet": "passed",
+    "biomeCheck": "passed",
+    "productionSourceFilesByteIdenticalToR4": 378,
+    "productionChanges": 0,
+    "blockingR4BugFoundInTheseCases": false
+  },
+  "factoryOptions": {
+    "minVersionForCollab": "2.80.0",
+    "enableDetachedRootEditing": true
+  },
+  "externalAuthorityLabels": {
+    "requiredNonemptyKeys": ["documentEpoch", "authorityId", "authorityEpoch"],
+    "mustMatchAcrossParticipants": true
+  },
+  "protocolCompatibility": {
+    "combinedDdsType": "https://graph.microsoft.com/types/tree/detached-roots-v1/external-authority-v1",
+    "freshContainersRequired": true,
+    "allParticipantsUseMatchingFactoryOptions": true,
+    "r2AuthoritySummaryUpgradeSupported": false,
+    "reasonR2UpgradeUnsupported": "r2 did not persist the bootstrap authority metadata required by r3/r4",
+    "initialAttachSummary": "supported",
+    "runtimeAuthoritySummaries": "unsupported; retain test-only runtime summaries-off configuration",
+    "r4LiveAfr": "parent-owned; not claimed by this supplementary run"
+  },
+  "logs": [
+    "post-r4-supplementary-cjs-compile-final.log",
+    "post-r4-supplementary-cjs-tests-final.log",
+    "post-r4-supplementary-esm-compile-final.log",
+    "post-r4-supplementary-esm-tests-final.log",
+    "post-r4-supplementary-eslint-final.log",
+    "post-r4-supplementary-biome-final.log"
+  ],
+  "toolingNotes": [
+    "Used installed Node directly and the existing fluid-tsc/tsc compilers, bypassing Fluid build-graph scanning.",
+    "Direct Mocha invocation reproduced the existing pnpm mocha shim's NODE_PATH for CommonJS package self-resolution.",
+    "Biome corrected one test import's formatting; no production source fix or new package was needed."
+  ]
+}

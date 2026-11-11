@@ -1,0 +1,50 @@
+{
+  "success": true,
+  "lane": "CJS",
+  "nodeVersion": "v24.16.0",
+  "packageRoot": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-consumer\\node_modules\\@fluidframework\\tree",
+  "wrapperRoot": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-consumer\\node_modules\\fluid-framework",
+  "directEntry": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-consumer\\node_modules\\@fluidframework\\tree\\dist\\entrypoints\\alpha.js",
+  "archiveSha256": "6346550104ecc0ec037d37919b521cdefc8518ccd735a38694c01917de3968c5",
+  "wrapperSha256": "2a0942ee89b05fb58f9e03ee40b7852c73a11dce4c6a7f459556d8cd2218d16f",
+  "editManagerSha256": "d3a81baefd76c997d7f6fb24051f009c51288742ec305a089822bf35d700c3ee",
+  "sourceWorktreeTreeLoaded": false,
+  "wrapperAndDirectIdentity": true,
+  "proofs": [
+    {
+      "forest": "Reference",
+      "externalAuthority": false,
+      "transitiveForkIsolationRebaseMerge": true
+    },
+    {
+      "forest": "Reference",
+      "externalAuthority": true,
+      "transitiveForkIsolationRebaseMerge": true,
+      "authorityCheckpointAndCorrection": true,
+      "referenceCaptureAndDraftIdentity": true,
+      "identicalRetry": true,
+      "detachedEditReattach": true,
+      "disposalExpiry": true,
+      "captureExportDisposeCycles": 100,
+      "disposedCapturesAlive": 0
+    },
+    {
+      "forest": "Optimized",
+      "externalAuthority": false,
+      "transitiveForkIsolationRebaseMerge": true
+    },
+    {
+      "forest": "Optimized",
+      "externalAuthority": true,
+      "transitiveForkIsolationRebaseMerge": true,
+      "authorityCheckpointAndCorrection": true,
+      "referenceCaptureAndDraftIdentity": true,
+      "identicalRetry": true,
+      "detachedEditReattach": true,
+      "disposalExpiry": true,
+      "captureExportDisposeCycles": 100,
+      "disposedCapturesAlive": 0
+    }
+  ],
+  "limitation": "Fresh installed archive, local mock sequencing only; no real services/native/browser/OCS/AFR."
+}

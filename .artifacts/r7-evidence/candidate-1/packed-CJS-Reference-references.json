@@ -1,0 +1,32 @@
+{
+  "lane": "CJS",
+  "forest": "Reference",
+  "clients": 3,
+  "success": true,
+  "transport": "Generic local mock ordering, not AFR or OCS",
+  "wireProtocol": 2,
+  "ddsType": "https://graph.microsoft.com/types/tree/detached-roots-v1/external-authority-v2",
+  "wrapperIdentity": true,
+  "sourceWorktreeTreeLoaded": false,
+  "proofs": [
+    "A/prefix/live counterparts",
+    "identical-content discrimination",
+    "unhydrated removed-root metadata",
+    "P births absent before creation",
+    "late/draft/L births outside capture",
+    "atomic correction with later P and genuine L",
+    "same-node detach/edit/reattach",
+    "replacement cannot retarget",
+    "capture/view/target/forgery ownership",
+    "limits/disposal/reentrancy"
+  ],
+  "hashes": {
+    "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r7-consumer\\node_modules\\@fluidframework\\tree\\dist\\entrypoints\\alpha.js": "f40875f1d56032e8406a9702fcbc7b9aa289d333ef005f502c0392d18f817dda",
+    "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r7-consumer\\node_modules\\@fluidframework\\tree\\dist\\shared-tree\\authorityNodeReferences.js": "0d6051844b2b42e19669c4b441f89a116ffd2288f5ead209f6d1e725263929f9",
+    "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r7-consumer\\node_modules\\@fluidframework\\tree\\dist\\shared-tree\\externalAuthorityController.js": "4346140dd9a01da73215e28318598804e85803aa979a2600c5e3e8a20059a167",
+    "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r7-consumer\\node_modules\\@fluidframework\\tree\\dist\\shared-tree\\treeCheckout.js": "697afd9adafeca0ae0ca99eb6ef9e9fd71e20668a32d58181693149b07ff98a6",
+    "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r7-consumer\\node_modules\\@fluidframework\\tree\\dist\\core\\tree\\anchorSet.js": "d4e4783203852f4e8d99b5824aa2532f991d1c5f337eda9c87e352810f580a96",
+    "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r7-consumer\\node_modules\\@fluidframework\\tree\\dist\\treeFactory.js": "42b7454404912b2415a9e27ea39ae1fd67707b2919ad555eeba97dbfd4f3dac8"
+  },
+  "nodeVersion": "v24.16.0"
+}

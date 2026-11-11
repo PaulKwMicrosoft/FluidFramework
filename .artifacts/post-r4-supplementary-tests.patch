@@ -1,0 +1,132 @@
+diff --git a/packages/dds/tree/src/test/shared-tree/detachedReinsertion.spec.ts b/packages/dds/tree/src/test/shared-tree/detachedReinsertion.spec.ts
+index 26fe77f759..7f9cd8704f 100644
+--- a/packages/dds/tree/src/test/shared-tree/detachedReinsertion.spec.ts
++++ b/packages/dds/tree/src/test/shared-tree/detachedReinsertion.spec.ts
+@@ -231,6 +231,51 @@ describe("detached reinsertion", () => {
+ 		assert.equal(peerNode.value, 9);
+ 	});
+ 
++	for (const firstTarget of ["array", "optional"] as const) {
++		for (const secondTarget of ["array", "optional"] as const) {
++			it(`converges reattachment ${firstTarget} versus ${secondTarget}`, () => {
++				const { provider, first, second } = setup();
++				const node = first.root.left.at(0);
++				const peerNode = second.root.left.at(0);
++				assert(node !== undefined && peerNode !== undefined);
++				first.root.left.removeAt(0);
++				provider.synchronizeMessages();
++				const attach = (root: Root, item: Item, target: "array" | "optional") => {
++					if (target === "array") {
++						root.right.insertAtEnd(item);
++					} else {
++						root.slot = item;
++					}
++				};
++				attach(first.root, node, firstTarget);
++				attach(second.root, peerNode, secondTarget);
++				provider.synchronizeMessages();
++				const content = (root: Root) => ({
++					left: [...root.left].map((item) => item.name),
++					right: [...root.right].map((item) => item.name),
++					slot: root.slot?.name,
++				});
++				assert.deepEqual(content(first.root), content(second.root));
++				if (firstTarget === "optional" && secondTarget === "array") {
++					assert.equal(
++						first.root.slot,
++						undefined,
++						"A competing reattach can empty the prior optional destination",
++					);
++				}
++				for (const [root, item] of [
++					[first.root, node],
++					[second.root, peerNode],
++				] as const) {
++					assert.equal(
++						[...root.left, ...root.right, root.slot].filter((entry) => entry === item).length,
++						1,
++					);
++				}
++			});
++		}
++	}
++
+ 	it("reattaches multiple roots in order without changing identity", () => {
+ 		const { provider, first, second } = setup();
+ 		const nodes = [...first.root.left];
+@@ -284,7 +329,7 @@ describe("detached reinsertion", () => {
+ 		const node = first.root.left.at(0);
+ 		const peerNode = second.root.left.at(0);
+ 		assert(node !== undefined && peerNode !== undefined);
+-		const { undoStack, unsubscribe } = createTestUndoRedoStacks(
++		const { undoStack, redoStack, unsubscribe } = createTestUndoRedoStacks(
+ 			provider.trees[0].kernel.checkout.events,
+ 		);
+ 		first.root.left.removeAt(0);
+@@ -338,6 +383,22 @@ describe("detached reinsertion", () => {
+ 		assert.equal(first.root.left.at(1), node);
+ 		assert.equal(second.root.left.at(1), peerNode);
+ 		assert.equal(node.value, 8);
++		for (let i = 0; i < 2; i++) {
++			const redo = redoStack.pop();
++			assert(redo !== undefined);
++			redo.revert();
++			provider.synchronizeMessages();
++		}
++		assert.equal(first.root.right.at(0), node);
++		assert.equal(second.root.right.at(0), peerNode);
++		assert.equal(node.value, 8);
++		const afterRedo = controller.capture();
++		assert.equal(
++			afterRedo.editIds.length,
++			4,
++			"No-net undo/redo still has four submission obligations",
++		);
++		afterRedo.dispose();
+ 		unsubscribe();
+ 		afterApproval.dispose();
+ 		settled.dispose();
+@@ -345,6 +406,43 @@ describe("detached reinsertion", () => {
+ 		capture.dispose();
+ 	});
+ 
++	it("aborts or commits a detach/edit/attach transaction without leaking identities or obligations", async () => {
++		const { provider, first, second, controllers } = await setupAuthority();
++		const node = first.root.left.at(0);
++		const peerNode = second.root.left.at(0);
++		assert(node !== undefined && peerNode !== undefined);
++		const transaction = provider.trees[0].kernel.checkout.transaction;
++		transaction.start();
++		first.root.left.removeAt(0);
++		node.value = 7;
++		first.root.right.insertAtEnd(node);
++		transaction.abort();
++		provider.synchronizeMessages();
++		assert.equal(first.root.left.at(0), node);
++		assert.equal(second.root.left.at(0), peerNode);
++		assert.equal(node.value, 1);
++		const aborted = controllers[0].capture();
++		assert.equal(aborted.editIds.length, 0);
++		transaction.start();
++		first.root.left.removeAt(0);
++		node.value = 7;
++		first.root.right.insertAtEnd(node);
++		transaction.commit();
++		provider.synchronizeMessages();
++		assert.equal(first.root.right.at(0), node);
++		assert.equal(second.root.right.at(0), peerNode);
++		assert.equal(node.value, 7);
++		assert.equal(peerNode.value, 7);
++		const committed = controllers[0].capture();
++		assert.equal(
++			committed.editIds.length,
++			1,
++			"A semantic transaction produces one edit identity",
++		);
++		committed.dispose();
++		aborted.dispose();
++	});
++
+ 	it("rebases unsequenced detach/attach and later decodes their original sender context", async () => {
+ 		const { provider, first, second, controllers } = await setupAuthority(FlushMode.TurnBased);
+ 		const controller = controllers[0];

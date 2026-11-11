@@ -1,0 +1,205 @@
+diff --git a/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md b/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
+index 6220471fb330f87d5ba9ae4917aebe7b20e77c4f..50a0255c0d8adc39d7e0672ad2dc3bae702d0f3b 100644
+--- a/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
++++ b/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
+@@ -78,6 +78,14 @@ cross-process receipts and replay preparation remain unsupported.
+ No API signature, envelope version, ordering service or DDS type changes in r7.
+ Runtime wire duplicate/reconnect paths remain separate from public API retry.
+ 
++The r7 all-M4 successor also makes capture disposal reentrant-safe. It first
++preflights every reference checkout without changing ownership, then marks the
++capture expired before disposing public drafts (which can invoke caller-owned
++revertible disposal callbacks). A callback that calls `capture.dispose()` again
++is a no-op. Transaction/change-event preflight failures leave the capture usable.
++Real teardown errors are not swallowed; internal A/S checkout cleanup runs in
++`finally`, and an already-started capture disposal remains expired.
++
+ ### r6 opt-in, capture-local node counterparts
+ 
+ Ordinary `capture()` and authority wire protocol v2 are unchanged. The separate
+diff --git a/packages/dds/tree/src/shared-tree/authorityNodeReferences.ts b/packages/dds/tree/src/shared-tree/authorityNodeReferences.ts
+index 3564d8d5b1fd8950b00d0a66696a2c0ee79309b4..29188fe490a877e565f4ce79c61681cddfd6a854 100644
+--- a/packages/dds/tree/src/shared-tree/authorityNodeReferences.ts
++++ b/packages/dds/tree/src/shared-tree/authorityNodeReferences.ts
+@@ -256,13 +256,20 @@ export class AuthorityNodeReferences {
+ 		};
+ 	}
+ 
+-	public dispose(): void {
++	/** Validates teardown without changing ownership or notifying observers. */
++	public checkCanDispose(): void {
+ 		if (!this.disposed) {
+ 			for (const checkout of this.contexts.keys()) {
+ 				if (!checkout.disposed) {
+ 					checkout.checkReferenceAccess();
+ 				}
+ 			}
++		}
++	}
++
++	public dispose(): void {
++		if (!this.disposed) {
++			this.checkCanDispose();
+ 			this.disposed = true;
+ 			for (const checkout of this.contexts.keys()) {
+ 				this.release(checkout);
+diff --git a/packages/dds/tree/src/shared-tree/externalAuthorityController.ts b/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
+index 74ef30e49d738d2943b0e9b4e9255ffac131edfe..a53b77fea4a45fd9db54644a610ffc52e594bf54 100644
+--- a/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
++++ b/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
+@@ -240,15 +240,23 @@ class Controller implements SharedTreeAuthorityController {
+ 			},
+ 			dispose: () => {
+ 				if (!data.disposed) {
+-					data.references?.dispose();
++					data.references?.checkCanDispose();
++					// Commit expiry before teardown can invoke caller-owned revertible callbacks.
+ 					data.disposed = true;
+ 					for (const [batchId, publication] of this.publications) {
+ 						if (publication.capture === capture && publication.finished) {
+ 							this.publications.delete(batchId);
+ 						}
+ 					}
+-					data.approvedCheckout[disposeSymbol]();
+-					data.sequencedCheckout[disposeSymbol]();
++					try {
++						data.references?.dispose();
++					} finally {
++						try {
++							data.approvedCheckout[disposeSymbol]();
++						} finally {
++							data.sequencedCheckout[disposeSymbol]();
++						}
++					}
+ 				}
+ 			},
+ 			...(references === undefined
+diff --git a/packages/dds/tree/src/test/shared-tree/authorityNodeReferences.spec.ts b/packages/dds/tree/src/test/shared-tree/authorityNodeReferences.spec.ts
+index 0b296068735f12f39bdd4beb3c2c18784b965229..9b5aa2d10dcc84c6ded0ab7815bda4cd130f1dfe 100644
+--- a/packages/dds/tree/src/test/shared-tree/authorityNodeReferences.spec.ts
++++ b/packages/dds/tree/src/test/shared-tree/authorityNodeReferences.spec.ts
+@@ -12,12 +12,14 @@ import {
+ 	treeNodeApi as Tree,
+ 	type TreeNode,
+ 	getKernel,
++	asTreeViewAlpha,
+ } from "../../simple-tree/index.js";
+ import { configuredSharedTree } from "../../treeFactory.js";
+ import {
+ 	ForestTypeOptimized,
+ 	ForestTypeReference,
+ 	getSharedTreeAuthority,
++	TreeAlpha,
+ 	type SharedTreeAuthorityNodeReference,
+ 	type SharedTreeAuthorityReferenceCapture,
+ 	type SharedTreeAuthorityDraft,
+@@ -489,6 +491,109 @@ for (const [name, forest] of [
+ 			peer.dispose();
+ 		});
+ 
++		it("disposes once when public draft revertible callbacks reenter capture disposal", async () => {
++			const { views, controller } = await setup();
++			const original = views[0].root;
++			const capture = controller.capture({ trackNodeReferences: true });
++			let calls = 0;
++			const drafts = [controller.createDraft(capture), controller.createDraft(capture)];
++			for (const draft of drafts) {
++				const view = asTreeViewAlpha(draft.viewWith(configuration));
++				const off = view.events.on("changed", ({ getRevertible }) => {
++					assert(getRevertible !== undefined);
++					getRevertible(() => {
++						calls++;
++						capture.dispose();
++						assert.throws(() => capture.exportApproved(), /disposed/);
++					});
++				});
++				view.root.value = 1;
++				off();
++			}
++			assert.doesNotThrow(() => capture.dispose());
++			assert.equal(calls, 2);
++			capture.dispose();
++			assert.equal(calls, 2);
++			assert.equal(views[0].root, original);
++			assert.equal(original.value, 0);
++			for (const draft of drafts) {
++				assert.throws(() => draft.viewWith(configuration), /disposed/);
++				draft.dispose();
++			}
++			controller.capture().dispose();
++		});
++
++		it("keeps captures usable when live or draft transaction disposal preflight rejects", async () => {
++			const { views, controller } = await setup();
++			const capture = controller.capture({ trackNodeReferences: true });
++			const draft = controller.createDraft(capture);
++			const view = draft.viewWith(configuration);
++			const snapshot = capture.exportSequenced();
++			for (const root of [views[0].root, view.root]) {
++				const branch = TreeAlpha.context(root);
++				assert(branch.isBranch());
++				branch.runTransaction(() => {
++					assert.throws(() => capture.dispose(), /completed transaction/);
++					return { rollback: true };
++				});
++				assert.deepEqual(capture.exportSequenced(), snapshot);
++				assert.equal(capture.reference(views[0].root).kind, "tracked");
++			}
++			capture.dispose();
++			draft.dispose();
++		});
++
++		it("keeps captures usable when live or draft change-event disposal preflight rejects", async () => {
++			const { views, controller } = await setup();
++			const capture = controller.capture({ trackNodeReferences: true });
++			const draft = controller.createDraft(capture);
++			const view = draft.viewWith(configuration);
++			const snapshot = capture.exportSequenced();
++			let rejected = 0;
++			for (const root of [views[0].root, view.root]) {
++				const off = Tree.on(root, "nodeChanged", () => {
++					assert.throws(() => capture.dispose(), /forbidden|change event/i);
++					rejected++;
++				});
++				root.value = 2;
++				off();
++				assert.deepEqual(capture.exportSequenced(), snapshot);
++				assert.equal(capture.reference(views[0].root).kind, "tracked");
++			}
++			assert.equal(rejected, 2);
++			capture.dispose();
++			draft.dispose();
++		});
++
++		it("propagates disposal observer errors while leaving capture expiry committed", async () => {
++			const { views, controller } = await setup();
++			const capture = controller.capture({ trackNodeReferences: true });
++			const draft = controller.createDraft(capture);
++			const view = asTreeViewAlpha(draft.viewWith(configuration));
++			const failure = new Error("Disposal observer failure");
++			let calls = 0;
++			const off = view.events.on("changed", ({ getRevertible }) => {
++				assert(getRevertible !== undefined);
++				getRevertible(() => {
++					calls++;
++					capture.dispose();
++					throw failure;
++				});
++			});
++			view.root.value = 1;
++			off();
++			assert.throws(
++				() => capture.dispose(),
++				(error: unknown) => error === failure,
++			);
++			assert.equal(calls, 1);
++			assert.throws(() => capture.exportSequenced(), /disposed/);
++			assert.doesNotThrow(() => capture.dispose());
++			assert.equal(views[0].root.value, 0);
++			draft.dispose();
++			controller.capture().dispose();
++		});
++
+ 		it("bounds eager tracking/drafts and releases owned anchors on failure and disposal", async () => {
+ 			const { trees, views, controller } = await setup();
+ 			const original = views[0].root.items[0];

@@ -1,0 +1,6 @@
+{
+  "name": "sharedtree-r8-offline-proof",
+  "private": true,
+  "type": "module",
+  "description": "Independent copied dependency tree for the separately finalized r8 all-M4 successor; not a package-manager installation."
+}

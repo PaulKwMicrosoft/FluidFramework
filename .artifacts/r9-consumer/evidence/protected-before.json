@@ -1,0 +1,66 @@
+[
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-baseline-authority-cjs-esm.log",
+    "sha256": "C8624B748D168DE0CBA5CE4AFEC6B669EF949DB2CAC8A924AF5397493362A880"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-baseline-capture-settlement-retries.log",
+    "sha256": "719300F38EC4013664A88D374FF916AA6545BB4940844FE9F17AB25BA419D4CE"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-capture-fix-compile.log",
+    "sha256": "8B174BF4D6822AD51E7A532B9C90B23D0D178294EC9BB05165B3AB7C01C3C748"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-fixed-authority-cjs.log",
+    "sha256": "34A0F8847B5B123FE2A868D152E3652C734A39FD058EC23B8519793836E8AEEC"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-fixed-authority-esm.log",
+    "sha256": "5F3534197BD05B5ED0DA87B85AD0C342459921E31E888C06A702A72D03F398B2"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-initial-compile.log",
+    "sha256": "92BBDC9A1EBB843B907ED3124F55808434B1F0047D7294A62D69BEF5F7362070"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-wrapper-compile.log",
+    "sha256": "09172346795BACE25B859968CB92E9924BC0EAD932B54AD5BB16868CF063A5E7"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-fixed-capture-1000.json",
+    "sha256": "7997EB6879933F1E61A9D6B89F16FA0AA02461228F3D4D06F1E3B30B470C6BC8"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-fixed-export-1000.json",
+    "sha256": "5951FC9C020A2771236BE2D279B1EBB78683A0E03F0F3BBFEFEE955DA0A2A032"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-fixed-weak-1000.json",
+    "sha256": "45681C59A6619B9E29F3FE1BC57E2B57F1B31C4B0321C1DB239D21F8C4A96A85"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8\\HANDOFF.md",
+    "sha256": "707EA3E49E2E918FA722B3A1039EE87F3D9EE7A4D0F683790F45ED4E9F9F7457"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8\\verification.json",
+    "sha256": "AE06917FF064998DD949992A27BD250B321B818A5695B3B776E4430A61C7DB7B"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8\\fluidframework-tree-2.111.0.tgz",
+    "sha256": "EA7CFC5BB102887160482896309F9BD89A0A435040BBDCD26D937AE4C99FFE55"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-evidence\\verify.ps1",
+    "sha256": "7E6F6D699EAE64C8301B20105560CED6046FF231BB46D82FFFA647F208AD8583"
+  },
+  {
+    "path": "C:\\office\\ppt-sharedtree-bridge\\harness-r5\\vendor\\fluid-framework-authority-r2.tgz",
+    "sha256": "2A0942EE89B05FB58F9E03EE40B7852C73A11DCE4C6A7F459556D8CD2218D16F"
+  },
+  {
+    "path": "C:\\office\\ppt-sharedtree-bridge\\harness-interactive\\runtime-sdk.cjs",
+    "sha256": "3ABB3FB84AB8A84680A1CE962E61FA39F40E06D2154D51A468E4475F27033323"
+  }
+]

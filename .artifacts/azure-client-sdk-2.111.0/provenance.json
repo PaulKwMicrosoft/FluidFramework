@@ -1,0 +1,25 @@
+{
+  "package": "@fluidframework/azure-client",
+  "version": "2.111.0",
+  "source": "C:\\office\\ppt-sharedtree-bridge\\harness\\node_modules\\@fluidframework\\azure-client",
+  "artifact": "fluidframework-azure-client-2.111.0.tgz",
+  "sha256": "531EBFD6C86546AF3E39307901C0B4F4AB25AE1582FF1D3C2FB6EA6E4580B2D7",
+  "method": "Offline npm pack of the already-installed published package, with scripts disabled",
+  "originalRegistryArchive": false,
+  "byteIdenticalFilesCompared": 82,
+  "dependenciesBundled": false,
+  "esmImport": "passed against existing harness dependencies",
+  "cjsImport": "passed against existing harness dependencies",
+  "typedSummaryFactoryProof": "summary-factory-proof.mts",
+  "typecheck": "Existing TypeScript compiler; strict, noEmit, skipLibCheck, NodeNext",
+  "internalHooks": [
+    "@fluidframework/azure-client/internal: AzureClientPropsInternal.createContainerRuntimeFactory",
+    "@fluidframework/fluid-static/internal: createDOProviderContainerRuntimeFactory.runtimeOptionOverrides"
+  ],
+  "notes": [
+    "No SDK or DDS source changes; no network restore or TLS-policy changes.",
+    "The node_modules junction in this artifact directory references existing harness dependencies for the isolated type proof.",
+    "Summary disabling remains a prototype-only integration choice; this factory proof does not establish authority-summary durability or a live AFR run.",
+    "The bridge consumer must still preserve one patched SharedTree resolution."
+  ]
+}

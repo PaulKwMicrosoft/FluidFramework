@@ -1,0 +1,65 @@
+{
+  "sourceCommit": "7fdff0fde45d0f748b6864e9f094e4b058e9c0b5",
+  "pins": {
+    "tree": "6346550104ecc0ec037d37919b521cdefc8518ccd735a38694c01917de3968c5",
+    "wrapper": "2a0942ee89b05fb58f9e03ee40b7852c73a11dce4c6a7f459556d8cd2218d16f",
+    "manifest": "1d3743f26f05d0379de793e74b7c364455a2b215c0450f4886c099607f2869f6",
+    "source": "7fdff0fde45d0f748b6864e9f094e4b058e9c0b5",
+    "dds": "https://graph.microsoft.com/types/tree/detached-roots-v1/external-authority-v2"
+  },
+  "cumulativePatch": {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9\\sharedtree-source.patch",
+    "sha256": "5f083e1beb0cbe20c17bea21e3c504394476a43bef5e78086928e8e3f7e38a3a",
+    "bytes": 1341019
+  },
+  "retentionPatch": {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9\\capture-retention.patch",
+    "sha256": "749ab684a1e64806e674a261c492c0d4e0911b159041cb783cb0dce55ad2f0f5",
+    "bytes": 4290
+  },
+  "publishedPackageManifest": {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-consumer\\node_modules\\@fluidframework\\tree\\package.json",
+    "sha256": "79087852875df50b15c08d9db9e65533b03d1cb384a5098ad028fe17791b6ce2",
+    "bytes": 10290
+  },
+  "sourceArtifactHashes": [
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-source\\packages\\dds\\tree\\src\\shared-tree-core\\editManager.ts",
+      "sha256": "c2e9f034639c75eda3d436aa63c979c7607d45db8ff23f37b8377ed3ce210cbd",
+      "bytes": 49286
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-source\\packages\\dds\\tree\\dist\\shared-tree-core\\editManager.js",
+      "sha256": "d3a81baefd76c997d7f6fb24051f009c51288742ec305a089822bf35d700c3ee",
+      "bytes": 48343
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-source\\packages\\dds\\tree\\lib\\shared-tree-core\\editManager.js",
+      "sha256": "2e1a9aa65f8047ced3418855a666c566d70d5c5ea21478dd2f654a38efe23cae",
+      "bytes": 46890
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-source\\packages\\dds\\tree\\src\\shared-tree\\externalAuthorityController.ts",
+      "sha256": "5547de18fabba57f15adf77a762d0e735769a1cb785c34339cad6ae0735b652b",
+      "bytes": 17030
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-source\\packages\\dds\\tree\\dist\\shared-tree\\externalAuthorityController.js",
+      "sha256": "ed4571784d4bf1870c603880ea81aee7708deabc70bcceb3c7c3a6e18e2ddbb6",
+      "bytes": 14559
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-source\\packages\\dds\\tree\\lib\\shared-tree\\externalAuthorityController.js",
+      "sha256": "a476233293d107dba8739a41b7c86498a8cd46092bfdb7c2a0e7696b225e4761",
+      "bytes": 13974
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9-source\\packages\\dds\\tree\\package.json",
+      "sha256": "f68f2ac758aaa82cf77c35eed27d21c4859350ca616b74761e9369649094760e",
+      "bytes": 9841
+    }
+  ],
+  "treeFiles": 3291,
+  "wrapperFiles": 46,
+  "commonLoaderPinAndPackageFilesContract": "passed; transport/document not loaded"
+}

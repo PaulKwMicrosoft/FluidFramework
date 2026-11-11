@@ -1,0 +1,53 @@
+{
+  "revision": "r4",
+  "treeArtifact": "fluidframework-tree-2.111.0.tgz",
+  "treeSha256": "A3B17F0D75738D37D8D00C366620D9FFE86CABBA2C6C73336D56A84B1208C179",
+  "sourcePatch": "sharedtree-source.patch",
+  "sourcePatchSha256": "0427441694BDC6F93813B3869F1B9D8753724175D960A58E0B948E9ED9F351D5",
+  "sourceBase": "7c3fc51d5d204a16299014921e93d522590a4af2",
+  "detachedRootFoundation": "1b49fc989e3d844cb7fc7c50d3df59d27c5ac702",
+  "sourceWorktree": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\detach-port",
+  "compatibleWrapper": "..\\r2\\fluid-framework-2.111.0.tgz",
+  "wrapperSha256": "2A0942EE89B05FB58F9E03EE40B7852C73A11DCE4C6A7F459556D8CD2218D16F",
+  "validation": {
+    "esmRegressionPassing": 734,
+    "esmRegressionExistingPending": 8,
+    "cjsAuthorityAndDetachPassing": 29,
+    "detachTestsIncludingCombinedAuthority": 11,
+    "authorityOnlyTests": 18,
+    "esmAndCjsBuild": "passed",
+    "currentApiReportGeneration": "passed",
+    "targetedEslint": "passed",
+    "testTypeCheck": "passed",
+    "packedConsumerEsmAndCjs": "passed",
+    "packedConsumerTypeCheck": "passed",
+    "packedConsumerSingleTreeResolution": "passed",
+    "remoteRelayOnR4": "not run by this agent"
+  },
+  "configuration": {
+    "enableDetachedRootEditing": true,
+    "allParticipantsMustUseSameOption": true,
+    "combinedDdsTypeSuffix": "/detached-roots-v1/external-authority-v1",
+    "freshExperimentalContainerRequired": true,
+    "authorityOnlyModeDefaultUnchanged": true
+  },
+  "supported": [
+    "Same-checkout removed-root reinsertion into array and optional fields",
+    "Identity preservation on independent clients",
+    "Editing fields under removed nodes",
+    "Concurrent reinsertion and concurrent edits",
+    "Combined authority/P/L rebasing, approval and undo",
+    "Initial combined-mode attach summary and bootstrap load"
+  ],
+  "unsupportedOrUnproven": [
+    "Required-field vacancy or required-field reinsertion",
+    "Fresh and hydrated-detached content in one insertion",
+    "Reusing removed children inside newly constructed enclosing objects",
+    "Complete parity with the older experimental detached-root package",
+    "Transformed, coalesced or arbitrary-subset settlement",
+    "Runtime summaries, bounded retention or durable authority recovery",
+    "Serialized publication preparation, capture reopening or durable receipt query",
+    "Cryptographic authority authentication",
+    "Native, OCS, PPTX or UI end-to-end integration"
+  ]
+}

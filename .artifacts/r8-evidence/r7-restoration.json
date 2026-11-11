@@ -1,0 +1,28 @@
+{
+  "sourceCommit": "69604b14fb00180252bfa04e6f28c9d2d980103b",
+  "sourceBranch": "user/paulkw/sharedtree-publication-retries",
+  "archivedNonManifestFilesMatched": 3287,
+  "productionRestored": [
+    "dist\\shared-tree\\authorityNodeReferences.d.ts",
+    "dist\\shared-tree\\authorityNodeReferences.d.ts.map",
+    "dist\\shared-tree\\authorityNodeReferences.js",
+    "dist\\shared-tree\\authorityNodeReferences.js.map",
+    "dist\\shared-tree\\externalAuthorityController.d.ts.map",
+    "dist\\shared-tree\\externalAuthorityController.js",
+    "dist\\shared-tree\\externalAuthorityController.js.map",
+    "lib\\core\\tree\\detachedFieldIndexCodecCommon.d.ts",
+    "lib\\shared-tree\\authorityNodeReferences.d.ts",
+    "lib\\shared-tree\\authorityNodeReferences.d.ts.map",
+    "lib\\shared-tree\\authorityNodeReferences.js",
+    "lib\\shared-tree\\authorityNodeReferences.js.map",
+    "lib\\shared-tree\\externalAuthorityController.d.ts.map",
+    "lib\\shared-tree\\externalAuthorityController.js",
+    "lib\\shared-tree\\externalAuthorityController.js.map",
+    "lib\\shared-tree-core\\editManagerFormatCommons.d.ts",
+    "lib\\shared-tree-core\\editManagerFormatV1toV4.d.ts",
+    "lib\\shared-tree-core\\editManagerFormatVSharedBranches.d.ts",
+    "lib\\text\\textDomainFormattedDefault.d.ts"
+  ],
+  "referenceTestOutputs": "Recovered from unchanged r6 test source/build; original r7 test-output hashes were not archived.",
+  "limitation": "Prior r7 source/build was advanced before the clarification. Tracked source and all archived files are now restored; original unarchived incremental-build metadata cannot be certified byte-for-byte. No prior artifact/evidence/consumer files were modified."
+}

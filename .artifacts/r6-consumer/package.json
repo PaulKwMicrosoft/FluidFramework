@@ -1,0 +1,6 @@
+{
+  "name": "sharedtree-r6-offline-proof",
+  "private": true,
+  "type": "module",
+  "description": "Independent copied dependency tree with the r6 archive explicitly extracted; not a package-manager installation."
+}

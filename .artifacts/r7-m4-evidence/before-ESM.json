@@ -1,0 +1,20 @@
+{
+  "lane": "ESM",
+  "scope": "Actual packed public API, both forests; local mock ordering only",
+  "results": [
+    {
+      "forest": "Reference",
+      "name": "reentrant capture disposal from a public revertible disposal callback",
+      "status": "failed",
+      "error": "Got unwanted exception.\nActual message: \"The branch has already been disposed and cannot be disposed again.\""
+    },
+    {
+      "forest": "Optimized",
+      "name": "reentrant capture disposal from a public revertible disposal callback",
+      "status": "failed",
+      "error": "Got unwanted exception.\nActual message: \"The branch has already been disposed and cannot be disposed again.\""
+    }
+  ],
+  "passed": 0,
+  "failed": 2
+}

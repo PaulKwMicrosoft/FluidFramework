@@ -1,0 +1,10 @@
+{
+  "changedAt": "2026-09-09T18:49:56.9652747-07:00",
+  "previousMode": "Read-only dependency junction; CJS contracts passed, atomic trace failed its literal install-path provenance assertion",
+  "newMode": "Physical copy of existing dependencies, no reparse points, no installation or restore",
+  "scriptBytesUnchanged": true,
+  "treeFilesMatched": 3288,
+  "originalFailedTraceRetained": true,
+  "subsequentTraceSuffix": "physical",
+  "ownerConsumerModified": false
+}

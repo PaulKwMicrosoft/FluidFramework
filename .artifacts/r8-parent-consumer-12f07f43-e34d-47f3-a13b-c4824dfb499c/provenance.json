@@ -1,0 +1,59 @@
+{
+  "kind": "parent-r8-known-contract-consumer",
+  "createdAt": "2026-09-09T18:41:56.8591643-07:00",
+  "dependencyMode": "Read-only reuse of already hash-verified r8-consumer node_modules through an owned junction; not a new installation",
+  "frozenOwnerArtifactsNeverExecutionOutput": true,
+  "sourceCommit": "d59df925b5f1617e6189924250e02b10510c9a2d",
+  "sourceCopies": [
+    {
+      "relative": "package.json",
+      "source": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\package.json",
+      "sha256": "57248CC16D3E49CFA33EBB2608F0567BB2CD7D664B2BA576CDC996E9FA4C4CCF"
+    },
+    {
+      "relative": "capture-disposal.mjs",
+      "source": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\capture-disposal.mjs",
+      "sha256": "C9F63831B4BF698663B93CEB3F4D5D3122CFF421332EC7438061DAFDA2FCD492"
+    },
+    {
+      "relative": "retry-contracts.mjs",
+      "source": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\retry-contracts.mjs",
+      "sha256": "73A86B3EB7185BA467CBFC6BD69DE6150CF7C5E6D9C8A8569AC6ADC8B29801B5"
+    },
+    {
+      "relative": "proof.cjs",
+      "source": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\proof.cjs",
+      "sha256": "BB3478D26A05F63B130B795537800CE1671D2B300557463E6891A8531D6AEED6"
+    },
+    {
+      "relative": "references.cjs",
+      "source": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\references.cjs",
+      "sha256": "1A5CACF9478B08B683A3CFF47A02058734B8BEF9120DE5B79FF13D108ADDDDD4"
+    },
+    {
+      "relative": "api-proof.mts",
+      "source": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\api-proof.mts",
+      "sha256": "FF0687EBC86963234201092866FF69530EF9BE259E17B0BE60CB5D6CD3F0FF87"
+    },
+    {
+      "relative": "api-proof.cts",
+      "source": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\api-proof.cts",
+      "sha256": "FF0687EBC86963234201092866FF69530EF9BE259E17B0BE60CB5D6CD3F0FF87"
+    },
+    {
+      "relative": "adversarial\\suite.mjs",
+      "source": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\adversarial\\suite.mjs",
+      "sha256": "41102FD6B4E53742A67F6BD83C97728DCB0A9E13A474AE3990CBB8B84DD95CB6"
+    },
+    {
+      "relative": "vendor\\sharedtree-authority-r8.tgz",
+      "source": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\vendor\\sharedtree-authority-r8.tgz",
+      "sha256": "EA7CFC5BB102887160482896309F9BD89A0A435040BBDCD26D937AE4C99FFE55"
+    },
+    {
+      "relative": "vendor\\fluid-framework-authority-r2.tgz",
+      "source": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\vendor\\fluid-framework-authority-r2.tgz",
+      "sha256": "2A0942EE89B05FB58F9E03EE40B7852C73A11DCE4C6A7F459556D8CD2218D16F"
+    }
+  ]
+}

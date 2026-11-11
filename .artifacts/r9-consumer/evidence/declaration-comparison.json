@@ -1,0 +1,61 @@
+{
+  "apiReportAndEntrypointFilesCompared": 15,
+  "comparison": "Exact UTF-8 text after CRLF-to-LF normalization; no source/API changes from r8.",
+  "lineEndingDifferences": [
+    "api-report\\tree.alpha.api.md",
+    "api-report\\tree.beta.api.md"
+  ],
+  "internalDeclarationByteDifferences": [
+    {
+      "path": "dist\\core\\tree\\persistedTreeTextFormat.d.ts",
+      "historicalSha256": "2a6ac409379ca0d4a6aa1ce1c6461a25cfd1748fb0bbf78c79276e9a98b2cbca",
+      "currentSha256": "5bc6c9407d602caec7544dd576ecc5836ceb91e474a350cf3fe5e47d59408d62"
+    },
+    {
+      "path": "dist\\shared-tree-core\\editManagerFormatCommons.d.ts",
+      "historicalSha256": "03cec67ef0886f12654998c0cc6fb1dea1a351fe9930f97275688eacb429d875",
+      "currentSha256": "7071d749d8f720511fc7dab90f86bb28449ff172362a8da0a60f5a843c9e00bc"
+    },
+    {
+      "path": "dist\\shared-tree-core\\editManagerFormatV1toV4.d.ts",
+      "historicalSha256": "18fc3a69144d78cc07728504716b3f0b7200add33c62c9f9151e2a5d0609d57e",
+      "currentSha256": "d843d59dfdf5035bc32e89139e7504e30dd2b61deeaceca964648ab6c71b4437"
+    },
+    {
+      "path": "dist\\shared-tree-core\\editManagerFormatVSharedBranches.d.ts",
+      "historicalSha256": "439db188ec43fb0803c68f4fe8de0fd4c1ae651a80097ef3b8afe3c05bea099f",
+      "currentSha256": "d44851528a1828e96ffd9c72d4e643c2b356a2008af9970cdcada002eb2a6155"
+    },
+    {
+      "path": "dist\\text\\textDomainFormattedDefault.d.ts",
+      "historicalSha256": "cfc5064aba88c841c5ce9bd5570d0228612909ab33b0c4e12e48529fca07b465",
+      "currentSha256": "e5e3d9decf831fd013aaa02099e84dc17a57986c475eebc9c7fce995dae3c894"
+    },
+    {
+      "path": "lib\\core\\tree\\detachedFieldIndexCodecCommon.d.ts",
+      "historicalSha256": "285155ff3dfd940b4fa2997e5b8af01bafd21e57ab70ae3243cf1fd2bf92cea6",
+      "currentSha256": "facafbb3cb01622ffd13484ceb669610b73dceaa2bafdbf5eef20c127f11a0ba"
+    },
+    {
+      "path": "lib\\shared-tree-core\\editManagerFormatCommons.d.ts",
+      "historicalSha256": "03cec67ef0886f12654998c0cc6fb1dea1a351fe9930f97275688eacb429d875",
+      "currentSha256": "7071d749d8f720511fc7dab90f86bb28449ff172362a8da0a60f5a843c9e00bc"
+    },
+    {
+      "path": "lib\\shared-tree-core\\editManagerFormatV1toV4.d.ts",
+      "historicalSha256": "18fc3a69144d78cc07728504716b3f0b7200add33c62c9f9151e2a5d0609d57e",
+      "currentSha256": "d843d59dfdf5035bc32e89139e7504e30dd2b61deeaceca964648ab6c71b4437"
+    },
+    {
+      "path": "lib\\shared-tree-core\\editManagerFormatVSharedBranches.d.ts",
+      "historicalSha256": "439db188ec43fb0803c68f4fe8de0fd4c1ae651a80097ef3b8afe3c05bea099f",
+      "currentSha256": "d44851528a1828e96ffd9c72d4e643c2b356a2008af9970cdcada002eb2a6155"
+    },
+    {
+      "path": "lib\\text\\textDomainFormattedDefault.d.ts",
+      "historicalSha256": "cfc5064aba88c841c5ce9bd5570d0228612909ab33b0c4e12e48529fca07b465",
+      "currentSha256": "1880d7235b829fdb73ef752e7996bd5cd17de2502ba7867d81566880ce37cdaa"
+    }
+  ],
+  "internalDeclarationNote": "Internal generated declaration bytes are not asserted equal to historical r8; all are byte-verified against r9 source/build. A representative diff reorders inferred object properties."
+}

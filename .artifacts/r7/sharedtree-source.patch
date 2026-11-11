@@ -1,0 +1,986 @@
+diff --git a/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md b/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
+index 3bb830989df41775a141bc6e420b8d452c4b6a05..6220471fb330f87d5ba9ae4917aebe7b20e77c4f 100644
+--- a/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
++++ b/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
+@@ -37,6 +37,47 @@ are not an in-place upgrade target, even if an application supplies matching lab
+ 
+ ## Controller
+ 
++### r7 bounded public publication retries
++
++`publishAdvance` now supports identical same-process retries for both pure-prefix
++and correction publications. It snapshots the input properties on the first
++call and binds the batch ID to the exact owned capture, normalized prefix count,
++next checkpoint and owned draft identity/head. Equivalent snapshots or newly
++authored equivalent drafts are not identities.
++
++* Identical calls while the send is pending share one underlying submission and
++  report the same outcome. No result is cached before the local sequenced echo;
++  even an identical peer batch is not that local echo.
++* After the local echo, an applied publication retries as `duplicate`, while
++  stale remains `stale`. This also works before Promise callbacks have run.
++* Changed capture/prefix/checkpoint/draft reuse rejects without poisoning the
++  kernel or disturbing the first publication. Changed draft heads and unfinished
++  draft transactions reject, including on retries.
++* The capture and (for corrections) draft must remain undisposed for public
++  retries. Disposing the capture expires this API retry scope but does not cancel
++  its already submitted operation. Disposing the checkout rejects pending receipts.
++* At most 128 public publication records are retained per kernel/controller.
++  Dispose completed captures to release them; disposed captures with pending sends
++  retain their records until completion. There is also a 128 in-flight core limit.
++  Capacity rejection happens before sealing a new public draft.
++
++Controllers are canonicalized by underlying kernel, not the identity of an ITree
++facade. The core submission route also checks encoded identity outside the fatal
++breaker boundary and shares an identical in-flight receipt. True submission
++failures remain fatal and reject waiting receipts with the original error;
++the breaker is never cleared. A fatally broken checkout's existing disposal API
++can itself reject, so abandon that failed instance; this is not recovery support.
++
++Released public receipts cannot be reopened or substituted with a new capture.
++Previously sequenced batch IDs still cannot be repurposed: the existing wire
++batch ledger rejects that reuse. That ledger and authority history remain
++unbounded in this prototype; the 128-record limit is **not** a total memory or
++durable deduplication guarantee. Runtime restart, expired service history,
++cross-process receipts and replay preparation remain unsupported.
++
++No API signature, envelope version, ordering service or DDS type changes in r7.
++Runtime wire duplicate/reconnect paths remain separate from public API retry.
++
+ ### r6 opt-in, capture-local node counterparts
+ 
+ Ordinary `capture()` and authority wire protocol v2 are unchanged. The separate
+@@ -127,7 +168,7 @@ destruction. All r5 summary/recovery and detached-content restrictions below rem
+ An unchanged `approvePrefix`, an A-based external draft, and a prefix-based
+ correction are supported. A plain A-based draft combined with positive approval
+ is still rejected: it was authored on the wrong history. Publishing seals the
+-draft for further publication. Complete any
++draft against new publications; r7 permits the exact original retry as described above. Complete any
+ open draft transaction before publishing. Dispose drafts/captures when no longer
+ needed. Snapshots use SharedTree's existing `VerboseTree` format; the authority
+ controller does not perform package serialization or application-level merging.
+diff --git a/packages/dds/tree/src/shared-tree-core/editManager.ts b/packages/dds/tree/src/shared-tree-core/editManager.ts
+index 43f559a97065c35c870c7b8806cf685c2052e9c6..c1ecafb9e83badfec20922fb3d334feade7e2fca 100644
+--- a/packages/dds/tree/src/shared-tree-core/editManager.ts
++++ b/packages/dds/tree/src/shared-tree-core/editManager.ts
+@@ -653,6 +653,12 @@ export class EditManager<
+ 			fingerprint,
+ 		);
+ 	}
++
++	public getExternalAuthorityBatch(
++		batchId: string,
++	): { readonly fingerprint: string; readonly outcome: ExternalAuthorityOutcome } | undefined {
++		return this.getSharedBranch("main").getExternalAuthorityBatch(batchId);
++	}
+ }
+ 
+ /**
+@@ -971,6 +977,12 @@ class SharedBranch<TEditor extends ChangeFamilyEditor, TChangeset> {
+ 		return "applied";
+ 	}
+ 
++	public getExternalAuthorityBatch(
++		batchId: string,
++	): { readonly fingerprint: string; readonly outcome: ExternalAuthorityOutcome } | undefined {
++		return this.authorityBatches.get(batchId);
++	}
++
+ 	private recordAuthorityCheckpoint(sequenceNumber: SeqNumber): void {
+ 		const indexInBatch = this.getBatchSize(sequenceNumber);
+ 		this.sequenceIdToCommit.set(
+diff --git a/packages/dds/tree/src/shared-tree-core/sharedTreeCore.ts b/packages/dds/tree/src/shared-tree-core/sharedTreeCore.ts
+index f146e4dc7dc2b99ce96d77e56063d42966aa1d7e..71ce4c356b205414e6bcd2227db95983c0471718 100644
+--- a/packages/dds/tree/src/shared-tree-core/sharedTreeCore.ts
++++ b/packages/dds/tree/src/shared-tree-core/sharedTreeCore.ts
+@@ -4,7 +4,7 @@
+  */
+ 
+ import type { IFluidLoadable, ITelemetryBaseLogger } from "@fluidframework/core-interfaces";
+-import { assert, fail, unreachableCase } from "@fluidframework/core-utils/internal";
++import { assert, Deferred, fail, unreachableCase } from "@fluidframework/core-utils/internal";
+ import type { IChannelStorageService } from "@fluidframework/datastore-definitions/internal";
+ import type { ISnapshotTree } from "@fluidframework/driver-definitions/internal";
+ import type {
+@@ -114,8 +114,20 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
+ 	private readonly authorityListeners = new Set<() => void>();
+ 	private readonly authorityReceipts = new Map<
+ 		string,
+-		(result: ExternalAuthorityOutcome) => void
++		{ readonly fingerprint: string; readonly receipt: Deferred<ExternalAuthorityOutcome> }
+ 	>();
++	private authorityDisposed = false;
++
++	// Resource teardown must work even when the kernel is already broken.
++	protected readonly disposeExternalAuthorityReceipts = (
++		error: unknown = new UsageError("Authority publication checkout has been disposed"),
++	): void => {
++		this.authorityDisposed = true;
++		for (const { receipt } of this.authorityReceipts.values()) {
++			receipt.reject(error);
++		}
++		this.authorityReceipts.clear();
++	};
+ 	private authorityInitialized = false;
+ 	private readonly summarizables: readonly [EditManagerSummarizer<TChange>, ...Summarizable[]];
+ 	/**
+@@ -544,8 +556,10 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
+ 						this.authorityInitialized = true;
+ 						this.tryGetResubmitMachine("main")?.onSequencedCommitApplied("root", false);
+ 					}
+-					this.authorityReceipts.get(encoded.batchId)?.(result);
+-					this.authorityReceipts.delete(encoded.batchId);
++					if (local) {
++						this.authorityReceipts.get(encoded.batchId)?.receipt.resolve(result);
++						this.authorityReceipts.delete(encoded.batchId);
++					}
+ 					continue;
+ 				}
+ 				contents = wrapper.content;
+@@ -667,25 +681,91 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
+ 				} satisfies AuthorityEnvelope);
+ 	}
+ 
++	@throwIfBroken
++	public checkNewExternalAuthorityPublication(batchId: string): void {
++		this.checkExternalAuthorityPublicationAccess();
++		if (
++			this.authorityReceipts.has(batchId) ||
++			this.editManager.getExternalAuthorityBatch(batchId) !== undefined
++		) {
++			throw new UsageError(
++				"Authority batch is already reserved; use its original live publication",
++			);
++		}
++		if (this.authorityReceipts.size >= 128) {
++			throw new UsageError("Authority in-flight publication limit exceeded");
++		}
++	}
++
++	@throwIfBroken
++	private checkExternalAuthorityPublicationAccess(): void {
++		if (this.authorityDisposed || this.externalAuthorityConfiguration === undefined) {
++			throw new UsageError("Authority publication checkout is unavailable");
++		}
++		if (this.detachedRevision !== undefined) {
++			throw new UsageError("Attach the tree before publishing authority advances");
++		}
++	}
++
++	@throwIfBroken
++	public getExternalAuthorityPublicationOutcome(
++		batchId: string,
++	): ExternalAuthorityOutcome | undefined {
++		this.checkExternalAuthorityPublicationAccess();
++		return this.authorityReceipts.has(batchId)
++			? undefined
++			: this.editManager.getExternalAuthorityBatch(batchId)?.outcome;
++	}
++
++	@throwIfBroken
+ 	public async publishExternalAuthority(
+ 		advance: ExternalAuthorityAdvance<TChange>,
+ 	): Promise<ExternalAuthorityOutcome> {
+-		assert(
+-			this.externalAuthorityConfiguration !== undefined,
+-			"External authority mode is not enabled",
+-		);
+-		assert(
+-			this.detachedRevision === undefined,
+-			"Attach the tree before publishing authority advances",
+-		);
+-		assert(
+-			!this.authorityReceipts.has(advance.batchId),
+-			"Authority batch is already in flight",
+-		);
++		this.checkExternalAuthorityPublicationAccess();
++		const encoded = this.encodeExternalAuthorityAdvance(advance);
++		const wrapped = this.wrapAuthorityMessage("advance", encoded);
++		const fingerprint = this.serializer.stringify(wrapped, this.sharedObject.handle);
++		const pending = this.authorityReceipts.get(advance.batchId);
++		const previous = this.editManager.getExternalAuthorityBatch(advance.batchId);
++		if (
++			(pending !== undefined && pending.fingerprint !== fingerprint) ||
++			(previous !== undefined && previous.fingerprint !== fingerprint)
++		) {
++			throw new UsageError("Authority batch identity reused with different content");
++		}
++		if (pending !== undefined) {
++			return pending.receipt.promise;
++		}
++		if (previous !== undefined) {
++			return previous.outcome === "applied" ? "duplicate" : previous.outcome;
++		}
++		if (this.authorityReceipts.size >= 128) {
++			throw new UsageError("Authority in-flight publication limit exceeded");
++		}
++		const receipt = new Deferred<ExternalAuthorityOutcome>();
++		this.authorityReceipts.set(advance.batchId, { fingerprint, receipt });
++		try {
++			this.submitExternalAuthorityAdvance(wrapped);
++		} catch (error: unknown) {
++			// The submit helper already broke the kernel. Propagate that error to all waiters.
++			this.disposeExternalAuthorityReceipts(error);
++		}
++		return receipt.promise;
++	}
++
++	// Actual submission errors still break the kernel; benign preflight/retry errors do not.
++	private submitExternalAuthorityAdvance(wrapped: unknown): void {
++		this.submitLocalMessage(wrapped);
++	}
++
++	@throwIfBroken
++	private encodeExternalAuthorityAdvance(
++		advance: ExternalAuthorityAdvance<TChange>,
++	): EncodedAdvance {
+ 		for (const commit of advance.commits) {
+ 			this.validateAuthorityChange(commit.change);
+ 		}
+-		const encoded = {
++		return {
+ 			batchId: advance.batchId,
+ 			expected: advance.expected,
+ 			next: advance.next,
+@@ -709,11 +789,6 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
+ 				),
+ 			),
+ 		} satisfies EncodedAdvance;
+-		const receipt = new Promise<ExternalAuthorityOutcome>((resolve) => {
+-			this.authorityReceipts.set(advance.batchId, resolve);
+-		});
+-		this.submitLocalMessage(this.wrapAuthorityMessage("advance", encoded));
+-		return receipt;
+ 	}
+ 
+ 	public getSharedBranchIds(): string[] {
+diff --git a/packages/dds/tree/src/shared-tree/externalAuthorityController.ts b/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
+index 0ea6c8d228949f94032cdd4272afdb59fd5a0398..74ef30e49d738d2943b0e9b4e9255ffac131edfe 100644
+--- a/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
++++ b/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
+@@ -3,7 +3,7 @@
+  * Licensed under the MIT License.
+  */
+ 
+-import { assert } from "@fluidframework/core-utils/internal";
++import { assert, Deferred } from "@fluidframework/core-utils/internal";
+ import { UsageError } from "@fluidframework/telemetry-utils/internal";
+ import { disposeSymbol } from "../util/index.js";
+ import { findCommonAncestor, type GraphCommit } from "../core/index.js";
+@@ -127,11 +127,31 @@ interface DraftData {
+ 	sealed: boolean;
+ }
+ 
++interface PublicationReceipt {
++	readonly capture: SharedTreeAuthorityCapture;
++	readonly nextCheckpoint: string;
++	readonly count: number;
++	readonly draft: SharedTreeAuthorityDraft | undefined;
++	readonly head: GraphCommit<SharedTreeChange> | undefined;
++	readonly completion: Deferred<ExternalAuthorityOutcome>;
++	finished: boolean;
++}
++
+ class Controller implements SharedTreeAuthorityController {
+ 	private readonly captures = new WeakMap<SharedTreeAuthorityCapture, CaptureData>();
+ 	private readonly drafts = new WeakMap<SharedTreeAuthorityDraft, DraftData>();
++	private readonly publications = new Map<string, PublicationReceipt>();
+ 
+-	public constructor(private readonly kernel: SharedTreeKernel) {}
++	public constructor(private readonly kernel: SharedTreeKernel) {
++		kernel.checkout.events.on("dispose", () => {
++			for (const publication of this.publications.values()) {
++				publication.completion.reject(
++					new UsageError("Authority publication checkout has been disposed"),
++				);
++			}
++			this.publications.clear();
++		});
++	}
+ 
+ 	private materialize(
+ 		head: GraphCommit<SharedTreeChange>,
+@@ -222,6 +242,11 @@ class Controller implements SharedTreeAuthorityController {
+ 				if (!data.disposed) {
+ 					data.references?.dispose();
+ 					data.disposed = true;
++					for (const [batchId, publication] of this.publications) {
++						if (publication.capture === capture && publication.finished) {
++							this.publications.delete(batchId);
++						}
++					}
+ 					data.approvedCheckout[disposeSymbol]();
+ 					data.sequencedCheckout[disposeSymbol]();
+ 				}
+@@ -328,33 +353,80 @@ class Controller implements SharedTreeAuthorityController {
+ 	public async publishAdvance(
+ 		publication: SharedTreeAuthorityPublication,
+ 	): Promise<ExternalAuthorityOutcome> {
+-		const captured = this.getCapture(publication.capture);
+-		const { approvePrefix: count = 0 } = publication;
+-		const base = this.prefixBase(captured, count);
++		// Snapshot input properties once: later mutation of the caller's object cannot change a send.
++		const {
++			batchId,
++			nextCheckpoint,
++			capture,
++			draft: draftId,
++			approvePrefix: count = 0,
++		} = publication;
++		if (this.kernel.checkout.disposed) {
++			throw new UsageError("Authority publication checkout has been disposed");
++		}
++		const captured = this.getCapture(capture);
++		// Do not serve cached successes from an otherwise broken kernel.
+ 		const current = this.kernel.getExternalAuthorityState();
++		const previous = this.publications.get(batchId);
++		if (previous !== undefined) {
++			if (
++				previous.capture !== capture ||
++				previous.count !== count ||
++				previous.nextCheckpoint !== nextCheckpoint ||
++				previous.draft !== draftId
++			) {
++				throw new UsageError(
++					"Authority batch identity reused with different publication inputs",
++				);
++			}
++			if (draftId !== undefined) {
++				const draft = this.drafts.get(draftId);
++				if (draft === undefined || draft.disposed || draft.checkout.disposed) {
++					throw new UsageError("Authority publication draft has been disposed");
++				}
++				if (draft.checkout.transaction.size > 0) {
++					throw new UsageError("Finish the draft transaction before retrying publication");
++				}
++				if (draft.checkout.mainBranch.getHead() !== previous.head) {
++					throw new UsageError("Authority publication draft changed after sealing");
++				}
++			}
++			const outcome = this.kernel.getExternalAuthorityPublicationOutcome(batchId);
++			return outcome === undefined
++				? previous.completion.promise
++				: outcome === "applied"
++					? "duplicate"
++					: outcome;
++		}
++		if (this.publications.size >= 128) {
++			throw new UsageError("Authority receipt limit exceeded; dispose completed captures");
++		}
++		const base = this.prefixBase(captured, count);
+ 		if (
+-			current.checkpoint === publication.capture.checkpoint &&
++			current.checkpoint === capture.checkpoint &&
+ 			current.approved.revision !== captured.approved.revision
+ 		) {
+ 			throw new UsageError("Captured approved history no longer matches its checkpoint");
+ 		}
+ 		if (
+-			[publication.batchId, publication.nextCheckpoint].some(
++			[batchId, nextCheckpoint].some(
+ 				(value) => typeof value !== "string" || value.length === 0,
+ 			) ||
+-			publication.nextCheckpoint === publication.capture.checkpoint
++			nextCheckpoint === capture.checkpoint
+ 		) {
+ 			throw new UsageError("An authority advance requires distinct nonempty identifiers");
+ 		}
++		this.kernel.checkNewExternalAuthorityPublication(batchId);
+ 		let commits: GraphCommit<SharedTreeChange>[] = [];
+-		if (publication.draft !== undefined) {
+-			const draft = this.drafts.get(publication.draft);
++		let head: GraphCommit<SharedTreeChange> | undefined;
++		if (draftId !== undefined) {
++			const draft = this.drafts.get(draftId);
+ 			if (
+ 				draft === undefined ||
+ 				draft.disposed ||
+ 				draft.sealed ||
+ 				draft.checkout.disposed ||
+-				draft.capture !== publication.capture
++				draft.capture !== capture
+ 			) {
+ 				throw new UsageError("Expected an unpublished draft from this capture");
+ 			}
+@@ -377,17 +449,46 @@ class Controller implements SharedTreeAuthorityController {
+ 				...commit,
+ 				change: enriched[index] ?? commit.change,
+ 			}));
+-			draft.sealed = true;
+ 			captured.references?.sealDraft(draft.checkout);
++			draft.sealed = true;
++			head = draft.checkout.mainBranch.getHead();
+ 		}
+-		return this.kernel.publishExternalAuthority({
+-			batchId: publication.batchId,
+-			expected: publication.capture.checkpoint,
+-			next: publication.nextCheckpoint,
+-			authoringBase: base.revision,
+-			approvedPrefix: captured.commits.slice(0, count).map((commit) => commit.revision),
+-			commits,
+-		});
++		const entry: PublicationReceipt = {
++			capture,
++			nextCheckpoint,
++			count,
++			draft: draftId,
++			head,
++			completion: new Deferred<ExternalAuthorityOutcome>(),
++			finished: false,
++		};
++		this.publications.set(batchId, entry);
++		this.kernel
++			.publishExternalAuthority({
++				batchId,
++				expected: capture.checkpoint,
++				next: nextCheckpoint,
++				authoringBase: base.revision,
++				approvedPrefix: captured.commits.slice(0, count).map((commit) => commit.revision),
++				commits,
++			})
++			.then(
++				(outcome) => {
++					entry.finished = true;
++					entry.completion.resolve(outcome);
++					if (captured.disposed) {
++						this.publications.delete(batchId);
++					}
++				},
++				(error: unknown) => {
++					entry.finished = true;
++					entry.completion.reject(error);
++					if (captured.disposed) {
++						this.publications.delete(batchId);
++					}
++				},
++			);
++		return entry.completion.promise;
+ 	}
+ 
+ 	public onStateChanged(listener: () => void): () => void {
+@@ -395,7 +496,7 @@ class Controller implements SharedTreeAuthorityController {
+ 	}
+ }
+ 
+-const controllers = new WeakMap<ITree, SharedTreeAuthorityController>();
++const controllers = new WeakMap<SharedTreeKernel, SharedTreeAuthorityController>();
+ 
+ /**
+  * Gets the restricted experimental controller of an explicitly opted-in tree.
+@@ -403,14 +504,14 @@ const controllers = new WeakMap<ITree, SharedTreeAuthorityController>();
+  * @alpha
+  */
+ export function getSharedTreeAuthority(tree: ITree): SharedTreeAuthorityController {
+-	let controller = controllers.get(tree);
++	const kernel = (tree as ITreePrivate).kernel;
++	if (kernel?.externalAuthorityEnabled !== true) {
++		throw new UsageError("External authority mode is not enabled");
++	}
++	let controller = controllers.get(kernel);
+ 	if (controller === undefined) {
+-		const kernel = (tree as ITreePrivate).kernel;
+-		if (kernel?.externalAuthorityEnabled !== true) {
+-			throw new UsageError("External authority mode is not enabled");
+-		}
+ 		controller = new Controller(kernel);
+-		controllers.set(tree, controller);
++		controllers.set(kernel, controller);
+ 	}
+ 	return controller;
+ }
+diff --git a/packages/dds/tree/src/shared-tree/sharedTree.ts b/packages/dds/tree/src/shared-tree/sharedTree.ts
+index 1fd6a8f868ce0bb66b7e7555f1bc25e64769d7d8..26e819957398236425d78a604f2d435655e42ea2 100644
+--- a/packages/dds/tree/src/shared-tree/sharedTree.ts
++++ b/packages/dds/tree/src/shared-tree/sharedTree.ts
+@@ -331,6 +331,7 @@ export class SharedTreeKernel
+ 
+ 		this.registerSharedBranchForEditing("main", this.checkout);
+ 		this.registerCheckout("main", this.checkout);
++		this.checkout.events.on("dispose", this.disposeExternalAuthorityReceipts);
+ 
+ 		this.view = {
+ 			contentSnapshot: () => this.contentSnapshot(),
+diff --git a/packages/dds/tree/src/test/shared-tree/authorityPublicationRetries.spec.ts b/packages/dds/tree/src/test/shared-tree/authorityPublicationRetries.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..1eea51cf9bfbdb6635e3553590306f1fa06373cb
+--- /dev/null
++++ b/packages/dds/tree/src/test/shared-tree/authorityPublicationRetries.spec.ts
+@@ -0,0 +1,478 @@
++/*!
++ * Copyright (c) Microsoft Corporation and contributors. All rights reserved.
++ * Licensed under the MIT License.
++ */
++
++import { strict as assert } from "node:assert";
++import { FlushMode } from "@fluidframework/runtime-definitions/internal";
++import { SchemaFactory, TreeViewConfiguration } from "../../simple-tree/index.js";
++import { configuredSharedTree } from "../../treeFactory.js";
++import {
++	getSharedTreeAuthority,
++	TreeAlpha,
++	type SharedTreeAuthorityPublication,
++} from "../../shared-tree/index.js";
++import { disposeSymbol } from "../../util/index.js";
++import { TestTreeProviderLite } from "../utils.js";
++
++const sf = new SchemaFactory("authority-retries");
++class Item extends sf.object("Item", { value: sf.number }) {}
++class Items extends sf.array("Items", Item) {}
++class Root extends sf.object("Root", {
++	value: sf.number,
++	other: sf.number,
++	items: Items,
++	slot: sf.optional(Item),
++}) {}
++const config = new TreeViewConfiguration({ schema: Root });
++
++async function setup(correction = false) {
++	const factory = configuredSharedTree({
++		minVersionForCollab: "2.80.0",
++		enableDetachedRootEditing: true,
++		externalAuthority: { documentEpoch: "retry", authorityId: "a", authorityEpoch: "e" },
++	});
++	const provider = new TestTreeProviderLite(
++		3,
++		factory.getFactory(),
++		true,
++		FlushMode.TurnBased,
++	);
++	const trees = provider.trees;
++	const views = trees.map((tree) => tree.viewWith(config));
++	views[0].initialize({ value: 0, other: 0, items: [{ value: 0 }] });
++	provider.synchronizeMessages();
++	const controllers = trees.map(getSharedTreeAuthority);
++	const controller = controllers[0];
++	const initial = controller.capture();
++	const bootstrap = controller.publishAdvance({
++		batchId: "bootstrap",
++		nextCheckpoint: "ready",
++		capture: initial,
++		approvePrefix: initial.editIds.length,
++	});
++	provider.synchronizeMessages();
++	await bootstrap;
++	initial.dispose();
++	views[0].root.value = 1;
++	provider.synchronizeMessages();
++	const capture = controller.capture({ trackNodeReferences: true });
++	const draft = correction ? controller.createDraft(capture, { afterPrefix: 1 }) : undefined;
++	const draftView = draft?.viewWith(config);
++	if (draftView !== undefined) {
++		draftView.root.value = 2;
++	}
++	const publication: SharedTreeAuthorityPublication = {
++		batchId: "retry",
++		nextCheckpoint: "approved",
++		capture,
++		approvePrefix: 1,
++		draft,
++	};
++	return {
++		provider,
++		trees,
++		views,
++		controllers,
++		controller,
++		capture,
++		draft,
++		draftView,
++		publication,
++	};
++}
++
++describe("authority publication retries", () => {
++	for (const correction of [false, true]) {
++		const kind = correction ? "correction" : "prefix";
++
++		it(`${kind}: shares in-flight work and observes duplicate before Promise callbacks`, async () => {
++			const f = await setup(correction);
++			const original = f.views[0].root.items[0];
++			let events = 0;
++			const off = f.controller.onStateChanged(() => events++);
++			const first = f.controller.publishAdvance(f.publication);
++			const second = f.controller.publishAdvance({ ...f.publication });
++			const stillOld = f.controller.capture();
++			assert.equal(stillOld.checkpoint, "ready");
++			stillOld.dispose();
++			f.provider.synchronizeMessages();
++			// No await has run the controller's completion callbacks yet.
++			const third = f.controller.publishAdvance(f.publication);
++			assert.deepEqual(await Promise.all([first, second, third]), [
++				"applied",
++				"applied",
++				"duplicate",
++			]);
++			const after = f.controller.capture();
++			const snapshot = after.exportSequenced();
++			assert.equal(after.editIds.length, 0);
++			assert.equal(f.views[0].root.value, correction ? 2 : 1);
++			assert.equal(events, 1, "Retries do not submit additional authority messages");
++			assert.equal(await f.controller.publishAdvance(f.publication), "duplicate");
++			assert.deepEqual(after.exportSequenced(), snapshot);
++			assert.equal(f.views[0].root.items[0], original);
++			off();
++			after.dispose();
++			f.draft?.dispose();
++			f.capture.dispose();
++		});
++
++		it(`${kind}: rejects every changed-input reuse without damaging the first receipt`, async () => {
++			const f = await setup(correction);
++			const equivalentCut = f.controller.capture();
++			const otherDraft = f.controller.createDraft(f.capture, { afterPrefix: 1 });
++			otherDraft.viewWith(config).root.value = 2;
++			const first = f.controller.publishAdvance(f.publication);
++			const invalid = [
++				{ ...f.publication, capture: equivalentCut },
++				{ ...f.publication, approvePrefix: 0 },
++				{ ...f.publication, nextCheckpoint: "different" },
++				{ ...f.publication, draft: otherDraft },
++			];
++			for (const publication of invalid) {
++				await assert.rejects(
++					f.controller.publishAdvance(publication),
++					/different publication inputs/,
++				);
++				const healthy = f.controller.capture();
++				assert.equal(healthy.checkpoint, "ready");
++				healthy.dispose();
++			}
++			f.provider.synchronizeMessages();
++			assert.equal(await first, "applied");
++			for (const publication of invalid) {
++				await assert.rejects(
++					f.controller.publishAdvance(publication),
++					/different publication inputs/,
++				);
++			}
++			assert.equal(await f.controller.publishAdvance(f.publication), "duplicate");
++			otherDraft.dispose();
++			equivalentCut.dispose();
++			f.draft?.dispose();
++			f.capture.dispose();
++		});
++
++		it(`${kind}: stale stays stale, including concurrent different batches`, async () => {
++			const f = await setup(correction);
++			const peer = f.controllers[1];
++			const peerCut = peer.capture();
++			const winner = peer.publishAdvance({
++				batchId: "winner",
++				nextCheckpoint: "won",
++				capture: peerCut,
++				approvePrefix: 1,
++			});
++			f.trees[1].containerRuntime.flush();
++			const first = f.controller.publishAdvance(f.publication);
++			const second = f.controller.publishAdvance(f.publication);
++			f.provider.synchronizeMessages();
++			assert.equal(await winner, "applied");
++			assert.deepEqual(await Promise.all([first, second]), ["stale", "stale"]);
++			assert.equal(await f.controller.publishAdvance(f.publication), "stale");
++			assert.equal(f.views[0].root.value, 1);
++			peerCut.dispose();
++			f.draft?.dispose();
++			f.capture.dispose();
++		});
++
++		it(`${kind}: preserves later P, genuine L and detached identity while retrying`, async () => {
++			const f = await setup(correction);
++			const original = f.views[2].root.items[0];
++			f.views[1].root.other = 7;
++			f.provider.synchronizeMessages();
++			const later = f.controller.capture();
++			const first = f.controller.publishAdvance(f.publication);
++			f.trees[0].containerRuntime.flush();
++			f.views[2].root.items.removeAt(0);
++			original.value = 11;
++			f.views[2].root.slot = original;
++			const retry = f.controller.publishAdvance(f.publication);
++			f.provider.synchronizeMessages({ flush: false });
++			assert.deepEqual(await Promise.all([first, retry]), ["applied", "applied"]);
++			const after = f.controller.capture();
++			assert.deepEqual(after.editIds, later.editIds.slice(1));
++			assert.equal(f.views[0].root.slot, undefined, "Peer has not received L");
++			assert.equal(f.views[2].root.slot, original);
++			assert.equal(original.value, 11);
++			f.provider.synchronizeMessages();
++			assert.equal(await f.controller.publishAdvance(f.publication), "duplicate");
++			assert(f.views.every((view) => view.root.slot?.value === 11));
++			after.dispose();
++			later.dispose();
++			f.draft?.dispose();
++			f.capture.dispose();
++		});
++
++		it(`${kind}: capture disposal expires retries, not the already submitted receipt`, async () => {
++			const f = await setup(correction);
++			const first = f.controller.publishAdvance(f.publication);
++			f.capture.dispose();
++			await assert.rejects(f.controller.publishAdvance(f.publication), /live capture/);
++			f.provider.synchronizeMessages();
++			assert.equal(await first, "applied");
++			const fresh = f.controller.capture();
++			await assert.rejects(
++				f.controller.publishAdvance({
++					capture: fresh,
++					batchId: f.publication.batchId,
++					nextCheckpoint: "fresh",
++				}),
++				/already reserved/,
++			);
++			fresh.dispose();
++			f.draft?.dispose();
++		});
++	}
++
++	it("canonicalizes supported ITree facades to the same kernel controller", async () => {
++		const f = await setup(true);
++		const proxy = new Proxy(f.trees[0], {});
++		const controller = getSharedTreeAuthority(proxy);
++		assert.equal(controller, f.controller);
++		assert.equal(getSharedTreeAuthority(f.trees[0]), controller);
++		const first = f.controller.publishAdvance(f.publication);
++		const second = controller.publishAdvance(f.publication);
++		f.provider.synchronizeMessages();
++		assert.deepEqual(await Promise.all([first, second]), ["applied", "applied"]);
++		assert.equal(await controller.publishAdvance(f.publication), "duplicate");
++		f.draft?.dispose();
++		f.capture.dispose();
++	});
++
++	it("guards the kernel submission route too, without poisoning on a changed payload", async () => {
++		const f = await setup();
++		const kernel = f.trees[0].kernel;
++		const state = kernel.getExternalAuthorityState();
++		const advance = {
++			batchId: "core",
++			expected: "ready",
++			next: "core-approved",
++			authoringBase: state.provisional[0].revision,
++			approvedPrefix: [state.provisional[0].revision],
++			commits: [],
++		};
++		const first = kernel.publishExternalAuthority(advance);
++		const second = kernel.publishExternalAuthority(advance);
++		await assert.rejects(
++			kernel.publishExternalAuthority({ ...advance, next: "changed" }),
++			/different content/,
++		);
++		await assert.rejects(
++			f.controller.publishAdvance({ ...f.publication, batchId: "core" }),
++			/already reserved/,
++		);
++		f.provider.synchronizeMessages();
++		assert.deepEqual(await Promise.all([first, second]), ["applied", "applied"]);
++		assert.equal(await kernel.publishExternalAuthority(advance), "duplicate");
++		await assert.rejects(
++			kernel.publishExternalAuthority({ ...advance, next: "changed" }),
++			/different content/,
++		);
++		f.controller.capture().dispose();
++		f.capture.dispose();
++	});
++
++	it("does not complete a local receipt from a peer's identical batch before its own echo", async () => {
++		const f = await setup();
++		const peerCut = f.controllers[1].capture();
++		let completed = false;
++		const first = f.controller.publishAdvance(f.publication).then((result) => {
++			completed = true;
++			return result;
++		});
++		const peer = f.controllers[1].publishAdvance({ ...f.publication, capture: peerCut });
++		f.trees[1].containerRuntime.flush();
++		f.provider.synchronizeMessages({ flush: false });
++		assert.equal(await peer, "applied");
++		await new Promise<void>((resolve) => setImmediate(resolve));
++		assert.equal(completed, false);
++		const retry = f.controller.publishAdvance(f.publication);
++		f.provider.synchronizeMessages();
++		assert.deepEqual(await Promise.all([first, retry]), ["duplicate", "duplicate"]);
++		peerCut.dispose();
++		f.capture.dispose();
++	});
++
++	it("rejects post-seal edits and disposed drafts, but preserves the frozen first correction", async () => {
++		const f = await setup(true);
++		assert(f.draftView !== undefined && f.draft !== undefined);
++		const draftRoot = f.draftView.root;
++		const first = f.controller.publishAdvance(f.publication);
++		const branch = TreeAlpha.context(draftRoot);
++		assert(branch.isBranch());
++		let inTransaction: Promise<unknown> | undefined;
++		branch.runTransaction(() => {
++			inTransaction = f.controller.publishAdvance(f.publication);
++			return { rollback: true };
++		});
++		assert(inTransaction !== undefined);
++		await assert.rejects(inTransaction, /Finish the draft transaction/);
++		draftRoot.value = 99;
++		await assert.rejects(f.controller.publishAdvance(f.publication), /changed after sealing/);
++		f.draft.dispose();
++		await assert.rejects(
++			f.controller.publishAdvance(f.publication),
++			/draft has been disposed/,
++		);
++		f.provider.synchronizeMessages();
++		assert.equal(await first, "applied");
++		assert.equal(f.views[0].root.value, 2);
++		f.capture.dispose();
++	});
++
++	it("allows an aborted draft transaction to be retried after preflight rejection", async () => {
++		const f = await setup(true);
++		const draftView = f.draftView;
++		assert(draftView !== undefined);
++		const context = TreeAlpha.context(draftView.root);
++		assert(context.isBranch());
++		context.runTransaction(() => {
++			draftView.root.value = 3;
++		});
++		const branch = context;
++		let invalid: Promise<unknown> | undefined;
++		branch.runTransaction(() => {
++			draftView.root.value = 99;
++			invalid = f.controller.publishAdvance(f.publication);
++			return { rollback: true };
++		});
++		assert.equal(draftView.root.value, 3);
++		assert(invalid !== undefined);
++		await assert.rejects(invalid, /Finish the draft transaction/);
++		const receipt = f.controller.publishAdvance(f.publication);
++		f.provider.synchronizeMessages();
++		assert.equal(await receipt, "applied");
++		assert.equal(f.views[0].root.value, 3);
++		f.draft?.dispose();
++		f.capture.dispose();
++	});
++
++	it("shares a synchronous reentrant retry before the first submit callback returns", async () => {
++		const f = await setup(true);
++		const kernel = f.trees[0].kernel;
++		const submit = kernel.submitLocalMessage;
++		let retry: Promise<unknown> | undefined;
++		let submissions = 0;
++		Object.defineProperty(kernel, "submitLocalMessage", {
++			value: (content: unknown, metadata?: unknown) => {
++				submissions++;
++				retry = f.controller.publishAdvance(f.publication);
++				submit(content, metadata);
++			},
++		});
++		const first = f.controller.publishAdvance(f.publication);
++		assert(retry !== undefined);
++		f.provider.synchronizeMessages();
++		assert.deepEqual(await Promise.all([first, retry]), ["applied", "applied"]);
++		assert.equal(submissions, 1);
++		Object.defineProperty(kernel, "submitLocalMessage", { value: submit });
++		f.draft?.dispose();
++		f.capture.dispose();
++	});
++
++	it("keeps a real submit failure fatal and never returns a success-shaped retry", async () => {
++		const f = await setup(true);
++		const kernel = f.trees[0].kernel;
++		const submit = kernel.submitLocalMessage;
++		const earlier = f.controller.publishAdvance({
++			...f.publication,
++			batchId: "earlier",
++			nextCheckpoint: "earlier",
++			draft: undefined,
++		});
++		const earlierRejected = assert.rejects(earlier, /Injected submit failure/);
++		Object.defineProperty(kernel, "submitLocalMessage", {
++			value: () => {
++				throw new Error("Injected submit failure");
++			},
++		});
++		await assert.rejects(
++			f.controller.publishAdvance(f.publication),
++			/Injected submit failure/,
++		);
++		await earlierRejected;
++		await assert.rejects(
++			f.controller.publishAdvance(f.publication),
++			/invalid state.*another error/s,
++		);
++		Object.defineProperty(kernel, "submitLocalMessage", { value: submit });
++		// Existing broken-checkout disposal also rejects: discard the fixture, never clear its breaker.
++		assert.throws(() => kernel.checkout[disposeSymbol](), /invalid state/);
++		f.draft?.dispose();
++	});
++
++	it("reports the original receipt after another checkpoint advances before callbacks", async () => {
++		const f = await setup(true);
++		const first = f.controller.publishAdvance(f.publication);
++		f.provider.synchronizeMessages();
++		const nextCut = f.controllers[1].capture();
++		const next = f.controllers[1].publishAdvance({
++			capture: nextCut,
++			batchId: "later",
++			nextCheckpoint: "later",
++		});
++		f.provider.synchronizeMessages();
++		assert.equal(await f.controller.publishAdvance(f.publication), "duplicate");
++		assert.deepEqual(await Promise.all([first, next]), ["applied", "applied"]);
++		const state = f.controller.capture();
++		assert.equal(state.checkpoint, "later");
++		state.dispose();
++		nextCut.dispose();
++		f.draft?.dispose();
++		f.capture.dispose();
++	});
++
++	it("rejects pending public receipts on checkout disposal and cannot return a cached success", async () => {
++		const f = await setup(true);
++		const first = f.controller.publishAdvance(f.publication);
++		const second = f.controller.publishAdvance(f.publication);
++		const rejected = Promise.all([
++			assert.rejects(first, /disposed/),
++			assert.rejects(second, /disposed/),
++		]);
++		f.trees[0].kernel.checkout[disposeSymbol]();
++		await rejected;
++		await assert.rejects(f.controller.publishAdvance(f.publication), /disposed/);
++		f.capture.dispose();
++		f.draft?.dispose();
++	});
++
++	it("bounds receipts to 128 until captures are released, without forgetting settled batch IDs", async () => {
++		const f = await setup();
++		const promises: Promise<unknown>[] = [];
++		for (let i = 0; i < 128; i++) {
++			promises.push(
++				f.controller.publishAdvance({
++					...f.publication,
++					batchId: `bounded-${i}`,
++					nextCheckpoint: `bounded-${i}`,
++				}),
++			);
++		}
++		await assert.rejects(f.controller.publishAdvance(f.publication), /receipt limit/);
++		f.provider.synchronizeMessages();
++		const outcomes = await Promise.all(promises);
++		assert.equal(outcomes[0], "applied");
++		assert(outcomes.slice(1).every((outcome) => outcome === "stale"));
++		f.capture.dispose();
++		const fresh = f.controller.capture();
++		await assert.rejects(
++			f.controller.publishAdvance({
++				capture: fresh,
++				batchId: "bounded-0",
++				nextCheckpoint: "other",
++			}),
++			/already reserved/,
++		);
++		const receipt = f.controller.publishAdvance({
++			capture: fresh,
++			batchId: "released",
++			nextCheckpoint: "released",
++		});
++		f.provider.synchronizeMessages();
++		assert.equal(await receipt, "applied");
++		fresh.dispose();
++	});
++});

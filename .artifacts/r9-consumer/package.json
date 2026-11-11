@@ -1,0 +1,16 @@
+{
+  "name": "sharedtree-r9-isolated-packaging-proof",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke:cjs": "node --expose-gc smoke.mjs CJS",
+    "smoke:esm": "node --expose-gc smoke.mjs ESM"
+  },
+  "dependencies": {
+    "@fluidframework/tree": "file:..\\r9\\fluidframework-tree-2.111.0.tgz",
+    "fluid-framework": "file:C:\\office\\ppt-sharedtree-bridge\\harness-r5\\vendor\\fluid-framework-authority-r2.tgz",
+    "@fluidframework/test-runtime-utils": "2.111.0",
+    "@fluidframework/id-compressor": "2.111.0"
+  }
+}

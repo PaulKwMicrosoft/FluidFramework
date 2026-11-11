@@ -1,0 +1,134 @@
+{
+  "artifact": "r5",
+  "package": "@fluidframework/tree",
+  "packageVersion": "2.111.0",
+  "status": "Bounded prefix-plus-correction implementation; source and packed local-ordering proofs complete",
+  "source": {
+    "worktree": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\detach-port",
+    "branch": "user/paulkw/sharedtree-atomic-settlement",
+    "commit": "834f2552c7baa214e82b2d9ddbed559d60293009",
+    "patchBaseline": "5ffbb9717d4d408f86593338009bb539f3739d18",
+    "preservedBackupBranch": "user/paulkw/sharedtree-detach-authority-backup-20260909",
+    "patchKind": "Incremental binary-capable full-index Git diff against the exact private backup baseline, not a standalone patch against the public release",
+    "localCommitOnly": true,
+    "privateBackupOwner": "parent",
+    "cleanAfterCommitAndPackaging": true
+  },
+  "pins": {
+    "tree": {
+      "path": "fluidframework-tree-2.111.0.tgz",
+      "sha256": "2EC514151BB1A314EFE8C7020FC1E20F9D7815F6BC7D6BC2908ADBCC4936BA20"
+    },
+    "sourcePatch": {
+      "path": "sharedtree-source.patch",
+      "sha256": "6A7EB231C192956785057AF64AF3B449B6B6F5D866972C0CCC4F1F7F512BB806"
+    },
+    "unchangedCompanionWrapper": {
+      "path": "..\\r2\\fluid-framework-2.111.0.tgz",
+      "sha256": "2A0942EE89B05FB58F9E03EE40B7852C73A11DCE4C6A7F459556D8CD2218D16F",
+      "all46ConsumerFilesByteMatch": true
+    }
+  },
+  "api": {
+    "addition": "createDraft(capture, { afterPrefix: k })",
+    "publication": "publishAdvance({ batchId, nextCheckpoint, capture, approvePrefix: k, draft })",
+    "base": "B = the same captured A followed by exactly its first k provisional revisions; excludes remaining P and all L",
+    "result": "New A = B followed by fresh correction commits C. Accepted prefix revisions remain ancestors; remaining P rebases over C, then L rebases over the resulting sequenced history.",
+    "defaultPreserved": "createDraft(capture) still starts at A; draft-only and pure-prefix publications remain supported",
+    "requirements": [
+      "Same live controller and exact capture object for draft creation and publication",
+      "Finite integer prefix in the captured range, matching afterPrefix and approvePrefix",
+      "Expected checkpoint, exact prefix IDs and stable authoring-base revision checked on delivery",
+      "Fresh correction revision identities and original Fluid authoring contexts retained",
+      "Completion and checkout application only through sequenced self-echo",
+      "After externally completed OCS acceptance, a stale result requires reconciliation, not blind recapture/resubmission"
+    ],
+    "undo": "Ordinary SharedTree selective undo with preserved original ancestry; correction commits are not added to user undo stacks. Not a grouped normalized-action undo API."
+  },
+  "compatibility": {
+    "authorityProtocolVersion": 2,
+    "bootstrapVersion": 2,
+    "newWireField": "authoringBase: stable prefix-head revision, or root",
+    "authorityOnlyDdsType": "https://graph.microsoft.com/types/tree/external-authority-v2",
+    "combinedDdsType": "https://graph.microsoft.com/types/tree/detached-roots-v1/external-authority-v2",
+    "freshContainersRequired": true,
+    "inPlaceR2R3R4AuthorityMigration": false,
+    "allParticipants": "Use the same tree archive, authority labels, minVersionForCollab and enableDetachedRootEditing setting",
+    "factoryOptions": {
+      "minVersionForCollab": "2.80.0",
+      "enableDetachedRootEditing": true,
+      "externalAuthority": {
+        "documentEpoch": "<matching nonempty document epoch>",
+        "authorityId": "<matching nonempty authority ID>",
+        "authorityEpoch": "<matching nonempty authority epoch>"
+      }
+    },
+    "publicFactoryKind": "Opaque SharedObjectKind<ITree>; capability-guard getFactory rather than assuming it in public TypeScript",
+    "historicalClientAndArchivesUnchanged": true,
+    "orderingServiceChanges": false
+  },
+  "sourceValidation": {
+    "moduleFormats": ["ESM", "CJS"],
+    "testsPerFormat": 53,
+    "atomicCases": 19,
+    "existingDetachCases": 16,
+    "existingAuthorityCases": 18,
+    "scope": "Actual SharedTree implementations using existing local mock-ordering infrastructure, not AFR or OCS",
+    "esmLog": {
+      "path": "atomic-settlement-esm-tests.log",
+      "sha256": "6B8397CBB2FFF47271B699EC992C05D7E955F0C1FB9B9811BCC3258718AAD194"
+    },
+    "cjsLog": {
+      "path": "atomic-settlement-cjs-tests.log",
+      "sha256": "E3F6CA233DD764B00027C826FEADF9E782D77A09F399C707D40EC3C3C5976FB0"
+    },
+    "productionAndTestCompilers": "ESM tsc and existing CJS fluid-tsc completed with exit code zero",
+    "typeAwareEslint": "Changed TypeScript files passed; final mixed-batch addition passed a subsequent targeted invocation",
+    "biome": "Relevant source changes passed existing formatter checks",
+    "apiReport": "Generated successfully; only the expected createDraft signature changed",
+    "broadSuiteRerun": false
+  },
+  "packedValidation": {
+    "consumer": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r5-consumer",
+    "dependencySetup": "Copied the existing independent consumer dependencies, replaced only the new copy's Tree directory with extracted r5, and removed the copied hidden npm lock. No install, restore or shared-cache modification.",
+    "productionFilesByteMatched": { "src": 378, "lib": 1405, "dist": 1405, "total": 3188 },
+    "scenario": "Three clients: captured-prefix normalization, later P, genuinely unsequenced detached editing/reattachment, subsequent atomic correction containing detach/edit/reattach, same original object per client, final A=S and zero P",
+    "sourceTreeImplementationImported": false,
+    "genericTransport": "Existing @fluidframework/test-runtime-utils/internal from the source worktree, not its Tree implementation or Tree test helpers",
+    "wrapperAndDirectIdentity": ["Tree", "SchemaFactory", "configuredSharedTreeAlpha", "getSharedTreeAuthority", "TextAsTree"],
+    "esm": {
+      "path": "packed-esm.log",
+      "sha256": "2E38011D3E90ACE1D3FF66A9BD001AA56F052360A9C687767F6056CDB7EEF546",
+      "entrypoint": "lib\\entrypoints\\alpha.js",
+      "entrypointSha256": "1DDBD91DC8C89CBCD86E95C96D21B45EA903E7AFA3E49080A84E12C4D66BF19E"
+    },
+    "cjs": {
+      "path": "packed-cjs.log",
+      "sha256": "0268B6C831DA4AB62D91460721F4AF96035528786B23E253108822AD45A91FDE",
+      "entrypoint": "dist\\entrypoints\\alpha.js",
+      "entrypointSha256": "F40875F1D56032E8406A9702FCBC7B9AA289D333EF005F502C0392D18F817DDA"
+    },
+    "publicTypes": "Existing TypeScript compiler: --noEmit --strict --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2022 api-proof.mts api-proof.cts; exit zero",
+    "proofScript": {
+      "path": "..\\r5-consumer\\proof.cjs",
+      "sha256": "9BA6F9C6B25AF1E8E14DA30FBDDDC12933F32B2547F9646EDC33BC649C501468"
+    },
+    "typeProofSha256ForBothFormats": "DBAC917E95D9B2C77F627DEB24AB67359C84FF1A9C5994305CFABF25B84C2BFC"
+  },
+  "tools": {
+    "node": "24.16.0",
+    "nodeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+    "pnpm": "11.9.0",
+    "typescript": "5.4.5",
+    "apiExtractor": "7.58.1 (bundled TypeScript 5.9.3)",
+    "pack": "With COREPACK_ENABLE_NETWORK=0, installed pnpm pack --pack-destination <r5> --json; package has no prepack/prepare/postpack lifecycle hooks"
+  },
+  "limits": [
+    "No arbitrary non-prefix subset acceptance or history-discarding transformed replacement",
+    "No runtime authority summaries, bounded history retention, durable cut reopening, encoded recovery or historical receipt query",
+    "All writers trusted; labels and protocol guards are not security authorization",
+    "Existing sequence/optional removed-root support retained; required-field vacancy/reinsertion, mixed fresh/detached insertion and removed children in new parents remain unsupported",
+    "No r5 AFR, hosted OCS, native importer, bridge/client/harness integration, service or browser claim",
+    "Parent's historical r2/r4 AFR and native evidence remains separate and is not credited to r5"
+  ]
+}

@@ -1,0 +1,41 @@
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">
+  <Obj RefId="0">
+    <TN RefId="0">
+      <T>Microsoft.PowerShell.Commands.FileHashInfo</T>
+      <T>System.Object</T>
+    </TN>
+    <ToString>Microsoft.PowerShell.Commands.FileHashInfo</ToString>
+    <Props>
+      <S N="Algorithm">SHA256</S>
+      <S N="Hash">F8F4E58F5BC67AFBFA7E0D9B4D9851833B989698547E82AC423411FC9FA1DECE</S>
+      <S N="Path">C:\office\FluidFramework-sharedtree-bridge\.artifacts\r7\fluidframework-tree-2.111.0.tgz</S>
+    </Props>
+  </Obj>
+  <Obj RefId="1">
+    <TNRef RefId="0" />
+    <ToString>Microsoft.PowerShell.Commands.FileHashInfo</ToString>
+    <Props>
+      <S N="Algorithm">SHA256</S>
+      <S N="Hash">9CD1D487FC694F695661A530E618A28029900C80449A7B0F34BDA6BC5CDB653B</S>
+      <S N="Path">C:\office\FluidFramework-sharedtree-bridge\.artifacts\r7\HANDOFF.md</S>
+    </Props>
+  </Obj>
+  <Obj RefId="2">
+    <TNRef RefId="0" />
+    <ToString>Microsoft.PowerShell.Commands.FileHashInfo</ToString>
+    <Props>
+      <S N="Algorithm">SHA256</S>
+      <S N="Hash">5BDA42FFA2B3E11ED0DA0B9FB429209801D53C1C575912AEB6557056AA467C98</S>
+      <S N="Path">C:\office\FluidFramework-sharedtree-bridge\.artifacts\r7\sharedtree-source.patch</S>
+    </Props>
+  </Obj>
+  <Obj RefId="3">
+    <TNRef RefId="0" />
+    <ToString>Microsoft.PowerShell.Commands.FileHashInfo</ToString>
+    <Props>
+      <S N="Algorithm">SHA256</S>
+      <S N="Hash">58FFB0BD93B6E909488B33AB5338842C1B0CC1F822E0542ED14909084409621D</S>
+      <S N="Path">C:\office\FluidFramework-sharedtree-bridge\.artifacts\r7\verification.json</S>
+    </Props>
+  </Obj>
+</Objs>

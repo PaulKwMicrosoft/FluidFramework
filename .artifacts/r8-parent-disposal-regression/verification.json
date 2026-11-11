@@ -1,0 +1,115 @@
+{
+  "sourceCommit": "d59df925b5f1617e6189924250e02b10510c9a2d",
+  "node": "v24.16.0",
+  "parentRepro": {
+    "path": "C:\\office\\ppt-sharedtree-bridge\\harness-r5\\adversarial\\r6-reentrant-dispose.cjs",
+    "sha256": "0AD7DE009E42B83EAD5E4EEF9A3D9EC3495460E3DE9FC47D17C54EC19E2795DA"
+  },
+  "adaptedReproSha256": "2773AB8128060B2FE93894E59C3EEF14AA8518A9B8410544A4F092C129FB045C",
+  "installedPackageFilesMatched": 3288,
+  "unchangedInputs": [
+    {
+      "path": "C:\\office\\ppt-sharedtree-bridge\\harness-r5\\adversarial\\r6-reentrant-dispose.cjs",
+      "sha256": "0AD7DE009E42B83EAD5E4EEF9A3D9EC3495460E3DE9FC47D17C54EC19E2795DA"
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r6\\fluidframework-tree-2.111.0.tgz",
+      "sha256": "F5F78A8748F73F51E5AF20A3E0C15BE9847D0A829847E91DC3ECF5F6B0745367"
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r6\\verification.json",
+      "sha256": "BB270148399AC6CA423D5C11214430F3029C0AF52BCE2DC1E4F0787B5B9A1ADF"
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8\\fluidframework-tree-2.111.0.tgz",
+      "sha256": "EA7CFC5BB102887160482896309F9BD89A0A435040BBDCD26D937AE4C99FFE55"
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8\\verification.json",
+      "sha256": "AE06917FF064998DD949992A27BD250B321B818A5695B3B776E4430A61C7DB7B"
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8\\HANDOFF.md",
+      "sha256": "707EA3E49E2E918FA722B3A1039EE87F3D9EE7A4D0F683790F45ED4E9F9F7457"
+    },
+    {
+      "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\capture-disposal.mjs",
+      "sha256": "C9F63831B4BF698663B93CEB3F4D5D3122CFF421332EC7438061DAFDA2FCD492"
+    }
+  ],
+  "results": [
+    {
+      "result": "desired-cleanup-contract-passed",
+      "format": "CJS",
+      "forest": "Reference",
+      "archiveSha256": "EA7CFC5BB102887160482896309F9BD89A0A435040BBDCD26D937AE4C99FFE55",
+      "entry": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\dist\\entrypoints\\alpha.js",
+      "entrySha256": "F40875F1D56032E8406A9702FCBC7B9AA289D333EF005F502C0392D18F817DDA",
+      "callbackCount": 1,
+      "disposalError": null,
+      "liveValue": 0,
+      "liveCaptureStillUsable": true,
+      "productionFiles": {
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\dist\\shared-tree\\externalAuthorityController.js": "ED4571784D4BF1870C603880EA81AEE7708DEABC70BCCEB3C7C3A6E18E2DDBB6",
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\dist\\shared-tree\\authorityNodeReferences.js": "E6A52FBE1F219B203885965F0FB0B0AEF73F0A96CE416212CF6332914EC7F542",
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\dist\\shared-tree\\treeCheckout.js": "697AFD9ADAFECA0AE0CA99EB6EF9E9FD71E20668A32D58181693149B07FF98A6"
+      },
+      "boundary": "Exact parent scenario adapted only for frozen r8 loading and desired-success assertions; generic local ordering mocks, no SDK edits, network or native operation"
+    },
+    {
+      "result": "desired-cleanup-contract-passed",
+      "format": "CJS",
+      "forest": "Optimized",
+      "archiveSha256": "EA7CFC5BB102887160482896309F9BD89A0A435040BBDCD26D937AE4C99FFE55",
+      "entry": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\dist\\entrypoints\\alpha.js",
+      "entrySha256": "F40875F1D56032E8406A9702FCBC7B9AA289D333EF005F502C0392D18F817DDA",
+      "callbackCount": 1,
+      "disposalError": null,
+      "liveValue": 0,
+      "liveCaptureStillUsable": true,
+      "productionFiles": {
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\dist\\shared-tree\\externalAuthorityController.js": "ED4571784D4BF1870C603880EA81AEE7708DEABC70BCCEB3C7C3A6E18E2DDBB6",
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\dist\\shared-tree\\authorityNodeReferences.js": "E6A52FBE1F219B203885965F0FB0B0AEF73F0A96CE416212CF6332914EC7F542",
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\dist\\shared-tree\\treeCheckout.js": "697AFD9ADAFECA0AE0CA99EB6EF9E9FD71E20668A32D58181693149B07FF98A6"
+      },
+      "boundary": "Exact parent scenario adapted only for frozen r8 loading and desired-success assertions; generic local ordering mocks, no SDK edits, network or native operation"
+    },
+    {
+      "result": "desired-cleanup-contract-passed",
+      "format": "ESM",
+      "forest": "Reference",
+      "archiveSha256": "EA7CFC5BB102887160482896309F9BD89A0A435040BBDCD26D937AE4C99FFE55",
+      "entry": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\lib\\entrypoints\\alpha.js",
+      "entrySha256": "1DDBD91DC8C89CBCD86E95C96D21B45EA903E7AFA3E49080A84E12C4D66BF19E",
+      "callbackCount": 1,
+      "disposalError": null,
+      "liveValue": 0,
+      "liveCaptureStillUsable": true,
+      "productionFiles": {
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\lib\\shared-tree\\externalAuthorityController.js": "A476233293D107DBA8739A41B7C86498A8CD46092BFDB7C2A0E7696B225E4761",
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\lib\\shared-tree\\authorityNodeReferences.js": "B6FE678AEA396148E175A44A6150ADC4196337177B70730DE82EDEDBF9900446",
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\lib\\shared-tree\\treeCheckout.js": "9DF1B251FCD569D02D02CB296A3A550BCBEC76C11FD2E9CBF065A9B814412C9D"
+      },
+      "boundary": "Exact parent scenario adapted only for frozen r8 loading and desired-success assertions; generic local ordering mocks, no SDK edits, network or native operation"
+    },
+    {
+      "result": "desired-cleanup-contract-passed",
+      "format": "ESM",
+      "forest": "Optimized",
+      "archiveSha256": "EA7CFC5BB102887160482896309F9BD89A0A435040BBDCD26D937AE4C99FFE55",
+      "entry": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\lib\\entrypoints\\alpha.js",
+      "entrySha256": "1DDBD91DC8C89CBCD86E95C96D21B45EA903E7AFA3E49080A84E12C4D66BF19E",
+      "callbackCount": 1,
+      "disposalError": null,
+      "liveValue": 0,
+      "liveCaptureStillUsable": true,
+      "productionFiles": {
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\lib\\shared-tree\\externalAuthorityController.js": "A476233293D107DBA8739A41B7C86498A8CD46092BFDB7C2A0E7696B225E4761",
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\lib\\shared-tree\\authorityNodeReferences.js": "B6FE678AEA396148E175A44A6150ADC4196337177B70730DE82EDEDBF9900446",
+        "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\node_modules\\@fluidframework\\tree\\lib\\shared-tree\\treeCheckout.js": "9DF1B251FCD569D02D02CB296A3A550BCBEC76C11FD2E9CBF065A9B814412C9D"
+      },
+      "boundary": "Exact parent scenario adapted only for frozen r8 loading and desired-success assertions; generic local ordering mocks, no SDK edits, network or native operation"
+    }
+  ],
+  "scope": "Four extra exact-parent-scenario public-API executions; not additions to the frozen r8 suite counts."
+}

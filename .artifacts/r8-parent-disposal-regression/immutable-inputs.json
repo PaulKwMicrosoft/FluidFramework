@@ -1,0 +1,30 @@
+[
+  {
+    "path": "C:\\office\\ppt-sharedtree-bridge\\harness-r5\\adversarial\\r6-reentrant-dispose.cjs",
+    "sha256": "0AD7DE009E42B83EAD5E4EEF9A3D9EC3495460E3DE9FC47D17C54EC19E2795DA"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r6\\fluidframework-tree-2.111.0.tgz",
+    "sha256": "F5F78A8748F73F51E5AF20A3E0C15BE9847D0A829847E91DC3ECF5F6B0745367"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r6\\verification.json",
+    "sha256": "BB270148399AC6CA423D5C11214430F3029C0AF52BCE2DC1E4F0787B5B9A1ADF"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8\\fluidframework-tree-2.111.0.tgz",
+    "sha256": "EA7CFC5BB102887160482896309F9BD89A0A435040BBDCD26D937AE4C99FFE55"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8\\verification.json",
+    "sha256": "AE06917FF064998DD949992A27BD250B321B818A5695B3B776E4430A61C7DB7B"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8\\HANDOFF.md",
+    "sha256": "707EA3E49E2E918FA722B3A1039EE87F3D9EE7A4D0F683790F45ED4E9F9F7457"
+  },
+  {
+    "path": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r8-consumer\\capture-disposal.mjs",
+    "sha256": "C9F63831B4BF698663B93CEB3F4D5D3122CFF421332EC7438061DAFDA2FCD492"
+  }
+]

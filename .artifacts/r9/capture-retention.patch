@@ -1,0 +1,92 @@
+diff --git a/packages/dds/tree/src/shared-tree-core/editManager.ts b/packages/dds/tree/src/shared-tree-core/editManager.ts
+index c1ecafb9e83badfec20922fb3d334feade7e2fca..7d98fb766191ffa13286fafab9547a6aa96942c9 100644
+--- a/packages/dds/tree/src/shared-tree-core/editManager.ts
++++ b/packages/dds/tree/src/shared-tree-core/editManager.ts
+@@ -522,7 +522,10 @@ export class EditManager<
+ 		// Track all forks of the local branch for purposes of trunk eviction. Unlike the local branch, they have
+ 		// an unknown lifetime and rebase frequency, so we can not make any assumptions about which trunk commits
+ 		// they require and therefore we monitor them explicitly.
+-		onForkTransitive(branch.localBranch, (fork) => this.registerBranch(fork));
++		// Authority mode retains history without trunk GC. Do not retain its temporary capture forks.
++		if (!this.externalAuthority) {
++			onForkTransitive(branch.localBranch, (fork) => this.registerBranch(fork));
++		}
+ 
+ 		if (branchId !== "main") {
+ 			this.registerBranch(branch.localBranch);
+diff --git a/packages/dds/tree/src/test/shared-tree-core/edit-manager/editManagerCorrectness.test.ts b/packages/dds/tree/src/test/shared-tree-core/edit-manager/editManagerCorrectness.test.ts
+index 60b0c6cd3a9611ceb98dedc5723bf910f087f363..639862064cf9ba3c897052fc03673a9b3ed61cf1 100644
+--- a/packages/dds/tree/src/test/shared-tree-core/edit-manager/editManagerCorrectness.test.ts
++++ b/packages/dds/tree/src/test/shared-tree-core/edit-manager/editManagerCorrectness.test.ts
+@@ -27,6 +27,27 @@ const peer2: SessionId = "2" as SessionId;
+ 
+ export function testCorrectness(): void {
+ 	describe("Correctness", () => {
++		for (const externalAuthority of [false, true]) {
++			it(`only tracks transitive forks when trunk GC is enabled (authority=${externalAuthority})`, () => {
++				const { manager } = testChangeEditManagerFactory({ externalAuthority });
++				const local = manager.getLocalBranch("main");
++				const fork = local.fork();
++				const descendant = fork.fork();
++				try {
++					for (const branch of [local, fork, descendant]) {
++						assert(
++							"hasListeners" in branch.events &&
++								typeof branch.events.hasListeners === "function",
++						);
++						assert.equal(branch.events.hasListeners("fork"), !externalAuthority);
++					}
++				} finally {
++					descendant.dispose();
++					fork.dispose();
++				}
++			});
++		}
++
+ 		describe("Unit Tests", () => {
+ 			runUnitTestScenario(
+ 				"Can handle non-concurrent local changes being sequenced immediately",
+diff --git a/packages/dds/tree/src/test/shared-tree-core/edit-manager/editManagerTestUtils.ts b/packages/dds/tree/src/test/shared-tree-core/edit-manager/editManagerTestUtils.ts
+index a20ae74d9526976a970fe641a9bb2ac1742ac013..e12807650fc9e8a5bfa49434a6c4fd95191bf78a 100644
+--- a/packages/dds/tree/src/test/shared-tree-core/edit-manager/editManagerTestUtils.ts
++++ b/packages/dds/tree/src/test/shared-tree-core/edit-manager/editManagerTestUtils.ts
+@@ -28,6 +28,7 @@ export function testChangeEditManagerFactory(options: {
+ 	rebaser?: ChangeRebaser<TestChange>;
+ 	sessionId?: SessionId;
+ 	autoDiscardRevertibles?: boolean;
++	externalAuthority?: boolean;
+ }): {
+ 	manager: TestEditManager;
+ 	family: ChangeFamily<ChangeFamilyEditor, TestChange>;
+@@ -35,6 +36,7 @@ export function testChangeEditManagerFactory(options: {
+ 	const family = testChangeFamilyFactory(options.rebaser);
+ 	const manager = editManagerFactory(family, {
+ 		sessionId: options.sessionId,
++		externalAuthority: options.externalAuthority,
+ 	});
+ 
+ 	return { manager, family };
+@@ -44,6 +46,7 @@ export function editManagerFactory<TChange = TestChange>(
+ 	family: ChangeFamily<ChangeFamilyEditor, TChange>,
+ 	options: {
+ 		sessionId?: SessionId;
++		externalAuthority?: boolean;
+ 	} = {},
+ ): EditManager<ChangeFamilyEditor, TChange, ChangeFamily<ChangeFamilyEditor, TChange>> {
+ 	const genId = () => testIdCompressor.generateCompressedId();
+@@ -51,7 +54,14 @@ export function editManagerFactory<TChange = TestChange>(
+ 		ChangeFamilyEditor,
+ 		TChange,
+ 		ChangeFamily<ChangeFamilyEditor, TChange>
+-	>(family, options.sessionId ?? ("0" as SessionId), genId);
++	>(
++		family,
++		options.sessionId ?? ("0" as SessionId),
++		genId,
++		undefined,
++		undefined,
++		options.externalAuthority,
++	);
+ 
+ 	return manager;
+ }

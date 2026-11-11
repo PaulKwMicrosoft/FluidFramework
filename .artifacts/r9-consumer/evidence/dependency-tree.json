@@ -1,0 +1,41 @@
+{
+  "version": "1.0.0",
+  "name": "sharedtree-r9-isolated-packaging-proof",
+  "dependencies": {
+    "@fluidframework/tree": {
+      "version": "2.111.0",
+      "resolved": "file:C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r9\\fluidframework-tree-2.111.0.tgz",
+      "overridden": false
+    },
+    "fluid-framework": {
+      "version": "2.111.0",
+      "resolved": "file:C:\\office\\ppt-sharedtree-bridge\\harness-r5\\vendor\\fluid-framework-authority-r2.tgz",
+      "overridden": false,
+      "dependencies": {
+        "@fluidframework/fluid-static": {
+          "version": "2.111.0",
+          "resolved": "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@fluidframework/fluid-static/-/fluid-static-2.111.0.tgz",
+          "overridden": false,
+          "dependencies": {
+            "@fluidframework/aqueduct": {
+              "version": "2.111.0",
+              "resolved": "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@fluidframework/aqueduct/-/aqueduct-2.111.0.tgz",
+              "overridden": false,
+              "dependencies": {
+                "@fluidframework/tree": {
+                  "version": "2.111.0"
+                }
+              }
+            },
+            "@fluidframework/tree": {
+              "version": "2.111.0"
+            }
+          }
+        },
+        "@fluidframework/tree": {
+          "version": "2.111.0"
+        }
+      }
+    }
+  }
+}

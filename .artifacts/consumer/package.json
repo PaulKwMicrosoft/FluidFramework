@@ -1,0 +1,13 @@
+{
+  "name": "sharedtree-authority-package-proof",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@fluidframework/tree": "file:C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r4\\fluidframework-tree-2.111.0.tgz",
+    "fluid-framework": "file:C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r2\\fluid-framework-2.111.0.tgz"
+  },
+  "overrides": {
+    "@fluidframework/tree": "$@fluidframework/tree"
+  }
+}

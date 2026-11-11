@@ -1,0 +1,17 @@
+{
+  "lane": "ESM",
+  "forest": "Optimized",
+  "proof": "Packed modules with generic local mock ordering; not AFR or OCS",
+  "clients": 3,
+  "wrapperIdentity": true,
+  "sourceWorktreeTreeLoaded": false,
+  "scenario": "Prefix correction + later P/local L + removed-root retention + correction detach/edit/reattach",
+  "checkpoint": "final",
+  "finalPending": 0,
+  "perClientOriginalIdentity": true,
+  "ddsType": "https://graph.microsoft.com/types/tree/detached-roots-v1/external-authority-v2",
+  "treeEntry": "C:\\office\\FluidFramework-sharedtree-bridge\\.artifacts\\r6-consumer\\node_modules\\@fluidframework\\tree\\lib\\entrypoints\\alpha.js",
+  "treeEntrySha256": "1ddbd91dc8c89cbcd86e95c96d21b45ea903e7afa3e49080a84e12c4d66bf19e",
+  "tarballSha256": "f5f78a8748f73f51e5af20a3e0c15be9847d0a829847e91dc3ecf5f6b0745367",
+  "nodeVersion": "v24.16.0"
+}

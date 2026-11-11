@@ -1,0 +1,1447 @@
+diff --git a/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md b/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
+index d8aaff6b773cc2b7d55371ded5edbc9f1b946269..8f43af41c8799dd65f27f1140f63ade207dbeb45 100644
+--- a/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
++++ b/packages/dds/tree/EXTERNAL_AUTHORITY_PROTOTYPE.md
+@@ -26,10 +26,14 @@ const AuthorityTree = configuredSharedTreeAlpha({
+ ```
+ 
+ All clients must use this configuration. Authority trees deliberately use a
+-different DDS type, ending in `/external-authority-v1`. This is a new experimental
++different DDS type, ending in `/external-authority-v2`. This is a new experimental
+ protocol, not wire-compatible with an unmodified tree. The Fluid ordering service
+ is unchanged. IDs and epochs provide fencing; **they do not authenticate writers**.
+ Every writer in this prototype is trusted and can access the controller.
++Version 2 adds an explicit authoring-base revision to authority advances and
++supports atomic prefix settlement plus correction. Its bootstrap and message
++envelopes also use version 2. Use fresh containers: r2/r3/r4 version-1 documents
++are not an in-place upgrade target, even if an application supplies matching labels.
+ 
+ ## Controller
+ 
+@@ -42,15 +46,20 @@ Every writer in this prototype is trusted and can access the controller.
+ * `createDraft(capture)` — a private fork at **A**, edited with ordinary
+   `draft.viewWith(configuration)` and typed tree operations. It does not submit
+   ordinary Fluid operations.
++* `createDraft(capture, { afterPrefix: k })` — a private fork at **captured A plus
++  exactly the first k captured P revisions**. It excludes the remaining captured
++  P, later sequenced work, and L. Publishing this draft must use the same capture
++  object and `approvePrefix: k`.
+ * `publishAdvance({ batchId, nextCheckpoint, capture, approvePrefix?, draft? })`
+   — publishes one authority message. The promise reports `"applied"`,
+   `"duplicate"` or `"stale"` only after normal sequenced self-echo.
+ * `onStateChanged(listener)` — notification after sequenced processing; returns
+   an unsubscribe function.
+ 
+-Use **either** an unchanged `approvePrefix` count from that capture **or** an
+-external draft. Combined transformed settlement is rejected rather than
+-approximated. Publishing seals the draft for further publication. Complete any
++An unchanged `approvePrefix`, an A-based external draft, and a prefix-based
++correction are supported. A plain A-based draft combined with positive approval
++is still rejected: it was authored on the wrong history. Publishing seals the
++draft for further publication. Complete any
+ open draft transaction before publishing. Dispose drafts/captures when no longer
+ needed. Snapshots use SharedTree's existing `VerboseTree` format; the authority
+ controller does not perform package serialization or application-level merging.
+@@ -69,11 +78,48 @@ const outcome = await authority.publishAdvance({
+ cut.dispose();
+ ```
+ 
++Example accepted-prefix settlement with an authoritative correction:
++
++```ts
++const cut = authority.capture();
++const k = cut.editIds.length; // Or an explicitly accepted leading prefix.
++const correction = authority.createDraft(cut, { afterPrefix: k });
++const correctedView = correction.viewWith(configuration);
++// Apply typed authoritative normalization to correctedView, whose base is A + P[0:k].
++const outcome = await authority.publishAdvance({
++    batchId: "unique-normalized-acceptance",
++    nextCheckpoint: "unique-approved-checkpoint",
++    capture: cut,
++    approvePrefix: k,
++    draft: correction,
++});
++correction.dispose();
++cut.dispose();
++```
++
++The accepted prefix is **not replaced**. Let B be its actual history head and C
++be the draft's newly authored corrections. The new approved history is B followed
++by C, with all accepted revisions preserved and fresh revision identities for C.
++The remaining P suffix rebases over C, then L rebases over that new sequenced
++history. The transition is emitted once through the checkout's rebase event.
++Even an empty/no-net correction does not settle any edits outside the selected
++prefix. No authoring context is reconstructed from `VerboseTree` or JSON.
++
++The wire advance carries B's stable revision as `authoringBase`, in addition to
++the approved checkpoint and exact prefix IDs. Sequenced processing validates
++that these resolve to the same actual history before appending corrections.
++Later ordinary edits do not invalidate a cut; a competing authority advance
++does. A capture of an earlier pre-attach A is also rejected if initialization
++changed A while the checkpoint remained `"initial"`. Malformed wire contexts
++fail closed through the existing SharedTree error/breaker mechanism.
++
+ Attach/initialize the tree and approve its initialization before authoring
+ external drafts. Schema evolution after the first authority advance is rejected.
+ For an external draft, capture A, create the draft, edit it, then publish it using
+-the same capture. An intervening authority advance makes that publication stale;
+-capture and author again. Ordinary optimistic edits may continue concurrently.
++the same capture. An intervening authority advance makes that publication stale.
++If external acceptance has already occurred, reconciliation is required; do not
++silently recapture or reauthor the accepted attempt. Ordinary optimistic edits
++may continue concurrently.
+ 
+ ## What actually changes
+ 
+@@ -82,7 +128,8 @@ capture and author again. Ordinary optimistic edits may continue concurrently.
+   history roles. Historical sequence mappings are not rewritten when A advances.
+ * Peer reconstruction rebases a sender's pending branch onto its original T
+   checkpoint, not a new interpretation of the old reference.
+-* An external draft extends A. Existing rebasers transform P over the new A, then
++* An external draft extends A, or its explicitly accepted prefix. Existing rebasers
++  transform the remaining P over the new A, then
+   L over that new sequenced trunk. Live checkout observers receive the resulting
+   transition through the existing rebase event, not a silent `setHead`.
+ * `sharedTreeCore.ts` wraps existing change codecs in one versioned authority
+@@ -113,7 +160,8 @@ capture and author again. Ordinary optimistic edits may continue concurrently.
+ * Reconnect/resubmit of ordinary work and an authority publication have dedicated
+   real-client tests. Persisted pending-state replay and summary reconstruction are
+   not thereby proved.
+-* No subset acceptance, transformed/coalesced replacement, rejection rollback,
++* No non-prefix subset acceptance, revision-discarding transformed/coalesced
++  replacement, rejection rollback,
+   arbitrary historical base authoring, authority election, or cryptographic
+   authorization. Duplicate batch IDs with different content are protocol errors.
+ * No shared branches or schema evolution. Required-field vacancy and required-field
+@@ -122,14 +170,20 @@ capture and author again. Ordinary optimistic edits may continue concurrently.
+ * Existing move and removal/undo identity are tested across authority rebases.
+   That is not a substitute for general Detach/Attach.
+ * Conflicting-write undo/redo is tested across repeated authority advances.
+-  This restricted stable-revision model does not establish undo semantics for
+-  future transformed/subset settlement that discards or replaces revisions.
++  Accepted-prefix corrections are later authoritative edits, not rewritten
++  versions of accepted edits and not entries in the user's undo stack. Undo of
++  an accepted revision uses ordinary selective-undo semantics through later
++  corrections; it is not a grouped undo of the acceptance plus normalization.
++  The conflicting-field case is compared against an ordinary SharedTree history.
++  An accepted detach transaction can be undone/redone while retaining later
++  normalized node content and per-client identity. This does not establish undo
++  semantics for future settlement that discards or replaces revisions.
+ 
+ ## Optional detached-root editing
+ 
+ Add `enableDetachedRootEditing: true` to the factory configuration on **every**
+ participant. The resulting authority DDS type ends in
+-`/detached-roots-v1/external-authority-v1`, distinct from the authority-only type.
++`/detached-roots-v1/external-authority-v2`, distinct from the authority-only type.
+ Use a fresh experimental container; do not reinterpret an existing association.
+ 
+ Removed hydrated roots can be supplied to ordinary array `insertAt*` methods
+@@ -173,3 +227,10 @@ decisive order reversal (Fluid P writes 1, external A writes 2, rebased P still
+ wins with 1), old-reference sender predecessors, local L, immutable cuts,
+ prefix/dedup/stale handling, undo, reconnect/resubmit, mixed runtime batches,
+ explicit summary rejection and unsupported editing boundaries.
++
++`src/test/shared-tree/atomicAuthoritySettlement.spec.ts` additionally covers
++prefix-based normalization, later P/L, original sender contexts, no-net
++obligations, removed roots, corrective detach/reattach, undo/redo ancestry,
++duplicates, reconnect, stale publication, invalid prefix/capture/base combinations
++and protocol-version fencing. These are real DDS instances using existing mock
++ordering infrastructure, **not AFR or OCS executions**.
+diff --git a/packages/dds/tree/api-report/tree.alpha.api.md b/packages/dds/tree/api-report/tree.alpha.api.md
+index f60cdf2303789a929c97c18365b7f6246d7fde56..a536576564c193f1e597773e83c99b5f1624f5dc 100644
+--- a/packages/dds/tree/api-report/tree.alpha.api.md
++++ b/packages/dds/tree/api-report/tree.alpha.api.md
+@@ -1271,8 +1271,9 @@ export interface SharedTreeAuthorityCapture {
+ export interface SharedTreeAuthorityController {
+     // (undocumented)
+     capture(): SharedTreeAuthorityCapture;
+-    // (undocumented)
+-    createDraft(capture: SharedTreeAuthorityCapture): SharedTreeAuthorityDraft;
++    createDraft(capture: SharedTreeAuthorityCapture, options?: {
++        readonly afterPrefix: number;
++    }): SharedTreeAuthorityDraft;
+     // (undocumented)
+     onStateChanged(listener: () => void): () => void;
+     // (undocumented)
+diff --git a/packages/dds/tree/src/shared-tree-core/editManager.ts b/packages/dds/tree/src/shared-tree-core/editManager.ts
+index 7369cd592b8ce80c9af3a8811a20ee52ddc88e0c..43f559a97065c35c870c7b8806cf685c2052e9c6 100644
+--- a/packages/dds/tree/src/shared-tree-core/editManager.ts
++++ b/packages/dds/tree/src/shared-tree-core/editManager.ts
+@@ -921,10 +921,6 @@ class SharedBranch<TEditor extends ChangeFamilyEditor, TChangeset> {
+ 			!this.approvedCheckpoints.has(advance.next),
+ 			"Approved checkpoint identities cannot be reused",
+ 		);
+-		assert(
+-			advance.approvedPrefix.length === 0 || advance.commits.length === 0,
+-			"Transformed settlement is not supported: approve a prefix or inject external edits",
+-		);
+ 		const provisional = this.getExternalAuthorityState().provisional;
+ 		assert(
+ 			advance.approvedPrefix.length <= provisional.length,
+@@ -940,7 +936,12 @@ class SharedBranch<TEditor extends ChangeFamilyEditor, TChangeset> {
+ 		if (advance.approvedPrefix.length > 0) {
+ 			nextApproved =
+ 				provisional[advance.approvedPrefix.length - 1] ?? fail("Missing approved prefix");
+-		} else if (advance.commits.length > 0) {
++		}
++		assert(
++			advance.authoringBase === nextApproved.revision,
++			"Authority authoring base must match the captured approved-prefix history",
++		);
++		if (advance.commits.length > 0) {
+ 			const revisions = new Set<RevisionTag>();
+ 			findAncestor(this.trunk.getHead(), (commit) => {
+ 				revisions.add(commit.revision);
+@@ -955,6 +956,8 @@ class SharedBranch<TEditor extends ChangeFamilyEditor, TChangeset> {
+ 				nextApproved = mintCommit(nextApproved, commit);
+ 			}
+ 		}
++		// The accepted prefix remains an ancestor with its original revisions.
++		// Corrections extend that history; only the later P suffix is rebased.
+ 		const target = new SharedTreeBranch(nextApproved, this.changeFamily, this.mintRevisionTag);
+ 		this.trunk.rebaseOnto(target);
+ 		this.approvedHead = nextApproved;
+diff --git a/packages/dds/tree/src/shared-tree-core/externalAuthority.ts b/packages/dds/tree/src/shared-tree-core/externalAuthority.ts
+index 88d745b746e2667264bdfd89f1fc4c9c77d56233..d64f5f587ca9f86cc84755c47d149c9b33b5b8a3 100644
+--- a/packages/dds/tree/src/shared-tree-core/externalAuthority.ts
++++ b/packages/dds/tree/src/shared-tree-core/externalAuthority.ts
+@@ -6,6 +6,8 @@
+ import type { GraphCommit, RevisionTag } from "../core/index.js";
+ import { assert } from "@fluidframework/core-utils/internal";
+ 
++export const externalAuthorityProtocolVersion = 2;
++
+ /**
+  * Opt-in experimental authority protocol. All writers are trusted in this prototype.
+  * Identity/epoch checks are fencing, not authentication.
+@@ -18,14 +20,14 @@ export interface ExternalAuthorityConfiguration {
+ }
+ 
+ export interface AuthorityEnvelope {
+-	readonly externalAuthorityVersion: 1;
++	readonly externalAuthorityVersion: typeof externalAuthorityProtocolVersion;
+ 	readonly configuration: ExternalAuthorityConfiguration;
+ 	readonly kind: "ordinary" | "advance";
+ 	readonly content: unknown;
+ }
+ 
+ export interface AuthorityBootstrapMetadata {
+-	readonly externalAuthorityVersion: 1;
++	readonly externalAuthorityVersion: typeof externalAuthorityProtocolVersion;
+ 	readonly configuration: ExternalAuthorityConfiguration;
+ }
+ 
+@@ -40,7 +42,10 @@ export function validateAuthorityBootstrap(
+ 		"Invalid authority bootstrap metadata",
+ 	);
+ 	const metadata = content as AuthorityBootstrapMetadata;
+-	assert(metadata.externalAuthorityVersion === 1, "Incompatible external authority bootstrap");
++	assert(
++		metadata.externalAuthorityVersion === externalAuthorityProtocolVersion,
++		"Incompatible external authority bootstrap",
++	);
+ 	assert(
+ 		metadata.configuration?.documentEpoch === expected.documentEpoch,
+ 		"Wrong authority document epoch",
+@@ -59,6 +64,8 @@ export interface EncodedAdvance {
+ 	readonly batchId: string;
+ 	readonly expected: string;
+ 	readonly next: string;
++	/** Stable revision of captured A plus the approved prefix; "root" denotes the root revision. */
++	readonly authoringBase: string;
+ 	readonly approvedPrefix: readonly string[];
+ 	readonly commits: readonly unknown[];
+ }
+@@ -72,7 +79,10 @@ export function readAuthorityEnvelope(
+ 		"Authority envelope must be an object",
+ 	);
+ 	const envelope = content as AuthorityEnvelope;
+-	assert(envelope.externalAuthorityVersion === 1, "Incompatible external authority protocol");
++	assert(
++		envelope.externalAuthorityVersion === externalAuthorityProtocolVersion,
++		"Incompatible external authority protocol",
++	);
+ 	assert(
+ 		envelope.kind === "ordinary" || envelope.kind === "advance",
+ 		"Unknown authority envelope kind",
+@@ -98,7 +108,12 @@ export function readEncodedAdvance(content: unknown): EncodedAdvance {
+ 		"Authority advance must be an object",
+ 	);
+ 	const advance = content as EncodedAdvance;
+-	for (const value of [advance.batchId, advance.expected, advance.next]) {
++	for (const value of [
++		advance.batchId,
++		advance.expected,
++		advance.next,
++		advance.authoringBase,
++	]) {
+ 		assert(
+ 			typeof value === "string" && value.length > 0,
+ 			"Authority identifiers must be nonempty strings",
+@@ -118,6 +133,8 @@ export interface ExternalAuthorityAdvance<TChange> {
+ 	readonly batchId: string;
+ 	readonly expected: string;
+ 	readonly next: string;
++	/** The commits are authored after this exact prefix head, not after all captured P. */
++	readonly authoringBase: RevisionTag;
+ 	readonly approvedPrefix: readonly RevisionTag[];
+ 	readonly commits: readonly GraphCommit<TChange>[];
+ }
+diff --git a/packages/dds/tree/src/shared-tree-core/index.ts b/packages/dds/tree/src/shared-tree-core/index.ts
+index 1ea3528b8247f47da89f5219512c065f635a0a49..42c1034e728427132fad186c6539b6f7aef16164 100644
+--- a/packages/dds/tree/src/shared-tree-core/index.ts
++++ b/packages/dds/tree/src/shared-tree-core/index.ts
+@@ -3,9 +3,14 @@
+  * Licensed under the MIT License.
+  */
+ 
+-export type {
+-	ExternalAuthorityConfiguration,
+-	ExternalAuthorityOutcome,
++export {
++	type ExternalAuthorityConfiguration,
++	type ExternalAuthorityOutcome,
++	type AuthorityEnvelope,
++	externalAuthorityProtocolVersion,
++	readAuthorityEnvelope,
++	readEncodedAdvance,
++	validateAuthorityBootstrap,
+ } from "./externalAuthority.js";
+ 
+ export {
+diff --git a/packages/dds/tree/src/shared-tree-core/sharedTreeCore.ts b/packages/dds/tree/src/shared-tree-core/sharedTreeCore.ts
+index 3626cb9463cc211ff63e9961edc15e7a782e90f4..f146e4dc7dc2b99ce96d77e56063d42966aa1d7e 100644
+--- a/packages/dds/tree/src/shared-tree-core/sharedTreeCore.ts
++++ b/packages/dds/tree/src/shared-tree-core/sharedTreeCore.ts
+@@ -80,6 +80,8 @@ import {
+ 	authorityBootstrapKey,
+ 	validateAuthorityBootstrap,
+ 	type AuthorityBootstrapMetadata,
++	externalAuthorityProtocolVersion,
++	type EncodedAdvance,
+ } from "./externalAuthority.js";
+ 
+ export interface ClonableSchemaAndPolicy extends SchemaAndPolicy {
+@@ -266,7 +268,7 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
+ 			builder.addBlob(
+ 				authorityBootstrapKey,
+ 				stringify({
+-					externalAuthorityVersion: 1,
++					externalAuthorityVersion: externalAuthorityProtocolVersion,
+ 					configuration: this.externalAuthorityConfiguration,
+ 				} satisfies AuthorityBootstrapMetadata),
+ 			);
+@@ -525,8 +527,15 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
+ 						assert(revision !== undefined, "Unknown approval identity");
+ 						return revision;
+ 					});
++					const authoringBase =
++						encoded.authoringBase === "root"
++							? "root"
++							: this.idCompressor.tryRecompress(
++									encoded.authoringBase as Parameters<IIdCompressor["tryRecompress"]>[0],
++								);
++					assert(authoringBase !== undefined, "Unknown authority authoring base");
+ 					const result = this.editManager.advanceExternalAuthority(
+-						{ ...encoded, approvedPrefix, commits: decodedCommits },
++						{ ...encoded, authoringBase, approvedPrefix, commits: decodedCommits },
+ 						brand(envelope.sequenceNumber),
+ 						this.serializer.stringify(wrapper, this.sharedObject.handle),
+ 					);
+@@ -651,7 +660,7 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
+ 		return this.externalAuthorityConfiguration === undefined
+ 			? content
+ 			: ({
+-					externalAuthorityVersion: 1,
++					externalAuthorityVersion: externalAuthorityProtocolVersion,
+ 					configuration: this.externalAuthorityConfiguration,
+ 					kind,
+ 					content,
+@@ -680,6 +689,10 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
+ 			batchId: advance.batchId,
+ 			expected: advance.expected,
+ 			next: advance.next,
++			authoringBase:
++				advance.authoringBase === "root"
++					? "root"
++					: this.idCompressor.decompress(advance.authoringBase),
+ 			approvedPrefix: advance.approvedPrefix.map((revision) => {
+ 				assert(revision !== "root", "Cannot approve the root revision");
+ 				return this.idCompressor.decompress(revision);
+@@ -695,7 +708,7 @@ export class SharedTreeCore<TEditor extends ChangeFamilyEditor, TChange>
+ 					{ idCompressor: this.idCompressor, schema: this.schemaAndPolicy },
+ 				),
+ 			),
+-		};
++		} satisfies EncodedAdvance;
+ 		const receipt = new Promise<ExternalAuthorityOutcome>((resolve) => {
+ 			this.authorityReceipts.set(advance.batchId, resolve);
+ 		});
+diff --git a/packages/dds/tree/src/shared-tree/externalAuthorityController.ts b/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
+index d7fd1f3cbe6192e4a4f5135eb13fc54b98a8fd91..7d74a29b223b5d352801c681f28da4264d622c15 100644
+--- a/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
++++ b/packages/dds/tree/src/shared-tree/externalAuthorityController.ts
+@@ -33,7 +33,8 @@ export interface SharedTreeAuthorityCapture {
+ }
+ 
+ /**
+- * A private, ordinary editable fork of the capture's approved history.
++ * A private, ordinary editable fork of the capture's approved history, optionally
++ * including an explicitly selected prefix of its sequenced provisional edits.
+  * Edits do not submit Fluid operations until published as one authority advance.
+  * @alpha
+  */
+@@ -45,8 +46,9 @@ export interface SharedTreeAuthorityDraft {
+ }
+ 
+ /**
+- * Exactly one unchanged prefix approval OR an externally authored draft is supported.
+- * Approval and transformed replacement together are deliberately unsupported.
++ * Approves an unchanged captured prefix, optionally followed by an authoritative correction.
++ * A correction draft must have been created with afterPrefix equal to approvePrefix.
++ * Accepted revisions remain in history; this does not replace them or accept arbitrary subsets.
+  * @alpha @input
+  */
+ export interface SharedTreeAuthorityPublication {
+@@ -58,13 +60,20 @@ export interface SharedTreeAuthorityPublication {
+ }
+ 
+ /**
+- * Restricted v1 authority controller. All clients/writers must be trusted.
++ * Restricted v2 authority controller. All clients/writers must be trusted.
+  * History is retained without bound; runtime summaries are explicitly unsupported.
+  * @alpha
+  */
+ export interface SharedTreeAuthorityController {
+ 	capture(): SharedTreeAuthorityCapture;
+-	createDraft(capture: SharedTreeAuthorityCapture): SharedTreeAuthorityDraft;
++	/**
++	 * Forks captured A followed by exactly the first afterPrefix edits (default zero).
++	 * Later captured P and all local L are excluded. Publication must approve the same prefix.
++	 */
++	createDraft(
++		capture: SharedTreeAuthorityCapture,
++		options?: { readonly afterPrefix: number },
++	): SharedTreeAuthorityDraft;
+ 	publishAdvance(
+ 		publication: SharedTreeAuthorityPublication,
+ 	): Promise<"applied" | "duplicate" | "stale">;
+@@ -81,6 +90,8 @@ interface CaptureData {
+ 
+ interface DraftData {
+ 	readonly capture: SharedTreeAuthorityCapture;
++	readonly afterPrefix: number;
++	readonly base: GraphCommit<SharedTreeChange>;
+ 	readonly checkout: TreeCheckout;
+ 	disposed: boolean;
+ 	sealed: boolean;
+@@ -92,8 +103,11 @@ class Controller implements SharedTreeAuthorityController {
+ 
+ 	public constructor(private readonly kernel: SharedTreeKernel) {}
+ 
+-	private materialize(head: GraphCommit<SharedTreeChange>): TreeCheckout {
+-		const checkout = this.kernel.checkout.fork();
++	private materialize(
++		head: GraphCommit<SharedTreeChange>,
++		source = this.kernel.checkout,
++	): TreeCheckout {
++		const checkout = source.fork();
+ 		const oldBranch = checkout.mainBranch;
+ 		// This checkout has not been exposed to observers. switchBranch applies a real
+ 		// history diff to its cloned forest, schema and detached-root index.
+@@ -152,11 +166,30 @@ class Controller implements SharedTreeAuthorityController {
+ 		return data;
+ 	}
+ 
+-	public createDraft(capture: SharedTreeAuthorityCapture): SharedTreeAuthorityDraft {
++	private prefixBase(captured: CaptureData, count: number): GraphCommit<SharedTreeChange> {
++		if (!Number.isInteger(count) || count < 0 || count > captured.commits.length) {
++			throw new UsageError("Approval must be a prefix of the captured sequenced edits");
++		}
++		if (count === 0) {
++			return captured.approved;
++		}
++		const base = captured.commits[count - 1];
++		assert(base !== undefined, "Validated captured prefix has no head");
++		return base;
++	}
++
++	public createDraft(
++		capture: SharedTreeAuthorityCapture,
++		options?: { readonly afterPrefix: number },
++	): SharedTreeAuthorityDraft {
+ 		const captured = this.getCapture(capture);
++		const afterPrefix = options === undefined ? 0 : options.afterPrefix;
++		const base = this.prefixBase(captured, afterPrefix);
+ 		const data: DraftData = {
+ 			capture,
+-			checkout: captured.approvedCheckout.fork(),
++			afterPrefix,
++			base,
++			checkout: this.materialize(base, captured.approvedCheckout),
+ 			disposed: false,
+ 			sealed: false,
+ 		};
+@@ -184,16 +217,19 @@ class Controller implements SharedTreeAuthorityController {
+ 		publication: SharedTreeAuthorityPublication,
+ 	): Promise<ExternalAuthorityOutcome> {
+ 		const captured = this.getCapture(publication.capture);
+-		const count = publication.approvePrefix ?? 0;
+-		if (!Number.isInteger(count) || count < 0 || count > captured.commits.length) {
+-			throw new UsageError("Approval must be a prefix of the captured sequenced edits");
+-		}
+-		if (count > 0 && publication.draft !== undefined) {
+-			throw new UsageError("Transformed settlement is not supported");
++		const { approvePrefix: count = 0 } = publication;
++		const base = this.prefixBase(captured, count);
++		const current = this.kernel.getExternalAuthorityState();
++		if (
++			current.checkpoint === publication.capture.checkpoint &&
++			current.approved.revision !== captured.approved.revision
++		) {
++			throw new UsageError("Captured approved history no longer matches its checkpoint");
+ 		}
+ 		if (
+-			publication.batchId.length === 0 ||
+-			publication.nextCheckpoint.length === 0 ||
++			[publication.batchId, publication.nextCheckpoint].some(
++				(value) => typeof value !== "string" || value.length === 0,
++			) ||
+ 			publication.nextCheckpoint === publication.capture.checkpoint
+ 		) {
+ 			throw new UsageError("An authority advance requires distinct nonempty identifiers");
+@@ -209,18 +245,21 @@ class Controller implements SharedTreeAuthorityController {
+ 			) {
+ 				throw new UsageError("Expected an unpublished draft from this capture");
+ 			}
++			if (draft.afterPrefix !== count || draft.base !== base) {
++				throw new UsageError("Draft authoring base must match the approved captured prefix");
++			}
+ 			if (draft.checkout.transaction.size > 0) {
+ 				throw new UsageError("Finish the draft transaction before publishing");
+ 			}
+-			const ancestor = findCommonAncestor(captured.approved, [
++			const ancestor = findCommonAncestor(base, [
+ 				draft.checkout.mainBranch.getHead(),
+ 				commits,
+ 			]);
+-			assert(ancestor === captured.approved, "Authority draft changed its authoring base");
++			assert(ancestor === base, "Authority draft changed its authoring base");
+ 			if (commits.some((commit) => hasSchemaChange(commit.change))) {
+ 				throw new UsageError("Authority drafts cannot change schema");
+ 			}
+-			const enriched = draft.checkout.enrich(captured.approved, commits);
++			const enriched = draft.checkout.enrich(base, commits);
+ 			commits = commits.map((commit, index) => ({
+ 				...commit,
+ 				change: enriched[index] ?? commit.change,
+@@ -231,6 +270,7 @@ class Controller implements SharedTreeAuthorityController {
+ 			batchId: publication.batchId,
+ 			expected: publication.capture.checkpoint,
+ 			next: publication.nextCheckpoint,
++			authoringBase: base.revision,
+ 			approvedPrefix: captured.commits.slice(0, count).map((commit) => commit.revision),
+ 			commits,
+ 		});
+diff --git a/packages/dds/tree/src/test/shared-tree/atomicAuthoritySettlement.spec.ts b/packages/dds/tree/src/test/shared-tree/atomicAuthoritySettlement.spec.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..de2a4cd1525441eb062a27a4235c21fa53496341
+--- /dev/null
++++ b/packages/dds/tree/src/test/shared-tree/atomicAuthoritySettlement.spec.ts
+@@ -0,0 +1,837 @@
++/*!
++ * Copyright (c) Microsoft Corporation and contributors. All rights reserved.
++ * Licensed under the MIT License.
++ */
++
++import { strict as assert } from "node:assert";
++import { FlushMode } from "@fluidframework/runtime-definitions/internal";
++import { createIdCompressor } from "@fluidframework/id-compressor/internal";
++import { MockFluidDataStoreRuntime } from "@fluidframework/test-runtime-utils/internal";
++import {
++	SchemaFactory,
++	TreeViewConfiguration,
++	treeNodeApi as Tree,
++} from "../../simple-tree/index.js";
++import { TreeStatus } from "../../feature-libraries/index.js";
++import { configuredSharedTree } from "../../treeFactory.js";
++import {
++	getSharedTreeAuthority,
++	type SharedTreeAuthorityController,
++	type SharedTreeChange,
++} from "../../shared-tree/index.js";
++import {
++	readAuthorityEnvelope,
++	readEncodedAdvance,
++	validateAuthorityBootstrap,
++	type AuthorityEnvelope,
++} from "../../shared-tree-core/index.js";
++import { findCommonAncestor, type GraphCommit } from "../../core/index.js";
++import { TestTreeProviderLite, createTestUndoRedoStacks } from "../utils.js";
++import { MockContainerRuntimeWithOpBunching } from "../mocksForOpBunching.js";
++
++const labels = {
++	documentEpoch: "atomic-settlement-document",
++	authorityId: "trusted-normalizer",
++	authorityEpoch: "epoch",
++};
++const sf = new SchemaFactory("atomic-authority-settlement");
++class Item extends sf.object("Item", { name: sf.string, value: sf.number }) {}
++class Items extends sf.array("Items", Item) {}
++class Root extends sf.object("Root", {
++	value: sf.number,
++	other: sf.number,
++	items: Items,
++	slot: sf.optional(Item),
++}) {}
++const configuration = new TreeViewConfiguration({ schema: Root });
++
++async function setup(count = 3) {
++	const factory = configuredSharedTree({
++		minVersionForCollab: "2.80.0",
++		enableDetachedRootEditing: true,
++		externalAuthority: labels,
++	});
++	const provider = new TestTreeProviderLite(
++		count,
++		factory.getFactory(),
++		true,
++		FlushMode.TurnBased,
++	);
++	const trees = provider.trees;
++	const views = trees.map((tree) => tree.viewWith(configuration));
++	views[0].initialize({
++		value: 0,
++		other: 0,
++		items: [
++			{ name: "a", value: 0 },
++			{ name: "b", value: 0 },
++		],
++	});
++	provider.synchronizeMessages();
++	const controllers = trees.map(getSharedTreeAuthority);
++	const capture = controllers[0].capture();
++	const receipt = controllers[0].publishAdvance({
++		batchId: "bootstrap",
++		nextCheckpoint: "ready",
++		capture,
++		approvePrefix: capture.editIds.length,
++	});
++	provider.synchronizeMessages();
++	assert.equal(await receipt, "applied");
++	capture.dispose();
++	return { provider, trees, views, controllers };
++}
++
++function approvedValues(controller: SharedTreeAuthorityController): number[] {
++	const capture = controller.capture();
++	const draft = controller.createDraft(capture);
++	const root = draft.viewWith(configuration).root;
++	const values = [root.value, root.other];
++	draft.dispose();
++	capture.dispose();
++	return values;
++}
++
++describe("atomic authority settlement", () => {
++	it("authors at the exact captured prefix and atomically rebases later P then L", async () => {
++		const { provider, trees, views, controllers } = await setup();
++		const controller = controllers[0];
++		views[0].root.value = 11;
++		provider.synchronizeMessages();
++		views[1].root.other = 20;
++		provider.synchronizeMessages();
++		views[1].root.value = 99;
++		const capture = controller.capture();
++		assert.equal(capture.editIds.length, 2);
++		const originalSnapshot = capture.exportSequenced();
++		const draft = controller.createDraft(capture, { afterPrefix: 1 });
++		const correction = draft.viewWith(configuration);
++		assert.deepEqual([correction.root.value, correction.root.other], [11, 0]);
++		assert.deepEqual(approvedValues(controller), [0, 0]);
++		correction.root.value = 12;
++		correction.root.other = 13;
++		const observed: number[][] = [];
++		const off = trees[2].kernel.checkout.events.on("afterBatch", () => {
++			observed.push([views[2].root.value, views[2].root.other]);
++		});
++		const receipt = controller.publishAdvance({
++			batchId: "normalize",
++			nextCheckpoint: "normalized",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		assert.equal(controller.capture().checkpoint, "ready");
++		assert.deepEqual(observed, []);
++		trees[0].containerRuntime.flush();
++		provider.synchronizeMessages({ flush: false });
++		assert.equal(await receipt, "applied");
++		assert.deepEqual(observed, [[12, 20]], "Only corrected A plus rebased P is exposed");
++		assert.deepEqual(approvedValues(controller), [12, 13]);
++		assert.deepEqual(
++			views.map((view) => [view.root.value, view.root.other]),
++			[
++				[12, 20],
++				[99, 20],
++				[12, 20],
++			],
++		);
++		const settled = controller.capture();
++		assert.deepEqual(settled.editIds, capture.editIds.slice(1));
++		assert.deepEqual(capture.exportSequenced(), originalSnapshot);
++		provider.synchronizeMessages();
++		const acked = controller.capture();
++		assert.equal(acked.editIds.length, 2);
++		assert.equal(acked.editIds[0], capture.editIds[1]);
++		assert(views.every((view) => view.root.value === 99));
++		off();
++		acked.dispose();
++		settled.dispose();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("retains later peer P that sequenced after the immutable correction cut", async () => {
++		const { provider, views, controllers } = await setup();
++		views[0].root.value = 1;
++		provider.synchronizeMessages();
++		const capture = controllers[0].capture();
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 1 });
++		draft.viewWith(configuration).root.value = 2;
++		views[1].root.value = 3;
++		provider.synchronizeMessages();
++		const later = controllers[1].capture();
++		const receipt = controllers[0].publishAdvance({
++			batchId: "old-cut",
++			nextCheckpoint: "old-cut-approved",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		provider.synchronizeMessages();
++		assert.equal(await receipt, "applied");
++		assert.deepEqual(approvedValues(controllers[0]), [2, 0]);
++		assert(views.every((view) => view.root.value === 3));
++		const after = controllers[0].capture();
++		assert.deepEqual(after.editIds, later.editIds.slice(1));
++		after.dispose();
++		later.dispose();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("preserves authoring checkpoints in an ordinary-correction-ordinary runtime batch", async () => {
++		const { provider, views, controllers } = await setup();
++		views[0].root.value = 1;
++		provider.synchronizeMessages();
++		const capture = controllers[0].capture();
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 1 });
++		draft.viewWith(configuration).root.value = 2;
++		views[0].root.other = 7;
++		const receipt = controllers[0].publishAdvance({
++			batchId: "mixed-correction",
++			nextCheckpoint: "mixed-corrected",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		views[0].root.items[0].value = 9;
++		provider.synchronizeMessages();
++		assert.equal(await receipt, "applied");
++		views[1].root.value = 3;
++		provider.synchronizeMessages();
++		assert(
++			views.every(
++				(view) =>
++					view.root.value === 3 && view.root.other === 7 && view.root.items[0].value === 9,
++			),
++		);
++		assert.deepEqual(approvedValues(controllers[0]), [2, 0]);
++		const remaining = controllers[0].capture();
++		assert.equal(remaining.editIds.length, 3);
++		assert.deepEqual(remaining.editIds, controllers[1].capture().editIds);
++		remaining.dispose();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("keeps original authoring context and sender predecessors across prefix correction", async () => {
++		const { provider, trees, views, controllers } = await setup();
++		views[0].root.items.insertAtStart({ name: "accepted", value: 1 });
++		provider.synchronizeMessages();
++		const acceptedNodes = views.map((view) => view.root.items[0]);
++		trees[2].containerRuntime.pauseInboundProcessing();
++		views[2].root.items.removeAt(1);
++		views[2].root.items[1].value = 9;
++		const capture = controllers[0].capture();
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 1 });
++		const root = draft.viewWith(configuration).root;
++		assert.equal(root.items[0].name, "accepted");
++		root.items[0].value = 3;
++		root.items.insertAtStart({ name: "normalization", value: 2 });
++		const receipt = controllers[0].publishAdvance({
++			batchId: "old-context",
++			nextCheckpoint: "old-context-approved",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		trees[0].containerRuntime.flush();
++		provider.synchronizeMessages({ flush: false });
++		assert.equal(await receipt, "applied");
++		trees[2].containerRuntime.flush();
++		provider.synchronizeMessages({ flush: false });
++		trees[2].containerRuntime.resumeInboundProcessing();
++		provider.synchronizeMessages();
++		for (const [index, view] of views.entries()) {
++			assert.deepEqual(
++				[...view.root.items].map((item) => [item.name, item.value]),
++				[
++					["normalization", 2],
++					["accepted", 3],
++					["b", 9],
++				],
++			);
++			assert.equal(view.root.items[1], acceptedNodes[index]);
++		}
++		const remaining = controllers[0].capture();
++		assert.equal(remaining.editIds.length, 2);
++		assert.deepEqual(remaining.editIds, controllers[2].capture().editIds);
++		remaining.dispose();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("retains no-net P and L obligations while approving a no-net prefix and correction", async () => {
++		const { provider, trees, views, controllers } = await setup();
++		views[0].root.value = 1;
++		views[0].root.value = 0;
++		provider.synchronizeMessages();
++		views[1].root.other = 7;
++		views[1].root.other = 0;
++		provider.synchronizeMessages();
++		const capture = controllers[0].capture();
++		assert.equal(capture.editIds.length, 4);
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 2 });
++		const correction = draft.viewWith(configuration).root;
++		correction.value = 9;
++		correction.value = 0;
++		views[1].root.value = 4;
++		views[1].root.value = 0;
++		const receipt = controllers[0].publishAdvance({
++			batchId: "no-net",
++			nextCheckpoint: "no-net-approved",
++			capture,
++			approvePrefix: 2,
++			draft,
++		});
++		trees[0].containerRuntime.flush();
++		provider.synchronizeMessages({ flush: false });
++		assert.equal(await receipt, "applied");
++		const after = controllers[0].capture();
++		assert.deepEqual(after.editIds, capture.editIds.slice(2));
++		assert.deepEqual(after.exportApproved(), after.exportSequenced());
++		provider.synchronizeMessages();
++		const acked = controllers[0].capture();
++		assert.equal(acked.editIds.length, 4);
++		assert.deepEqual(acked.editIds.slice(0, 2), capture.editIds.slice(2));
++		assert.equal(new Set(acked.editIds).size, 4);
++		assert.deepEqual(acked.exportApproved(), acked.exportSequenced());
++		acked.dispose();
++		after.dispose();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("supports an empty correction without retiring an unapproved suffix", async () => {
++		const { provider, views, controllers } = await setup();
++		views[0].root.value = 1;
++		views[0].root.other = 2;
++		provider.synchronizeMessages();
++		const capture = controllers[0].capture();
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 1 });
++		const receipt = controllers[0].publishAdvance({
++			batchId: "empty-correction",
++			nextCheckpoint: "empty-corrected",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		provider.synchronizeMessages();
++		assert.equal(await receipt, "applied");
++		assert.deepEqual(approvedValues(controllers[0]), [1, 0]);
++		assert.deepEqual(controllers[0].capture().editIds, capture.editIds.slice(1));
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("preserves removed roots across prefix correction and later provisional/local reattachment", async () => {
++		const { provider, trees, views, controllers } = await setup();
++		const nodes = views.map((view) => view.root.items[0]);
++		views[0].root.items.removeAt(0);
++		nodes[0].value = 7;
++		provider.synchronizeMessages();
++		assert(nodes.every((node) => Tree.status(node) === TreeStatus.Removed));
++		const capture = controllers[0].capture();
++		assert.equal(capture.editIds.length, 2);
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 2 });
++		draft.viewWith(configuration).root.value = 100;
++		views[0].root.slot = nodes[0];
++		provider.synchronizeMessages();
++		const later = controllers[0].capture();
++		views[1].root.slot = undefined;
++		nodes[1].value = 9;
++		views[1].root.items.insertAtEnd(nodes[1]);
++		const receipt = controllers[0].publishAdvance({
++			batchId: "removed",
++			nextCheckpoint: "removed-approved",
++			capture,
++			approvePrefix: 2,
++			draft,
++		});
++		trees[0].containerRuntime.flush();
++		provider.synchronizeMessages({ flush: false });
++		assert.equal(await receipt, "applied");
++		assert.equal(views[0].root.slot, nodes[0]);
++		assert.equal(views[2].root.slot, nodes[2]);
++		assert.equal(nodes[0].value, 7);
++		assert.equal(views[1].root.items.at(-1), nodes[1]);
++		assert.equal(nodes[1].value, 9);
++		const settled = controllers[0].capture();
++		assert.deepEqual(settled.editIds, later.editIds.slice(2));
++		provider.synchronizeMessages();
++		for (const [index, view] of views.entries()) {
++			assert.equal(view.root.items.at(-1), nodes[index]);
++			assert.equal(nodes[index].value, 9);
++		}
++		assert.equal(controllers[0].capture().editIds.length, 4);
++		settled.dispose();
++		later.dispose();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("normalizes with real detach/edit/optional reattach in one authority transition", async () => {
++		const { provider, trees, views, controllers } = await setup();
++		const nodes = views.map((view) => view.root.items[0]);
++		nodes[0].value = 4;
++		provider.synchronizeMessages();
++		const capture = controllers[0].capture();
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 1 });
++		const correction = draft.viewWith(configuration).root;
++		const node = correction.items[0];
++		assert.equal(node.value, 4);
++		correction.items.removeAt(0);
++		assert.equal(Tree.status(node), TreeStatus.Removed);
++		node.value = 8;
++		correction.slot = node;
++		const observed: (Item | undefined)[] = [];
++		const off = trees[1].kernel.checkout.events.on("afterBatch", () => {
++			observed.push(views[1].root.slot);
++		});
++		const receipt = controllers[0].publishAdvance({
++			batchId: "detach-correction",
++			nextCheckpoint: "detach-corrected",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		provider.synchronizeMessages();
++		assert.equal(await receipt, "applied");
++		assert.deepEqual(observed, [nodes[1]]);
++		for (const [index, view] of views.entries()) {
++			assert.equal(view.root.slot, nodes[index]);
++			assert.equal(nodes[index].value, 8);
++		}
++		assert.equal(controllers[0].capture().editIds.length, 0);
++		off();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("undoes and redoes an accepted detach transaction without losing normalized node identity", async () => {
++		const { provider, trees, views, controllers } = await setup();
++		const nodes = views.map((view) => view.root.items[0]);
++		const undo = createTestUndoRedoStacks(trees[0].kernel.checkout.events);
++		const transaction = trees[0].kernel.checkout.transaction;
++		transaction.start();
++		views[0].root.items.removeAt(0);
++		views[0].root.slot = nodes[0];
++		transaction.commit();
++		provider.synchronizeMessages();
++		const capture = controllers[0].capture();
++		assert.equal(capture.editIds.length, 1);
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 1 });
++		const normalized = draft.viewWith(configuration).root.slot;
++		assert(normalized !== undefined);
++		normalized.value = 8;
++		const receipt = controllers[0].publishAdvance({
++			batchId: "detach-undo",
++			nextCheckpoint: "detach-undo-approved",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		provider.synchronizeMessages();
++		assert.equal(await receipt, "applied");
++		assert.equal(undo.undoStack.length, 1);
++		const revert = undo.undoStack.pop();
++		assert(revert !== undefined);
++		revert.revert();
++		provider.synchronizeMessages();
++		for (const [index, view] of views.entries()) {
++			assert.equal(view.root.items[0], nodes[index]);
++			assert.equal(nodes[index].value, 8);
++			assert.equal(view.root.slot, undefined);
++		}
++		const redo = undo.redoStack.pop();
++		assert(redo !== undefined);
++		redo.revert();
++		provider.synchronizeMessages();
++		for (const [index, view] of views.entries()) {
++			assert.equal(view.root.slot, nodes[index]);
++			assert.equal(nodes[index].value, 8);
++		}
++		const afterRedo = controllers[0].capture();
++		assert.equal(afterRedo.editIds.length, 2);
++		assert.deepEqual(afterRedo.exportApproved(), afterRedo.exportSequenced());
++		afterRedo.dispose();
++		undo.unsubscribe();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("keeps accepted revisions as ancestors and correction revisions out of user undo", async () => {
++		const { provider, trees, views, controllers } = await setup();
++		const oldApproved = trees[0].kernel.getExternalAuthorityState().approved;
++		const undo = createTestUndoRedoStacks(trees[1].kernel.checkout.events);
++		const publisherUndo = createTestUndoRedoStacks(trees[0].kernel.checkout.events);
++		views[1].root.value = 1;
++		provider.synchronizeMessages();
++		const capture = controllers[0].capture();
++		const accepted = trees[0].kernel.getExternalAuthorityState().provisional[0];
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 1 });
++		draft.viewWith(configuration).root.other = 2;
++		const receipt = controllers[0].publishAdvance({
++			batchId: "ancestry",
++			nextCheckpoint: "ancestry-approved",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		provider.synchronizeMessages();
++		assert.equal(await receipt, "applied");
++		const path: GraphCommit<SharedTreeChange>[] = [];
++		assert.equal(
++			findCommonAncestor(oldApproved, [
++				trees[0].kernel.getExternalAuthorityState().approved,
++				path,
++			]),
++			oldApproved,
++		);
++		assert.equal(path.length, 2);
++		assert.equal(path[0].revision, accepted.revision);
++		assert.notEqual(path[1].revision, accepted.revision);
++		assert.equal(undo.undoStack.length, 1);
++		assert.equal(publisherUndo.undoStack.length, 0);
++		undo.undoStack.pop()?.revert();
++		provider.synchronizeMessages();
++		assert(views.every((view) => view.root.value === 0 && view.root.other === 2));
++		undo.redoStack.pop()?.revert();
++		provider.synchronizeMessages();
++		assert(views.every((view) => view.root.value === 1 && view.root.other === 2));
++		assert.equal(controllers[0].capture().editIds.length, 2);
++		undo.unsubscribe();
++		publisherUndo.unsubscribe();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("uses ordinary selective undo semantics when normalization overwrites the accepted field", async () => {
++		const { provider, trees, views, controllers } = await setup(2);
++		const oracle = new TestTreeProviderLite(
++			2,
++			configuredSharedTree({
++				minVersionForCollab: "2.80.0",
++				enableDetachedRootEditing: true,
++			}).getFactory(),
++		);
++		const reference = oracle.trees.map((tree) => tree.viewWith(configuration));
++		reference[0].initialize({ value: 0, other: 0, items: [] });
++		oracle.synchronizeMessages();
++		const undo = createTestUndoRedoStacks(trees[1].kernel.checkout.events);
++		const referenceUndo = createTestUndoRedoStacks(oracle.trees[1].kernel.checkout.events);
++		views[1].root.value = 1;
++		reference[1].root.value = 1;
++		provider.synchronizeMessages();
++		oracle.synchronizeMessages();
++		const capture = controllers[0].capture();
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 1 });
++		draft.viewWith(configuration).root.value = 2;
++		const receipt = controllers[0].publishAdvance({
++			batchId: "selective-undo",
++			nextCheckpoint: "selective-undo",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		reference[0].root.value = 2;
++		provider.synchronizeMessages();
++		oracle.synchronizeMessages();
++		assert.equal(await receipt, "applied");
++		undo.undoStack.pop()?.revert();
++		referenceUndo.undoStack.pop()?.revert();
++		provider.synchronizeMessages();
++		oracle.synchronizeMessages();
++		assert.deepEqual(
++			views.map((view) => view.root.value),
++			reference.map((view) => view.root.value),
++			"Correction is a later authoritative edit, not a replacement of the accepted revision",
++		);
++		undo.redoStack.pop()?.revert();
++		referenceUndo.redoStack.pop()?.revert();
++		provider.synchronizeMessages();
++		oracle.synchronizeMessages();
++		assert.deepEqual(
++			views.map((view) => view.root.value),
++			reference.map((view) => view.root.value),
++		);
++		assert.equal(controllers[0].capture().editIds.length, 2);
++		undo.unsubscribe();
++		referenceUndo.unsubscribe();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("rejects mismatched prefix bases, captures, and invalid prefix selections before submit", async () => {
++		const { provider, views, controllers } = await setup();
++		const controller = controllers[0];
++		views[0].root.value = 1;
++		views[0].root.other = 2;
++		provider.synchronizeMessages();
++		const capture = controller.capture();
++		const secondCapture = controller.capture();
++		for (const count of [-1, 0.5, 3, Number.NaN, Number.POSITIVE_INFINITY]) {
++			assert.throws(() => controller.createDraft(capture, { afterPrefix: count }), /prefix/);
++		}
++		assert.throws(
++			() => Reflect.apply(controller.createDraft, controller, [capture, {}]),
++			/prefix/,
++		);
++		const draft = controller.createDraft(capture, { afterPrefix: 1 });
++		draft.viewWith(configuration).root.value = 3;
++		for (const count of [undefined, 0, 2, -1, 0.5, 3]) {
++			await assert.rejects(
++				controller.publishAdvance({
++					batchId: "invalid",
++					nextCheckpoint: "invalid",
++					capture,
++					approvePrefix: count,
++					draft,
++				}),
++				/prefix/,
++			);
++		}
++		await assert.rejects(
++			controller.publishAdvance({
++				batchId: "wrong-capture",
++				nextCheckpoint: "wrong-capture",
++				capture: secondCapture,
++				approvePrefix: 1,
++				draft,
++			}),
++			/from this capture/,
++		);
++		provider.synchronizeMessages();
++		assert.equal(controller.capture().checkpoint, "ready");
++		assert.deepEqual(controller.capture().editIds, capture.editIds);
++		const receipt = controller.publishAdvance({
++			batchId: "valid",
++			nextCheckpoint: "valid",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		provider.synchronizeMessages();
++		assert.equal(await receipt, "applied", "Rejected combinations did not consume the draft");
++		await assert.rejects(
++			controller.publishAdvance({
++				batchId: "sealed",
++				nextCheckpoint: "sealed",
++				capture,
++				approvePrefix: 1,
++				draft,
++			}),
++			/unpublished draft/,
++		);
++		secondCapture.dispose();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("settles concurrent correction publications as applied then stale without reauthoring", async () => {
++		const { provider, views, controllers } = await setup();
++		views[0].root.value = 1;
++		provider.synchronizeMessages();
++		const captures = controllers.slice(0, 2).map((controller) => controller.capture());
++		const drafts = captures.map((capture, index) =>
++			controllers[index].createDraft(capture, { afterPrefix: 1 }),
++		);
++		drafts[0].viewWith(configuration).root.value = 2;
++		drafts[1].viewWith(configuration).root.value = 3;
++		const receipts = drafts.map(async (draft, index) =>
++			controllers[index].publishAdvance({
++				batchId: `competing-${index}`,
++				nextCheckpoint: `competing-${index}`,
++				capture: captures[index],
++				approvePrefix: 1,
++				draft,
++			}),
++		);
++		provider.synchronizeMessages();
++		assert.deepEqual(await Promise.all(receipts), ["applied", "stale"]);
++		assert(views.every((view) => view.root.value === 2));
++		assert.equal(controllers[0].capture().editIds.length, 0);
++		for (const draft of drafts) {
++			draft.dispose();
++		}
++		for (const capture of captures) {
++			capture.dispose();
++		}
++	});
++
++	it("applies a repeated identical sequenced correction envelope only once", async () => {
++		const { provider, trees, views, controllers } = await setup();
++		const runtime = trees[0].containerRuntime;
++		assert(runtime instanceof MockContainerRuntimeWithOpBunching);
++		const submit = runtime.submit.bind(runtime);
++		let sent: AuthorityEnvelope | undefined;
++		runtime.submit = (content: unknown, metadata?: unknown) => {
++			if (
++				typeof content === "object" &&
++				content !== null &&
++				"kind" in content &&
++				content.kind === "advance"
++			) {
++				sent = readAuthorityEnvelope(content, labels);
++			}
++			return submit(content, metadata);
++		};
++		views[0].root.value = 1;
++		provider.synchronizeMessages();
++		const capture = controllers[0].capture();
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 1 });
++		draft.viewWith(configuration).root.value = 2;
++		const receipt = controllers[0].publishAdvance({
++			batchId: "duplicate-correction",
++			nextCheckpoint: "duplicate-corrected",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		provider.synchronizeMessages();
++		assert.equal(await receipt, "applied");
++		assert(sent !== undefined);
++		assert.equal(readEncodedAdvance(sent.content).approvedPrefix[0], capture.editIds[0]);
++		views[1].root.value = 3;
++		provider.synchronizeMessages();
++		const later = controllers[1].capture();
++		const laterReceipt = controllers[1].publishAdvance({
++			batchId: "later",
++			nextCheckpoint: "later",
++			capture: later,
++			approvePrefix: later.editIds.length,
++		});
++		provider.synchronizeMessages();
++		assert.equal(await laterReceipt, "applied");
++		const approved = trees[0].kernel.getExternalAuthorityState().approved;
++		submit(sent, undefined);
++		provider.synchronizeMessages();
++		assert.equal(trees[0].kernel.getExternalAuthorityState().approved, approved);
++		assert(views.every((view) => view.root.value === 3));
++		assert.equal(controllers[0].capture().checkpoint, "later");
++		assert.equal(controllers[0].capture().editIds.length, 0);
++		runtime.submit = submit;
++		later.dispose();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("resubmits the same combined correction after reconnect while retaining later peer P", async () => {
++		const { provider, trees, views, controllers } = await setup();
++		views[1].root.value = 1;
++		provider.synchronizeMessages();
++		const capture = controllers[0].capture();
++		const draft = controllers[0].createDraft(capture, { afterPrefix: 1 });
++		draft.viewWith(configuration).root.value = 2;
++		trees[0].containerRuntime.connected = false;
++		const receipt = controllers[0].publishAdvance({
++			batchId: "reconnect-correction",
++			nextCheckpoint: "reconnect-corrected",
++			capture,
++			approvePrefix: 1,
++			draft,
++		});
++		assert(views.every((view) => view.root.value === 1));
++		views[1].root.other = 8;
++		provider.synchronizeMessages();
++		const later = controllers[1].capture();
++		trees[0].containerRuntime.connected = true;
++		provider.synchronizeMessages();
++		assert.equal(await receipt, "applied");
++		assert(views.every((view) => view.root.value === 2 && view.root.other === 8));
++		assert.deepEqual(controllers[0].capture().editIds, later.editIds.slice(1));
++		later.dispose();
++		draft.dispose();
++		capture.dispose();
++	});
++
++	it("rejects a wire authoring base that does not identify the approved prefix head", async () => {
++		const { provider, trees, views, controllers } = await setup();
++		views[0].root.value = 1;
++		provider.synchronizeMessages();
++		const state = trees[0].kernel.getExternalAuthorityState();
++		const receipt = trees[0].kernel.publishExternalAuthority({
++			batchId: "wrong-base",
++			expected: state.checkpoint,
++			next: "wrong-base",
++			authoringBase: state.approved.revision,
++			approvedPrefix: state.provisional.map((commit) => commit.revision),
++			commits: [],
++		});
++		assert.throws(() => provider.synchronizeMessages(), /authoring base/);
++		assert.equal(await Promise.race([receipt, Promise.resolve("pending")]), "pending");
++		assert.throws(() => controllers[0].capture(), /Invalid use of SharedTree/);
++	});
++
++	it("rejects non-prefix settlement even when the supplied authoring revision exists", async () => {
++		const { provider, trees, views } = await setup();
++		views[0].root.value = 1;
++		views[0].root.other = 2;
++		provider.synchronizeMessages();
++		const state = trees[0].kernel.getExternalAuthorityState();
++		const second = state.provisional[1];
++		const receipt = trees[0].kernel.publishExternalAuthority({
++			batchId: "non-prefix",
++			expected: state.checkpoint,
++			next: "non-prefix",
++			authoringBase: second.revision,
++			approvedPrefix: [second.revision],
++			commits: [],
++		});
++		assert.throws(() => provider.synchronizeMessages(), /unchanged provisional prefix/);
++		assert.equal(await Promise.race([receipt, Promise.resolve("pending")]), "pending");
++	});
++
++	it("rejects captures whose pre-attach A changed without changing the initial checkpoint", async () => {
++		const factory = configuredSharedTree({
++			externalAuthority: labels,
++			enableDetachedRootEditing: true,
++		}).getFactory();
++		const runtime = new MockFluidDataStoreRuntime({ idCompressor: createIdCompressor() });
++		const tree = factory.create(runtime, "seed");
++		const view = tree.viewWith(configuration);
++		view.initialize({ value: 0, other: 0, items: [] });
++		const controller = getSharedTreeAuthority(tree);
++		const capture = controller.capture();
++		view.root.value = 1;
++		assert.equal(controller.capture().checkpoint, capture.checkpoint);
++		await assert.rejects(
++			controller.publishAdvance({
++				batchId: "stale-seed",
++				nextCheckpoint: "stale-seed",
++				capture,
++			}),
++			/Captured approved history no longer matches/,
++		);
++		capture.dispose();
++	});
++
++	it("fences v1 envelopes/bootstrap and requires an explicit v2 authoring base", () => {
++		const factory = configuredSharedTree({
++			externalAuthority: labels,
++			enableDetachedRootEditing: true,
++		}).getFactory();
++		assert(factory.type.endsWith("/detached-roots-v1/external-authority-v2"));
++		const legacy = { externalAuthorityVersion: 1, configuration: labels };
++		assert.throws(
++			() => readAuthorityEnvelope({ ...legacy, kind: "advance", content: {} }, labels),
++			/Incompatible external authority protocol/,
++		);
++		assert.throws(
++			() => validateAuthorityBootstrap(legacy, labels),
++			/Incompatible external authority bootstrap/,
++		);
++		assert.throws(
++			() =>
++				readEncodedAdvance({
++					batchId: "missing-base",
++					expected: "ready",
++					next: "next",
++					approvedPrefix: [],
++					commits: [],
++				}),
++			/nonempty strings/,
++		);
++	});
++});
+diff --git a/packages/dds/tree/src/test/shared-tree/detachedReinsertion.spec.ts b/packages/dds/tree/src/test/shared-tree/detachedReinsertion.spec.ts
+index 7f9cd8704f7d70a4a65e25ff7526b7af80d18b76..0e81832d228135f0cd5335189cea67c0ebd62970 100644
+--- a/packages/dds/tree/src/test/shared-tree/detachedReinsertion.spec.ts
++++ b/packages/dds/tree/src/test/shared-tree/detachedReinsertion.spec.ts
+@@ -101,7 +101,7 @@ describe("detached reinsertion", () => {
+ 			externalAuthority,
+ 			enableDetachedRootEditing: true,
+ 		}).getFactory();
+-		assert(factory.type.endsWith("/detached-roots-v1/external-authority-v1"));
++		assert(factory.type.endsWith("/detached-roots-v1/external-authority-v2"));
+ 		assert.notEqual(
+ 			factory.type,
+ 			configuredSharedTree({ externalAuthority }).getFactory().type,
+diff --git a/packages/dds/tree/src/test/shared-tree/externalAuthority.spec.ts b/packages/dds/tree/src/test/shared-tree/externalAuthority.spec.ts
+index e9b480054aaf1576cc802d3bba0ee28687745b13..3f437e0e293773cce837a75ccfaa5ec995cbd84b 100644
+--- a/packages/dds/tree/src/test/shared-tree/externalAuthority.spec.ts
++++ b/packages/dds/tree/src/test/shared-tree/externalAuthority.spec.ts
+@@ -496,7 +496,7 @@ describe("external authority", () => {
+ 		draft.dispose();
+ 	});
+ 
+-	it("rejects transformed settlement rather than approximating it", async () => {
++	it("rejects approving a prefix with a draft authored only on A", async () => {
+ 		const { provider, views, controllers } = await setup();
+ 		const ca = controllers[0];
+ 		views[0].root.value = 1;
+@@ -513,7 +513,7 @@ describe("external authority", () => {
+ 					draft,
+ 					approvePrefix: 1,
+ 				}),
+-			/Transformed settlement/,
++			/Draft authoring base must match/,
+ 		);
+ 		assert.deepEqual(
+ 			views.map((view) => view.root.value),
+diff --git a/packages/dds/tree/src/treeFactory.ts b/packages/dds/tree/src/treeFactory.ts
+index 97bf3f6ee041c7aa45ab76cf0401060f21d1f400..df5ff998a95e998be205d5be729de7b4bd7d985c 100644
+--- a/packages/dds/tree/src/treeFactory.ts
++++ b/packages/dds/tree/src/treeFactory.ts
+@@ -34,6 +34,7 @@ import {
+ 	EditManagerFormatVersion,
+ 	messageCodecName,
+ 	MessageFormatVersion,
++	externalAuthorityProtocolVersion,
+ } from "./shared-tree-core/index.js";
+ import { SharedTreeFactoryType, SharedTreeAttributes } from "./sharedTreeAttributes.js";
+ import type { ITree } from "./simple-tree/index.js";
+@@ -200,7 +201,9 @@ export function configuredSharedTreeInternal(
+ 	const type =
+ 		SharedTreeFactoryType +
+ 		(options.enableDetachedRootEditing === true ? "/detached-roots-v1" : "") +
+-		(options.externalAuthority === undefined ? "" : "/external-authority-v1");
++		(options.externalAuthority === undefined
++			? ""
++			: `/external-authority-v${externalAuthorityProtocolVersion}`);
+ 	const sharedObjectOptions: SharedObjectOptions<ITree> = {
+ 		type,
+ 		attributes:

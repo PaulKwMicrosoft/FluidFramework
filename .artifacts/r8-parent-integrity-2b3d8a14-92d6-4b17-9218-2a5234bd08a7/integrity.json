@@ -1,0 +1,13 @@
+{
+  "kind": "parent-streamed-r8-archive-integrity",
+  "observedAt": "2026-09-09T18:40:35.4336867-07:00",
+  "sourceCommit": "d59df925b5f1617e6189924250e02b10510c9a2d",
+  "archiveSha256": "EA7CFC5BB102887160482896309F9BD89A0A435040BBDCD26D937AE4C99FFE55",
+  "manifestSha256": "AE06917FF064998DD949992A27BD250B321B818A5695B3B776E4430A61C7DB7B",
+  "matchedArchiveManifestAndInstalledFiles": 3288,
+  "uncompressedBytes": 22335277,
+  "extractedToFilesystem": false,
+  "installationModified": false,
+  "manifestPathNormalization": "Windows separators normalized to tar separators for comparison; first probe identified that mismatch, not a package defect",
+  "noSdkExecutionYet": true
+}
