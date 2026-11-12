@@ -6,13 +6,18 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
 import { createEmitter } from "@fluid-internal/client-utils";
-import type { HasListeners, Listenable } from "@fluidframework/core-interfaces/internal";
+import type {
+	HasListeners,
+	IEmitter,
+	Listenable,
+} from "@fluidframework/core-interfaces/internal";
 import { assert, fail } from "@fluidframework/core-utils/internal";
 
 import {
 	type Brand,
 	type BrandedKey,
 	type BrandedMapSubset,
+	type BrandedKeyContent,
 	type Opaque,
 	ReferenceCountedBase,
 	brand,
@@ -262,7 +267,25 @@ export interface AnchorNode extends INormalizedUpPath<AnchorNode> {
 }
 
 /**
+ * An {@link AnchorSlot} of any content.
+ */
+// See note on BrandedKey.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnySlot = AnchorSlot<any>;
+
+/**
+ * The `onDestroy` handlers of the slots created with one by {@link anchorSlot}.
+ */
+const slotDestroyHandlers = new Map<AnySlot, (value: unknown, anchor: AnchorNode) => void>();
+
+/**
  * Define a strongly typed slot on anchors in which data can be stored.
+ *
+ * @param onDestroy - If provided, an anchor node holding a value in this slot is kept alive (as an
+ * {@link AnchorEvents.afterDestroy} listener would keep it), and `onDestroy` is called with the value when the anchor node is destroyed,
+ * before {@link AnchorEvents.afterDestroy} is emitted.
+ * Deleting the value from the slot releases the anchor node.
+ * This costs no per-anchor memory beyond the slot's value, unlike an {@link AnchorEvents.afterDestroy} listener.
  *
  * @remarks
  * This is mainly useful for caching data associated with a location in the tree.
@@ -276,8 +299,14 @@ export interface AnchorNode extends INormalizedUpPath<AnchorNode> {
  * }
  * ```
  */
-export function anchorSlot<TContent>(): AnchorSlot<TContent> {
-	return brandedSlot<AnchorSlot<TContent>>();
+export function anchorSlot<TContent>(
+	onDestroy?: (value: TContent, anchor: AnchorNode) => void,
+): AnchorSlot<TContent> {
+	const slot = brandedSlot<AnchorSlot<TContent>>();
+	if (onDestroy !== undefined) {
+		slotDestroyHandlers.set(slot, onDestroy as (value: unknown, anchor: AnchorNode) => void);
+	}
+	return slot;
 }
 
 /**
@@ -504,7 +533,7 @@ export class AnchorSet implements AnchorLocator {
 			const node = stack.pop()!;
 			assert(node.status === Status.Alive, 0x408 /* PathNode must be alive */);
 			node.status = Status.Dangling;
-			node.events.emit("afterDestroy", node);
+			node.afterDestroy();
 			for (const children of node.children.values()) {
 				stack.push(...children);
 			}
@@ -821,15 +850,15 @@ export class AnchorSet implements AnchorLocator {
 							fail(0xaeb /* childrenChangedAfterBatch events should have changedFields */);
 						const fieldMarks: ReadonlyMap<FieldKey, readonly Delta.Mark[]> =
 							marksByNode.get(node) ?? new Map();
-						node.events.emit(event, { changedFields, fieldMarks });
+						node.emit(event, { changedFields, fieldMarks });
 					} else {
-						node.events.emit(event);
+						node.emit(event);
 					}
 				}
 			},
 			notifyChildrenChanging(): void {
 				this.maybeWithNode(
-					(p) => p.events.emit("childrenChanging", p),
+					(p) => p.emit("childrenChanging", p),
 					() => this.anchorSet.#events.emit("childrenChanging", this.anchorSet),
 				);
 			},
@@ -841,7 +870,7 @@ export class AnchorSet implements AnchorLocator {
 							parentField !== undefined,
 							0xa24 /* Must be in a field to modify its contents */,
 						);
-						p.events.emit("childrenChanged", p);
+						p.emit("childrenChanged", p);
 						const fieldMarks = this.storedFieldMarks.get(p)?.get(parentField);
 						this.bufferedEvents.push({
 							node: p,
@@ -943,7 +972,7 @@ export class AnchorSet implements AnchorLocator {
 				};
 				this.parentField = undefined;
 				this.maybeWithNode((p) => {
-					p.events.emit("subtreeChanging", p);
+					p.emit("subtreeChanging", p);
 				});
 				this.currentDepth++;
 			},
@@ -951,7 +980,7 @@ export class AnchorSet implements AnchorLocator {
 				assert(this.parent !== undefined, 0x3ac /* Must have parent node */);
 				if (this.depthThresholdForSubtreeChanged === this.currentDepth) {
 					this.maybeWithNode((p) => {
-						p.events.emit("subtreeChanged", p);
+						p.emit("subtreeChanged", p);
 
 						this.bufferedEvents.push({
 							node: p,
@@ -1079,13 +1108,38 @@ const noChildren: ReadonlyMap<FieldKey, PathNode[]> = new Map();
  * 1. there are children.
  * 2. refcount is non-zero.
  * 3. events are registered.
+ * 4. a slot with an `onDestroy` handler (see {@link anchorSlot}) holds a value.
+ *
+ * Its slots are stored on it: it implements {@link AnchorNode.slots} itself.
  */
-class PathNode extends ReferenceCountedBase implements AnchorNode {
+class PathNode extends ReferenceCountedBase implements AnchorNode, BrandedMapSubset<AnySlot> {
 	public status: Status = Status.Alive;
+
+	/**
+	 * Event emitter for this anchor, created when first accessed (see {@link PathNode.events}).
+	 */
+	#events:
+		| (Listenable<AnchorEvents> & HasListeners<AnchorEvents> & IEmitter<AnchorEvents>)
+		| undefined;
+
 	/**
 	 * Event emitter for this anchor.
+	 * @remarks
+	 * Created on first access, so anchors whose events are never subscribed to do not keep one.
 	 */
-	public readonly events = createEmitter<AnchorEvents>(this.considerDispose.bind(this));
+	public get events(): Listenable<AnchorEvents> & HasListeners<AnchorEvents> {
+		return (this.#events ??= createEmitter<AnchorEvents>(() => this.considerDispose()));
+	}
+
+	/**
+	 * Emits `eventName` to this anchor's listeners, if it has any.
+	 */
+	public emit<K extends keyof AnchorEvents>(
+		eventName: K,
+		...args: Parameters<AnchorEvents[K]>
+	): void {
+		this.#events?.emit(eventName, ...args);
+	}
 
 	/**
 	 * PathNode arrays are kept sorted the PathNode's parentIndex for efficient search.
@@ -1115,7 +1169,128 @@ class PathNode extends ReferenceCountedBase implements AnchorNode {
 
 	// See note on BrandedKey.
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	public readonly slots: BrandedMapSubset<AnchorSlot<any>> = new Map();
+	public get slots(): BrandedMapSubset<AnySlot> {
+		return this;
+	}
+
+	// The first two slots to receive a value are stored inline (most anchors use at most two:
+	// their flex tree node and their simple-tree node), and any others in a map.
+	#slotKey0: AnySlot | undefined;
+	#slotValue0: unknown;
+	#slotKey1: AnySlot | undefined;
+	#slotValue1: unknown;
+	#moreSlots: Map<AnySlot, unknown> | undefined;
+
+	/**
+	 * Implementation of {@link PathNode.slots}.
+	 */
+	public get<K2 extends AnySlot>(key: K2): BrandedKeyContent<K2> | undefined {
+		if (this.#slotKey0 === key) {
+			return this.#slotValue0 as BrandedKeyContent<K2>;
+		}
+		if (this.#slotKey1 === key) {
+			return this.#slotValue1 as BrandedKeyContent<K2>;
+		}
+		return this.#moreSlots?.get(key) as BrandedKeyContent<K2> | undefined;
+	}
+
+	/**
+	 * Implementation of {@link PathNode.slots}.
+	 */
+	public has(key: AnySlot): boolean {
+		return (
+			this.#slotKey0 === key || this.#slotKey1 === key || (this.#moreSlots?.has(key) ?? false)
+		);
+	}
+
+	/**
+	 * Implementation of {@link PathNode.slots}.
+	 */
+	public set<K2 extends AnySlot>(key: K2, value: BrandedKeyContent<K2>): this {
+		if (this.#slotKey0 === key) {
+			this.#slotValue0 = value;
+		} else if (this.#slotKey1 === key) {
+			this.#slotValue1 = value;
+		} else if (this.#moreSlots?.has(key) === true) {
+			this.#moreSlots.set(key, value);
+		} else if (this.#slotKey0 === undefined) {
+			this.#slotKey0 = key;
+			this.#slotValue0 = value;
+		} else if (this.#slotKey1 === undefined) {
+			this.#slotKey1 = key;
+			this.#slotValue1 = value;
+		} else {
+			(this.#moreSlots ??= new Map()).set(key, value);
+		}
+		return this;
+	}
+
+	/**
+	 * Implementation of {@link PathNode.slots}.
+	 */
+	public delete(key: AnySlot): boolean {
+		if (this.#slotKey0 === key) {
+			this.#slotKey0 = undefined;
+			this.#slotValue0 = undefined;
+		} else if (this.#slotKey1 === key) {
+			this.#slotKey1 = undefined;
+			this.#slotValue1 = undefined;
+		} else if (this.#moreSlots?.delete(key) !== true) {
+			return false;
+		}
+		if (slotDestroyHandlers.has(key) && this.status !== Status.Disposed) {
+			// The value no longer keeps this alive.
+			this.considerDispose();
+		}
+		return true;
+	}
+
+	/**
+	 * Whether this holds a value in a slot with an `onDestroy` handler (see {@link anchorSlot}), which keeps it alive.
+	 */
+	private holdsDestroyHandledSlot(): boolean {
+		if (this.#slotKey0 !== undefined && slotDestroyHandlers.has(this.#slotKey0)) {
+			return true;
+		}
+		if (this.#slotKey1 !== undefined && slotDestroyHandlers.has(this.#slotKey1)) {
+			return true;
+		}
+		if (this.#moreSlots !== undefined) {
+			for (const key of this.#moreSlots.keys()) {
+				if (slotDestroyHandlers.has(key)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Called when this is destroyed (see {@link AnchorEvents.afterDestroy}):
+	 * calls the `onDestroy` handlers of its slots (see {@link anchorSlot}), then emits {@link AnchorEvents.afterDestroy}.
+	 */
+	public afterDestroy(): void {
+		const handled: [handler: (value: unknown, anchor: AnchorNode) => void, value: unknown][] =
+			[];
+		const collect = (key: AnySlot | undefined, value: unknown): void => {
+			const handler = key === undefined ? undefined : slotDestroyHandlers.get(key);
+			if (handler !== undefined) {
+				handled.push([handler, value]);
+			}
+		};
+		collect(this.#slotKey0, this.#slotValue0);
+		collect(this.#slotKey1, this.#slotValue1);
+		if (this.#moreSlots !== undefined) {
+			for (const [key, value] of this.#moreSlots) {
+				collect(key, value);
+			}
+		}
+		// Handlers may delete slot values, so they are called after all have been collected.
+		for (const [handler, value] of handled) {
+			handler(value, this);
+		}
+		this.emit("afterDestroy", this);
+	}
 
 	/**
 	 * {@inheritdoc UpPath.detachedNodeId}
@@ -1212,10 +1387,12 @@ class PathNode extends ReferenceCountedBase implements AnchorNode {
 	 */
 	public getOrCreateChild(key: FieldKey, index: number): PathNode {
 		assert(this.status === Status.Alive, 0x40c /* PathNode must be alive */);
-		let field = this.children.get(key);
+		const field = this.children.get(key);
 		if (field === undefined) {
-			field = [];
-			this.setChildren(key, field);
+			// An exact-length array: an empty array grown by `push` would reserve room for many more children.
+			const created = new PathNode(this.anchorSet, key, index, this);
+			this.setChildren(key, [created]);
+			return created;
 		}
 		let child = binaryFind(field, index);
 		if (child === undefined) {
@@ -1275,7 +1452,12 @@ class PathNode extends ReferenceCountedBase implements AnchorNode {
 	 */
 	private considerDispose(): void {
 		assert(this.status !== Status.Disposed, 0x41d /* PathNode must not be disposed */);
-		if (this.isUnreferenced() && this.children.size === 0 && !this.events.hasListeners()) {
+		if (
+			this.isUnreferenced() &&
+			this.children.size === 0 &&
+			!(this.#events?.hasListeners() ?? false) &&
+			!this.holdsDestroyHandledSlot()
+		) {
 			if (this.status === Status.Alive) {
 				// eslint-disable-next-line unicorn/prefer-dom-node-remove -- Custom tree structure, not DOM
 				this.parentPath?.removeChild(this);

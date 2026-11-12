@@ -187,11 +187,11 @@ describe("simple-tree tree", () => {
 		view.initialize({ stuff: [] });
 		const _unused = view.root;
 		const context = view.getFlexTreeContext();
-		const countBefore = context.withAnchors.size;
+		const countBefore = context.withAnchorCount;
 		for (let index = 0; index < 10; index++) {
 			const _unused2 = view.root;
 		}
-		const countAfter = context.withAnchors.size;
+		const countAfter = context.withAnchorCount;
 
 		assert.equal(countBefore, countAfter);
 	});
@@ -203,11 +203,11 @@ describe("simple-tree tree", () => {
 		const child = view.root.stuff;
 		Tree.parent(child);
 		const context = view.getFlexTreeContext();
-		const countBefore = context.withAnchors.size;
+		const countBefore = context.withAnchorCount;
 		for (let index = 0; index < 10; index++) {
 			Tree.parent(child);
 		}
-		const countAfter = context.withAnchors.size;
+		const countAfter = context.withAnchorCount;
 
 		assert.equal(countBefore, countAfter);
 	});

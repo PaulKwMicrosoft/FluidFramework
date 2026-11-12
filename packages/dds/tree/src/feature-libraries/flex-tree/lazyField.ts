@@ -58,7 +58,7 @@ import { indexForAt, treeStatusFromAnchorCache } from "./utilities.js";
 /**
  * Reuses field wrappers by parent node and field key.
  * @remarks
- * Each field under a node owns a cursor and is strongly referenced by its context's `withAnchors` set and its parent's `afterDestroy` listener.
+ * Each field under a node owns a cursor and is strongly referenced by its context's list of entities holding anchors and its parent's `afterDestroy` listener.
  * Preparing for an edit clears the cursor, but does not dispose the wrapper or release its parent anchor and listener.
  * Without reuse, repeated boxing of the same field would accumulate wrappers, even across edits.
  * This cache limits that accumulation to one wrapper per field key on each cached parent.

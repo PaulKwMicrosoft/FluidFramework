@@ -755,9 +755,9 @@ describeHydration(
 					// accessing the root as part of the allocations from the leaf access. Also, store it to avoid additional computation
 					// from any intermediate getters when accessing the leaf.
 					const root = view.root;
-					const countBefore = context.withAnchors.size;
+					const countBefore = context.withAnchorCount;
 					const _accessLeaf = root.leaf;
-					const countAfter = context.withAnchors.size;
+					const countAfter = context.withAnchorCount;
 
 					// Leaves are read without allocating a flex field.
 					assert.equal(countAfter, countBefore);
@@ -776,9 +776,9 @@ describeHydration(
 					// count any object allocations that result from accessing the root/map as part of the allocations from the leaf
 					// access. Also, store it to avoid additional computation from any intermediate getters when accessing the leaf.
 					const root = view.root;
-					const countBefore = context.withAnchors.size;
+					const countBefore = context.withAnchorCount;
 					const _accessLeaf = root.get("1");
-					const countAfter = context.withAnchors.size;
+					const countAfter = context.withAnchorCount;
 
 					// Map nodes still allocate a flex field when accessing leaves.
 					assert.equal(countAfter, countBefore + 1);
@@ -801,9 +801,9 @@ describeHydration(
 					// Also, store the array/root to avoid additional computation from any intermediate getters when accessing leaves.
 					const root = view.root;
 					const _accessLeaf0 = root[0];
-					const countBefore = context.withAnchors.size;
+					const countBefore = context.withAnchorCount;
 					const _accessLeaf1 = root[1];
-					const countAfter = context.withAnchors.size;
+					const countAfter = context.withAnchorCount;
 
 					// The array test is deliberately distinct from the object and map ones, see the comment above for the rationale.
 					assert.equal(countAfter, countBefore);

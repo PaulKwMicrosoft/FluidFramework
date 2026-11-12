@@ -20,7 +20,6 @@ import {
 	mapCursorFields,
 	rootFieldKey,
 } from "../../core/index.js";
-import { disposeSymbol } from "../../util/index.js";
 import { FieldKinds } from "../default-schema/index.js";
 
 import type { Context } from "./context.js";
@@ -60,13 +59,6 @@ export function getOrCreateHydratedFlexTreeNode(
 	return new LazyTreeNode(context, cursor.type, cursor, anchorNode, anchor);
 }
 
-function cleanupTree(anchor: AnchorNode): void {
-	const cached =
-		anchor.slots.get(flexTreeSlot) ?? fail(0xb13 /* tree should only be cleaned up once */);
-	assert(cached instanceof LazyTreeNode, 0x92d /* Expected LazyTreeNode */);
-	cached[disposeSymbol]();
-}
-
 /**
  * Lazy implementation of {@link FlexTreeNode}.
  */
@@ -74,9 +66,6 @@ export class LazyTreeNode extends LazyEntity<Anchor> implements HydratedFlexTree
 	public get [flexTreeMarker](): FlexTreeEntityKind.Node {
 		return FlexTreeEntityKind.Node;
 	}
-
-	// Using JS private here prevents it from showing up as a enumerable own property, or conflicting with struct fields.
-	readonly #removeDeleteCallback: () => void;
 
 	private readonly storedSchema: TreeNodeStoredSchema;
 
@@ -91,8 +80,8 @@ export class LazyTreeNode extends LazyEntity<Anchor> implements HydratedFlexTree
 		this.storedSchema =
 			context.schema.nodeSchema.get(this.type) ?? fail(0xb14 /* missing schema */);
 		assert(cursor.mode === CursorLocationType.Nodes, 0x783 /* must be in nodes mode */);
+		// The slot disposes this node when its anchor is destroyed (see flexTreeSlot).
 		anchorNode.slots.set(flexTreeSlot, this);
-		this.#removeDeleteCallback = anchorNode.events.on("afterDestroy", cleanupTree);
 	}
 
 	public isHydrated(): this is HydratedFlexTreeNode {
@@ -110,7 +99,6 @@ export class LazyTreeNode extends LazyEntity<Anchor> implements HydratedFlexTree
 		// After this point this node will not be usable,
 		// so remove it from the anchor incase a different context (or the same context later) uses this AnchorSet.
 		this.anchorNode.slots.delete(flexTreeSlot);
-		this.#removeDeleteCallback();
 		this.context.checkout.forest.anchors.forget(this.anchor);
 	}
 

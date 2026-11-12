@@ -3,6 +3,8 @@
  * Licensed under the MIT License.
  */
 
+import { assert } from "@fluidframework/core-utils/internal";
+
 import {
 	type AnchorNode,
 	type FieldKey,
@@ -25,14 +27,19 @@ import type {
 	MinimalMapTreeNodeView,
 } from "../mapTreeCursor.js";
 import type { FlexFieldKind } from "../modular-schema/index.js";
+import { type IDisposable, disposeSymbol } from "../../util/index.js";
 
 import type { FlexTreeContext, FlexTreeHydratedContext } from "./context.js";
 
 /**
  * An anchor slot which records the {@link FlexTreeNode} associated with that anchor, if there is one.
  * @remarks This always points to a "real" {@link FlexTreeNode} (i.e. a `LazyTreeNode`), never to a "raw" node.
+ * The node is disposed when its anchor is destroyed.
  */
-export const flexTreeSlot = anchorSlot<HydratedFlexTreeNode>();
+export const flexTreeSlot = anchorSlot<HydratedFlexTreeNode>((flexNode) => {
+	assert(disposeSymbol in flexNode, "A flex tree node in an anchor slot must be disposable");
+	(flexNode as HydratedFlexTreeNode & IDisposable)[disposeSymbol]();
+});
 
 /**
  * Indicates that an object is a flex tree.

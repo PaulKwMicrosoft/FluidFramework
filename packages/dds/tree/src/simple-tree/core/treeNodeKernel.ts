@@ -228,18 +228,17 @@ export class TreeNodeKernel {
 			0x7f5 /* Cannot associate an flex node with multiple simple-tree nodes */,
 		);
 		innerNode.anchorNode.slots.set(simpleTreeNodeSlot, this.node);
-		const offAnchorNode: Off[] = [
-			innerNode.anchorNode.events.on("afterDestroy", () => this.dispose()),
-		];
+		// The slot disposes this kernel when the anchor is destroyed (see simpleTreeNodeSlot).
 		// Only array nodes read the generation number, so only they need to track it.
-		if (this.schema.kind === NodeKind.Array) {
-			offAnchorNode.push(
-				// TODO: this should be triggered on change even for unhydrated nodes.
-				innerNode.anchorNode.events.on("childrenChanging", () => {
-					this.generationNumber += 1;
-				}),
-			);
-		}
+		const offAnchorNode: readonly Off[] =
+			this.schema.kind === NodeKind.Array
+				? [
+						// TODO: this should be triggered on change even for unhydrated nodes.
+						innerNode.anchorNode.events.on("childrenChanging", () => {
+							this.generationNumber += 1;
+						}),
+					]
+				: noOffs;
 		return { innerNode, offAnchorNode };
 	}
 
@@ -281,6 +280,11 @@ export class TreeNodeKernel {
 		if (isHydrated(this.#hydrationState)) {
 			for (const off of this.#hydrationState.offAnchorNode) {
 				off();
+			}
+			// Release the anchor node, which the slot keeps alive.
+			const anchorNode = this.#hydrationState.innerNode.anchorNode;
+			if (anchorNode.slots.get(simpleTreeNodeSlot) === this.node) {
+				anchorNode.slots.delete(simpleTreeNodeSlot);
 			}
 		}
 		this.#eventBuffer?.dispose();
@@ -701,8 +705,17 @@ export function splitInnerNodeType(
  * @remarks
  * For this to work, we have to require that there is at most a single view using a given AnchorSet.
  * FlexTree already has this assumption, and we also assume there is a single simple-tree per FlexTree, so this is valid.
+ *
+ * The node's kernel is disposed when the anchor is destroyed.
  */
-export const simpleTreeNodeSlot = anchorSlot<TreeNode>();
+export const simpleTreeNodeSlot = anchorSlot<TreeNode>((treeNode) =>
+	getKernel(treeNode).dispose(),
+);
+
+/**
+ * {@link HydratedState.offAnchorNode} of kernels with no anchor node events to unsubscribe from.
+ */
+const noOffs: readonly Off[] = [];
 
 /**
  * Dispose a TreeNode (if any) for an existing anchor without disposing the anchor.

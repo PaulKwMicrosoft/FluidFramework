@@ -100,7 +100,23 @@ export const ContextSlot = anchorSlot<Context>();
  */
 export class Context implements FlexTreeHydratedContext, IDisposable {
 	public readonly withCursors: Set<LazyEntity> = new Set();
-	public readonly withAnchors: Set<LazyEntity> = new Set();
+
+	/**
+	 * First of the entities created in this context which hold an anchor, in creation order.
+	 * @remarks
+	 * They form a doubly linked list maintained by {@link LazyEntity}, which costs less memory per entity than a set.
+	 */
+	public firstWithAnchor: LazyEntity | undefined;
+
+	/**
+	 * Last of the entities in the list starting at {@link Context.firstWithAnchor}.
+	 */
+	public lastWithAnchor: LazyEntity | undefined;
+
+	/**
+	 * Number of entities in the list starting at {@link Context.firstWithAnchor}.
+	 */
+	public withAnchorCount = 0;
 
 	/**
 	 * Callbacks to run when disposing.
@@ -185,12 +201,15 @@ export class Context implements FlexTreeHydratedContext, IDisposable {
 	 * to create new trees starting from the root.
 	 */
 	public clear(): void {
-		for (const target of this.withAnchors) {
+		let target = this.firstWithAnchor;
+		while (target !== undefined) {
 			target[disposeSymbol]();
+			assert(this.firstWithAnchor !== target, "Disposing an entity must release its anchor");
+			target = this.firstWithAnchor;
 		}
 		this.lazyRootCache = undefined;
 		assert(this.withCursors.size === 0, 0x774 /* free should remove all cursors */);
-		assert(this.withAnchors.size === 0, 0x775 /* free should remove all anchors */);
+		assert(this.withAnchorCount === 0, 0x775 /* free should remove all anchors */);
 	}
 
 	/**

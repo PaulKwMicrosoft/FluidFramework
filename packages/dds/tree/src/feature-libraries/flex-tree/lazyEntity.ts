@@ -38,6 +38,16 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 	readonly #lazyCursor: ITreeSubscriptionCursor;
 	public readonly anchor: TAnchor;
 
+	/**
+	 * The previous entity in this entity's context's list of entities holding anchors (see {@link Context.firstWithAnchor}).
+	 */
+	#previousWithAnchor: LazyEntity | undefined;
+
+	/**
+	 * The next entity in this entity's context's list of entities holding anchors (see {@link Context.firstWithAnchor}).
+	 */
+	#nextWithAnchor: LazyEntity | undefined;
+
 	protected constructor(
 		public readonly context: Context,
 		cursor: ITreeSubscriptionCursor,
@@ -46,7 +56,40 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 		this.anchor = anchor;
 		this.#lazyCursor = cursor.fork("LazyEntity Fork");
 		context.withCursors.add(this);
-		this.context.withAnchors.add(this);
+		const last = context.lastWithAnchor;
+		this.#previousWithAnchor = last;
+		if (last === undefined) {
+			context.firstWithAnchor = this;
+		} else {
+			last.#nextWithAnchor = this;
+		}
+		context.lastWithAnchor = this;
+		context.withAnchorCount++;
+	}
+
+	/**
+	 * Removes this from its context's list of entities holding anchors, if it is in it.
+	 */
+	#removeFromAnchorList(): void {
+		const context = this.context;
+		const previous = this.#previousWithAnchor;
+		if (previous === undefined && context.firstWithAnchor !== this) {
+			return;
+		}
+		const next = this.#nextWithAnchor;
+		if (previous === undefined) {
+			context.firstWithAnchor = next;
+		} else {
+			previous.#nextWithAnchor = next;
+		}
+		if (next === undefined) {
+			context.lastWithAnchor = previous;
+		} else {
+			next.#previousWithAnchor = previous;
+		}
+		this.#previousWithAnchor = undefined;
+		this.#nextWithAnchor = undefined;
+		context.withAnchorCount--;
 	}
 
 	public borrowCursor(): ITreeCursorSynchronous {
@@ -59,7 +102,7 @@ export abstract class LazyEntity<TAnchor = unknown> implements FlexTreeEntity, I
 		this.#lazyCursor.free();
 		this.context.withCursors.delete(this);
 		this.forgetAnchor();
-		this.context.withAnchors.delete(this);
+		this.#removeFromAnchorList();
 	}
 
 	public prepareForEdit(): void {

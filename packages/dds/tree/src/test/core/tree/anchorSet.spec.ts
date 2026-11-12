@@ -540,6 +540,82 @@ describe("AnchorSet", () => {
 		assert.equal(listenerFired, true);
 	});
 
+	it("calls the onDestroy handlers of slots holding values when a node is destroyed", () => {
+		const log: string[] = [];
+		const handledSlot = anchorSlot<string>((value, destroyed) => {
+			log.push(`handled ${value}`);
+			// Handlers may release their own slot.
+			destroyed.slots.delete(handledSlot);
+		});
+		const otherSlot = anchorSlot<string>((value) => log.push(`other ${value}`));
+		const plainSlot = anchorSlot<string>();
+
+		const anchors = new AnchorSet();
+		const anchor = anchors.track(makePath([fieldFoo, 4]));
+		const anchorNode = anchors.locate(anchor) ?? assert.fail();
+		anchorNode.slots.set(plainSlot, "plain");
+		anchorNode.slots.set(handledSlot, "a");
+		anchorNode.slots.set(otherSlot, "b");
+		anchorNode.events.on("afterDestroy", () => log.push("afterDestroy"));
+
+		withVisitor(anchors, (v) => {
+			v.enterField(fieldFoo);
+			v.detach({ start: 4, end: 5 }, detachedField, detachId, false);
+			v.exitField(fieldFoo);
+			v.destroy(detachedField, 1);
+		});
+
+		assert.deepEqual(log, ["handled a", "other b", "afterDestroy"]);
+		assert.equal(anchorNode.slots.has(handledSlot), false);
+		assert.equal(anchorNode.slots.get(otherSlot), "b");
+	});
+
+	it("a value in a slot with an onDestroy handler keeps its node alive", () => {
+		const heldSlot = anchorSlot<number>(() => {});
+		const anchors = new AnchorSet();
+		const anchor = anchors.track(makePath([fieldFoo, 4]));
+		const anchorNode = anchors.locate(anchor) ?? assert.fail();
+		anchorNode.slots.set(heldSlot, 1);
+		anchors.forget(anchor);
+
+		// Still held by the slot value, so it is found (and the same node) when tracked again.
+		const again = anchors.track(makePath([fieldFoo, 4]));
+		assert.equal(anchors.locate(again), anchorNode);
+		anchors.forget(again);
+		assert.equal(anchors.isEmpty(), false);
+
+		anchorNode.slots.delete(heldSlot);
+		assert.equal(anchors.isEmpty(), true);
+	});
+
+	it("stores any number of slots", () => {
+		const anchors = new AnchorSet();
+		const anchor = anchors.track(makePath([fieldFoo, 4]));
+		const anchorNode = anchors.locate(anchor) ?? assert.fail();
+		const slots = Array.from({ length: 5 }, () => anchorSlot<number>());
+		for (const [index, slot] of slots.entries()) {
+			assert.equal(anchorNode.slots.has(slot), false);
+			anchorNode.slots.set(slot, index);
+		}
+		for (const [index, slot] of slots.entries()) {
+			assert.equal(anchorNode.slots.get(slot), index);
+		}
+		// Free an inline slot, then reuse it for a slot stored elsewhere.
+		assert.equal(anchorNode.slots.delete(slots[0]), true);
+		assert.equal(anchorNode.slots.delete(slots[0]), false);
+		assert.equal(anchorNode.slots.get(slots[0]), undefined);
+		anchorNode.slots.set(slots[4], 40);
+		anchorNode.slots.set(slots[0], 0);
+		assert.deepEqual(
+			slots.map((slot) => anchorNode.slots.get(slot)),
+			[0, 1, 2, 3, 40],
+		);
+		for (const slot of slots) {
+			assert.equal(anchorNode.slots.delete(slot), true);
+			assert.equal(anchorNode.slots.has(slot), false);
+		}
+	});
+
 	// Simple scenario using just anchorSets to validate if cache implementation of the FlexTree.treeStatus api works.
 	it("AnchorNode cache can be set and retrieved.", () => {
 		const anchors = new AnchorSet();
