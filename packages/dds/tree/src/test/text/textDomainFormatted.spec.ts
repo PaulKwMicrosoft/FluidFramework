@@ -786,6 +786,144 @@ describe("textDomainFormatted", () => {
 		assert.equal(text.getString(index, index + currentRun), "de");
 	});
 
+	describeHydration("runs", (_init, hydrated) => {
+		const bold = { bold: true, size: 12, font: "Arial" };
+		const lineAtom = (): FormattedTextTest.StringLineAtom =>
+			new FormattedTextTest.StringLineAtom({
+				tag: FormattedTextTest.LineTag("h1"),
+				indent: 0,
+			});
+
+		function createText(): FormattedTextTest.Tree {
+			// "ab" default, "cd" bold, two line atoms, then "😀e" default.
+			const text = FormattedTextTest.Tree.fromString("ab😀e");
+			text.insertAt(2, "cd", bold);
+			text.insertAt(4, [lineAtom(), lineAtom()]);
+			if (hydrated) {
+				hydrateNode(text);
+			}
+			return text;
+		}
+
+		function summarize(
+			runs: Iterable<FormattedText.TextRun<FormattedTextTest.CharacterFormat, unknown>>,
+		): [start: number, length: number, text: string, bold: boolean, isAtom: boolean][] {
+			return [...runs].map((run) => [
+				run.start,
+				run.length,
+				run.text,
+				run.format.bold,
+				run.atom !== undefined,
+			]);
+		}
+
+		it("reads characters with equal formats as one run, and each other atom as its own run", () => {
+			const text = createText();
+			assert.deepEqual(summarize(text.runs()), [
+				[0, 2, "ab", false, false],
+				[2, 2, "cd", true, false],
+				[4, 1, "\n", false, true],
+				[5, 1, "\n", false, true],
+				[6, 2, "😀e", false, false],
+			]);
+		});
+
+		it("gives the nodes of the run's first atom", () => {
+			const text = createText();
+			const atoms = text.charactersWithFormatting();
+			for (const run of text.runs()) {
+				const first = atoms[run.start] ?? assert.fail("run out of bounds");
+				assert.equal(run.format, first.format);
+				if (run.atom !== undefined) {
+					assert.equal(run.atom, first.content);
+				}
+			}
+			const line = [...text.runs()][2] ?? assert.fail("missing run");
+			assert(line.atom instanceof FormattedTextTest.StringLineAtom);
+		});
+
+		it("agrees with getUniformRun and getString for runs of characters", () => {
+			const text = createText();
+			for (const run of text.runs()) {
+				if (run.atom === undefined) {
+					assert.equal(text.getUniformRun(run.start), run.length);
+					assert.equal(text.getString(run.start, run.start + run.length), run.text);
+				}
+			}
+		});
+
+		it("compares formats by content", () => {
+			const runLengths = (first: { color?: string }, second: { color?: string }): number[] => {
+				const text = OptionalFormatText.fromString("ab");
+				text.formatRange(0, 1, first);
+				text.formatRange(1, 2, second);
+				if (hydrated) {
+					hydrateNode(text);
+				}
+				return [...text.runs()].map((run) => run.length);
+			};
+
+			assert.deepEqual(runLengths({}, {}), [2]);
+			assert.deepEqual(runLengths({ color: "red" }, { color: "red" }), [2]);
+			assert.deepEqual(runLengths({}, { color: "red" }), [1, 1]);
+			assert.deepEqual(runLengths({ color: "red" }, {}), [1, 1]);
+			assert.deepEqual(runLengths({ color: "red" }, { color: "blue" }), [1, 1]);
+		});
+
+		it("reads the runs between start and end", () => {
+			const text = createText();
+			assert.deepEqual(summarize(text.runs(1, 3)), [
+				[1, 1, "b", false, false],
+				[2, 1, "c", true, false],
+			]);
+			assert.deepEqual(summarize(text.runs(5)), [
+				[5, 1, "\n", false, true],
+				[6, 2, "😀e", false, false],
+			]);
+			assert.deepEqual(summarize(text.runs(7, 100)), [[7, 1, "e", false, false]]);
+			assert.deepEqual(summarize(text.runs(3, 3)), []);
+			assert.deepEqual(summarize(text.runs(8)), []);
+		});
+
+		it("reads no runs from empty text", () => {
+			const text = FormattedTextTest.Tree.fromString("");
+			if (hydrated) {
+				hydrateNode(text);
+			}
+			assert.deepEqual([...text.runs()], []);
+		});
+
+		it("rejects invalid ranges", () => {
+			const text = createText();
+			assert.throws(() => text.runs(-1), validateUsageError(/FormattedText.runs/));
+			assert.throws(() => text.runs(9), validateUsageError(/FormattedText.runs/));
+			assert.throws(() => text.runs(3, 2), validateUsageError(/FormattedText.runs/));
+		});
+
+		it("reads each run when the iterator advances", () => {
+			const text = createText();
+			const runs = text.runs();
+			const first = runs.next();
+			assert.equal(first.done, false);
+			assert.equal(first.value.text, "ab");
+			text.insertAt(2, "x", bold);
+			assert.deepEqual(summarize(runs), [
+				[2, 3, "xcd", true, false],
+				[5, 1, "\n", false, true],
+				[6, 1, "\n", false, true],
+				[7, 2, "😀e", false, false],
+			]);
+		});
+
+		it("keeps an explicit end when the text is edited during iteration", () => {
+			const text = createText();
+			const runs = text.runs(0, 3);
+			assert.equal(runs.next().value?.text, "ab");
+			text.insertAt(2, "x", bold);
+			assert.deepEqual(summarize(runs), [[2, 1, "x", true, false]]);
+		});
+	});
+
 	describeHydration("onContentChanged", (_init, hydrated) => {
 		it("creates an insertion anchor that tracks edits", () => {
 			const text = FormattedTextTest.Tree.fromString("abc");

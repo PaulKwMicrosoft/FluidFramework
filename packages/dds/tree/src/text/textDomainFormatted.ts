@@ -723,6 +723,44 @@ export namespace FormattedText {
 			public getString(startIndex: number, endIndex?: number): string {
 				return this.content.getString(startIndex, endIndex);
 			}
+
+			public runs(
+				start?: number,
+				end?: number,
+			): IterableIterator<
+				TextRun<TreeNodeFromImplicitAllowedTypes<FormatSchema>, TextAtomNode>
+			> {
+				const runsStart = start ?? 0;
+				validateIndex(runsStart, this.content, "FormattedText.runs", true);
+				if (end !== undefined) {
+					validateIndexRange(
+						runsStart,
+						Math.min(this.content.length, end),
+						this.content,
+						"FormattedText.runs",
+					);
+				}
+				return this.#runsFrom(runsStart, end);
+			}
+
+			*#runsFrom(
+				start: number,
+				end: number | undefined,
+			): IterableIterator<
+				TextRun<TreeNodeFromImplicitAllowedTypes<FormatSchema>, TextAtomNode>
+			> {
+				let index = start;
+				// The text may be edited between runs, so each run is read from the text as it is when the iterator advances.
+				for (
+					let runsEnd = Math.min(this.content.length, end ?? Number.POSITIVE_INFINITY);
+					index < runsEnd;
+					runsEnd = Math.min(this.content.length, end ?? Number.POSITIVE_INFINITY)
+				) {
+					const run = this.content.readRun(index, runsEnd);
+					yield new TextRunView(this.content, index, run.length, run.text);
+					index += run.length;
+				}
+			}
 		}
 
 		function stringTextAtomsFromString(
@@ -753,6 +791,70 @@ export namespace FormattedText {
 		): Iterable<StringAtom> {
 			const textAtoms = stringTextAtomsFromString(value);
 			return stringAtomsFromTextAtoms(textAtoms, format);
+		}
+
+		/**
+		 * The character of the atom `cursor` is at, if it is a {@link FormattedText.(StringTextAtom:variable)}, otherwise undefined.
+		 * Leaves the cursor where it was.
+		 */
+		function readCharacter(cursor: ITreeCursorSynchronous): string | undefined {
+			cursor.enterField(EmptyKey);
+			cursor.enterNode(0);
+			let character: string | undefined;
+			if (cursor.type === StringTextAtom.identifier) {
+				cursor.enterField(EmptyKey);
+				cursor.enterNode(0);
+				character = cursor.value as string;
+				cursor.exitNode();
+				cursor.exitField();
+			}
+			cursor.exitNode();
+			cursor.exitField();
+			return character;
+		}
+
+		/**
+		 * Implementation of {@link FormattedText.TextRun}.
+		 */
+		class TextRunView
+			implements TextRun<TreeNodeFromImplicitAllowedTypes<FormatSchema>, TextAtomNode>
+		{
+			#format: TreeNodeFromImplicitAllowedTypes<FormatSchema> | undefined;
+			#text: string | undefined;
+			readonly #isCharacters: boolean;
+
+			/**
+			 * @param text - The text of the run if it is a run of characters, otherwise undefined.
+			 */
+			public constructor(
+				private readonly array: StringArray,
+				public readonly start: number,
+				public readonly length: number,
+				text: string | undefined,
+			) {
+				this.#text = text;
+				this.#isCharacters = text !== undefined;
+			}
+
+			private get firstAtom(): StringAtom {
+				return (
+					this.array[this.start] ?? fail("A text run's first atom is no longer in the text")
+				);
+			}
+
+			public get text(): string {
+				this.#text ??= this.firstAtom.content.content;
+				return this.#text;
+			}
+
+			public get format(): TreeNodeFromImplicitAllowedTypes<FormatSchema> {
+				this.#format ??= this.firstAtom.format;
+				return this.#format;
+			}
+
+			public get atom(): TextAtomNode | undefined {
+				return this.#isCharacters ? undefined : this.firstAtom.content;
+			}
 		}
 
 		class StringArray extends sf.array("StringArray", [() => StringAtom]) {
@@ -835,6 +937,52 @@ export namespace FormattedText {
 			public getString(startIndex: number, endIndex: number = this.length): string {
 				validateIndexRange(startIndex, endIndex, this, "FormattedText.getString");
 				return this.getCharactersSubarray(startIndex, endIndex).join("");
+			}
+
+			/**
+			 * Reads the run starting at atom `start` (see {@link FormattedText.Members.runs}), ending at or before `end`.
+			 * @param start - The index of the run's first atom. Must be less than `end`.
+			 * @param end - The index (exclusive) at which the run must end. Must not exceed the length of the array.
+			 * @returns The run's length and, for a run of characters, its text.
+			 */
+			public readRun(
+				start: number,
+				end: number,
+			): { length: number; text: string | undefined } {
+				return this.withBorrowedSequenceCursor((cursor) => {
+					cursor.enterNode(start);
+					let text = readCharacter(cursor);
+					if (text === undefined) {
+						cursor.exitNode();
+						return { length: 1, text };
+					}
+					cursor.enterField(formatKey);
+					cursor.enterNode(0);
+					const formatComparator = buildNodeComparator(cursor);
+					cursor.exitNode();
+					cursor.exitField();
+
+					let length = 1;
+					// `end` does not exceed the length of the array, so the cursor always moves to another atom here.
+					while (start + length < end && cursor.nextNode()) {
+						const character = readCharacter(cursor);
+						if (character === undefined) {
+							break;
+						}
+						cursor.enterField(formatKey);
+						cursor.enterNode(0);
+						const formatMatches = formatComparator(cursor);
+						cursor.exitNode();
+						cursor.exitField();
+						if (formatMatches !== true) {
+							break;
+						}
+						text += character;
+						length++;
+					}
+					cursor.exitNode();
+					return { length, text };
+				});
 			}
 
 			public getUniformRun(startIndex: number, endIndex: number = this.length): number {
@@ -1019,6 +1167,44 @@ export namespace FormattedText {
 		TextAtom,
 		"com.fluidframework.text.formatted.StringTextAtom"
 	>;
+
+	/**
+	 * A run of a formatted text, as {@link FormattedText.Members.runs} reads it:
+	 * a maximal stretch of characters ({@link FormattedText.(StringTextAtom:variable)}s) with equal formats,
+	 * or a single atom of another kind.
+	 * @typeParam TFormat - The type of the format nodes of the text.
+	 * @typeParam TAtom - The type of the text's atoms.
+	 * @sealed
+	 * @alpha
+	 */
+	export interface TextRun<TFormat, TAtom> {
+		/**
+		 * The index of the run's first atom in the text, when the run was read.
+		 */
+		readonly start: number;
+		/**
+		 * The number of atoms in the run.
+		 */
+		readonly length: number;
+		/**
+		 * The {@link FormattedText.TextAtom.content} of the run's atoms, concatenated.
+		 */
+		readonly text: string;
+		/**
+		 * The format of the run's atoms: the format node of its first atom.
+		 * @remarks
+		 * Reading this creates the node objects for that atom and its format, if they do not already exist.
+		 * It reads the atom at index {@link FormattedText.TextRun.start} of the text as it is when this property is first read,
+		 * so it should be read before the text is edited.
+		 */
+		readonly format: TFormat;
+		/**
+		 * For a run of an atom other than a character, that atom. Undefined for a run of characters.
+		 * @remarks
+		 * Like {@link FormattedText.TextRun.format}, this reads the atom at index {@link FormattedText.TextRun.start} of the text as it is when this property is read.
+		 */
+		readonly atom: TAtom | undefined;
+	}
 
 	/**
 	 * Statics for formatted text nodes.
@@ -1206,6 +1392,35 @@ export namespace FormattedText {
 		 * @param endIndex - Optional ending index (exclusive). Defaults to the end of the text.
 		 */
 		getString(startIndex: number, endIndex?: number): string;
+
+		/**
+		 * Reads the text a run at a time: each run is a maximal stretch of characters with equal formats, or a single atom of another kind.
+		 * @param start - The index of the first atom to read. Defaults to 0.
+		 * @param end - The index (exclusive) at which to stop reading.
+		 * Defaults to the end of the text, as it is when each run is read.
+		 * Values past the end of the text are treated as the end of the text.
+		 * @returns An iterator over the runs, in order. Runs read from `start` stop at `end`, so the first and last runs may be parts of longer runs.
+		 * @remarks
+		 * Characters are atoms of the {@link FormattedText.(StringTextAtom:variable)} schema.
+		 * Formats are compared by content, as {@link FormattedText.Members.getUniformRun} compares them.
+		 *
+		 * The atoms of a run are not given node objects: a run's {@link FormattedText.TextRun.format} and {@link FormattedText.TextRun.atom}
+		 * create the node objects for its first atom when they are read.
+		 * This makes reading text and its formatting a run at a time cheaper than reading the atoms with {@link FormattedText.Members.charactersWithFormatting},
+		 * or than finding runs with {@link FormattedText.Members.getUniformRun} and reading their text with {@link FormattedText.Members.getString}.
+		 *
+		 * Runs are read as the iterator advances: an edit to the text during iteration affects the runs read after it.
+		 * @throws A {@link @fluidframework/telemetry-utils#UsageError} if `start` is negative, greater than the length of the text, or greater than `end`.
+		 */
+		runs(
+			start?: number,
+			end?: number,
+		): IterableIterator<
+			TextRun<
+				TreeNodeFromImplicitAllowedTypes<FormatSchema>,
+				TreeNodeFromImplicitAllowedTypes<TextAtomSchemas<ExtraAtomsSchema>>
+			>
+		>;
 
 		/**
 		 * Subscribe to all content changes on this text node, including both shallow

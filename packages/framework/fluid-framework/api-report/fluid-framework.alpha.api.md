@@ -839,6 +839,7 @@ export namespace FormattedText {
         insertWithFormattingAt(index: number, additionalCharacters: Iterable<FormattedAtomInsertable<InsertableTreeNodeFromImplicitAllowedTypes<FormatSchema>, InsertableTreeNodeFromImplicitAllowedTypes<TextAtomSchemas<ExtraAtomsSchema>>>>): void;
         onContentChanged(callback: (ops: readonly PlainText.TextOp[] | undefined) => void): () => void;
         reformat(startIndex?: number | undefined, endIndex?: number | undefined, format?: InsertableTreeFieldFromImplicitField<FormatSchema>): void;
+        runs(start?: number, end?: number): IterableIterator<TextRun<TreeNodeFromImplicitAllowedTypes<FormatSchema>, TreeNodeFromImplicitAllowedTypes<TextAtomSchemas<ExtraAtomsSchema>>>>;
     }
     // @sealed
     export interface MembersWithRanges<FormatSchema extends ImplicitAllowedTypes, ExtraAtomsSchema extends readonly LazyItem<TreeNodeSchema<string, NodeKind, TextAtom & TreeNode>>[], RangeDataSchema extends ImplicitAllowedTypes> extends Members<FormatSchema, ExtraAtomsSchema> {
@@ -860,6 +861,14 @@ export namespace FormattedText {
     }
     // @sealed
     export type TextAtomSchemas<ExtraAtomsSchema extends readonly LazyItem<TreeNodeSchema<string, NodeKind, TextAtom & TreeNode>>[]> = readonly [typeof StringTextAtom, ...ExtraAtomsSchema];
+    // @sealed
+    export interface TextRun<TFormat, TAtom> {
+        readonly atom: TAtom | undefined;
+        readonly format: TFormat;
+        readonly length: number;
+        readonly start: number;
+        readonly text: string;
+    }
 }
 
 // @alpha @sealed
